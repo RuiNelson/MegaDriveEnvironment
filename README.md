@@ -46,7 +46,6 @@ protected:
     void run() override {
         while (true) {
             // Main game loop: update input, game logic, and sound.
-            pace();
         }
     }
 
