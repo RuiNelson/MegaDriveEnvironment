@@ -330,7 +330,7 @@ int VDP::renderLoop() {
     uint64_t nextFrameDeadline = SDL_GetTicksNS();
 
     while (running_) {
-        const uint64_t frameTimeNs = (env_ != nullptr && env_->isPal50Hz()) ? 20'000'000ull : 16'715'000ull;
+        const uint64_t frameTimeNs = (env_ != nullptr && env_->isPal50Hz()) ? 20'000'000ull : 16'666'667ull;
         uint64_t       frameStart  = SDL_GetTicksNS();
 
         // Render the frame one scanline at a time so a per-line interrupt can be
