@@ -327,6 +327,7 @@ int VDP::renderLoop() {
     size_t frameTimeCount = 0;
     size_t frameTimeIndex = 0;
     size_t framesSinceTitleUpdate = 0;
+    uint64_t nextFrameDeadline = SDL_GetTicksNS();
 
     while (running_) {
         const uint64_t frameTimeNs = (env_ != nullptr && env_->isPal50Hz()) ? 20'000'000ull : 16'715'000ull;
@@ -418,9 +419,15 @@ int VDP::renderLoop() {
         SDL_UnlockMutex(mutex_);
 
         if (syncMode_ == InternalTimer) {
-            uint64_t elapsed = SDL_GetTicksNS() - frameStart;
-            if (elapsed < frameTimeNs) {
-                SDL_DelayNS(frameTimeNs - elapsed);
+            nextFrameDeadline += frameTimeNs;
+            const uint64_t now = SDL_GetTicksNS();
+            if (now < nextFrameDeadline) {
+                SDL_DelayPrecise(nextFrameDeadline - now);
+            } else if (now - nextFrameDeadline >= frameTimeNs) {
+                // Do not burst through several frames after a debugger pause,
+                // debug dump, or host stall. Re-anchor while retaining normal
+                // sub-frame error correction.
+                nextFrameDeadline = now;
             }
         }
 
