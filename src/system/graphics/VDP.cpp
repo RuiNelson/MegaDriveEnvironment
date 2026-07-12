@@ -326,6 +326,7 @@ int VDP::renderLoop() {
     uint64_t frameTimeSum = 0;
     size_t frameTimeCount = 0;
     size_t frameTimeIndex = 0;
+    size_t framesSinceTitleUpdate = 0;
 
     while (running_) {
         const uint64_t frameTimeNs = (env_ != nullptr && env_->isPal50Hz()) ? 20'000'000ull : 16'715'000ull;
@@ -432,7 +433,11 @@ int VDP::renderLoop() {
         frameTimes[frameTimeIndex] = completedFrameTime;
         frameTimeSum += completedFrameTime;
         frameTimeIndex = (frameTimeIndex + 1) % kFrameTimeWindow;
-        averageFrameTimeNs_.store(frameTimeSum / frameTimeCount, std::memory_order_relaxed);
+        ++framesSinceTitleUpdate;
+        if (frameTimeCount == kFrameTimeWindow && framesSinceTitleUpdate == kFrameTimeWindow) {
+            averageFrameTimeNs_.store(frameTimeSum / kFrameTimeWindow, std::memory_order_relaxed);
+            framesSinceTitleUpdate = 0;
+        }
     }
 
     return 0;
