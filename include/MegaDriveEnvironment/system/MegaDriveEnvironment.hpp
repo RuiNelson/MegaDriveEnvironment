@@ -7,6 +7,8 @@
 #include "cpu/CPU68K.hpp"
 #include "graphics/VDP.hpp"
 
+#include <SDL3/SDL.h>
+
 #include <atomic>
 #include <bit>
 #include <cstdint>
@@ -75,6 +77,21 @@ class MegaDriveEnvironment {
     enum class VideoStandard : uint8_t {
         Hz60 = 0,
         Hz50 = 1,
+    };
+
+    /// Host input delivered to handleOptionHotkey() while either Alt/Option
+    /// key is held. Keyboard and gamepad values occupy separate fields so
+    /// their overlapping numeric values can never be confused.
+    struct OptionHotkeyCode {
+        enum class Source : uint8_t {
+            Keyboard,
+            Gamepad,
+        };
+
+        Source            source         = Source::Keyboard;
+        SDL_Keycode       keyboardKey    = SDLK_UNKNOWN;
+        SDL_GamepadButton gamepadButton  = SDL_GAMEPAD_BUTTON_INVALID;
+        SDL_JoystickID    gamepadId      = 0;
     };
 
     /// Wires the subsystems together. Does not start any threads (see boot()).
@@ -254,6 +271,14 @@ class MegaDriveEnvironment {
 
     /// Override to handle horizontal blank for scanline @p line (0-based).
     virtual void hSync(int line) {
+    }
+
+    /// Override for host-only debugging actions. Called once on the SDL main
+    /// thread whenever a non-repeated keyboard key or gamepad button is
+    /// pressed while either Alt/Option key is held. Alt/Option itself is not
+    /// reported. This input is independent of the emulated controller state.
+    virtual void handleOptionHotkey(OptionHotkeyCode keyCode) {
+        (void)keyCode;
     }
 
     private:

@@ -56,8 +56,22 @@ protected:
     void hSync(int line) override {
         // Horizontal blank for scanline-specific effects.
     }
+
+    void handleOptionHotkey(OptionHotkeyCode keyCode) override {
+        if (keyCode.source == OptionHotkeyCode::Source::Keyboard && keyCode.keyboardKey == SDLK_L) {
+            // Option+L: add a life, toggle a debug overlay, etc.
+        }
+        if (keyCode.source == OptionHotkeyCode::Source::Gamepad &&
+            keyCode.gamepadButton == SDL_GAMEPAD_BUTTON_NORTH) {
+            // Option+gamepad North button: another host-only debug action.
+        }
+    }
 };
 ```
+
+Option hotkeys are delivered on the SDL main thread and do not alter the
+emulated controller ports. Overrides that mutate state owned by the game/CPU
+thread must synchronize that state explicitly.
 
 ## Layout
 

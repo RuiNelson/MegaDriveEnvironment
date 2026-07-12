@@ -57,6 +57,20 @@ void MegaDriveEnvironment::boot() {
     SDL_Event event;
     while (!cpuDone_.load(std::memory_order_acquire)) {
         while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && (event.key.mod & SDL_KMOD_ALT) &&
+                event.key.key != SDLK_LALT && event.key.key != SDLK_RALT) {
+                handleOptionHotkey(OptionHotkeyCode{
+                    .source      = OptionHotkeyCode::Source::Keyboard,
+                    .keyboardKey = event.key.key,
+                });
+            } else if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && (SDL_GetModState() & SDL_KMOD_ALT)) {
+                handleOptionHotkey(OptionHotkeyCode{
+                    .source        = OptionHotkeyCode::Source::Gamepad,
+                    .gamepadButton = static_cast<SDL_GamepadButton>(event.gbutton.button),
+                    .gamepadId     = event.gbutton.which,
+                });
+            }
+
             // Window close or CTRL+Q both request a shutdown.
             if (event.type == SDL_EVENT_QUIT) {
                 quitRequested_.store(true, std::memory_order_release);
