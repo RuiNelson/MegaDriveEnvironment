@@ -5,6 +5,7 @@
 
 #include "VDP.hpp"
 #include "system/MegaDriveEnvironment.hpp"
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <png.h>
@@ -265,6 +266,7 @@ void VDP::sdlRepeatCallback(void *userdata) {
 void VDP::presentToScreen() {
     if (!texture_)
         return;
+    updateWindowTitle();
     framebuffer_.uploadToTexture(texture_);
 
     m_byte bgR, bgG, bgB;
@@ -300,10 +302,31 @@ void VDP::presentToScreen() {
     SDL_RenderPresent(sdlRenderer_);
 }
 
+void VDP::updateWindowTitle() {
+    if (!window_)
+        return;
+
+    const uint64_t averageNs = averageFrameTimeNs_.load(std::memory_order_relaxed);
+    if (averageNs == 0 || averageNs == displayedFrameTimeNs_)
+        return;
+
+    char title[64];
+    std::snprintf(
+        title, sizeof title, "VDP | avg 60 frames: %.3f ms", static_cast<double>(averageNs) / 1'000'000.0);
+    SDL_SetWindowTitle(window_, title);
+    displayedFrameTimeNs_ = averageNs;
+}
+
 /// Main render thread loop: renders the frame scanline by scanline (scheduling an HSync interrupt after each line),
 /// sets the VBlank flag, schedules a VSync interrupt, presents to display, and manages frame timing based on sync mode.
 /// Interrupts are dispatched on the program thread via MegaDriveEnvironment::runVDPInterrupts().
 int VDP::renderLoop() {
+    static constexpr size_t kFrameTimeWindow = 60;
+    std::array<uint64_t, kFrameTimeWindow> frameTimes{};
+    uint64_t frameTimeSum = 0;
+    size_t frameTimeCount = 0;
+    size_t frameTimeIndex = 0;
+
     while (running_) {
         const uint64_t frameTimeNs = (env_ != nullptr && env_->isPal50Hz()) ? 20'000'000ull : 16'715'000ull;
         uint64_t       frameStart  = SDL_GetTicksNS();
@@ -399,6 +422,17 @@ int VDP::renderLoop() {
                 SDL_DelayNS(frameTimeNs - elapsed);
             }
         }
+
+        const uint64_t completedFrameTime = SDL_GetTicksNS() - frameStart;
+        if (frameTimeCount < kFrameTimeWindow) {
+            ++frameTimeCount;
+        } else {
+            frameTimeSum -= frameTimes[frameTimeIndex];
+        }
+        frameTimes[frameTimeIndex] = completedFrameTime;
+        frameTimeSum += completedFrameTime;
+        frameTimeIndex = (frameTimeIndex + 1) % kFrameTimeWindow;
+        averageFrameTimeNs_.store(frameTimeSum / frameTimeCount, std::memory_order_relaxed);
     }
 
     return 0;

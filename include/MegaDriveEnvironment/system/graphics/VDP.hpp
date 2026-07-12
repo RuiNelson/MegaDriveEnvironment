@@ -7,6 +7,7 @@
 #include "VDPState.hpp"
 #include "VDPTile.hpp"
 #include <SDL3/SDL.h>
+#include <atomic>
 #include <deque>
 #include <string>
 
@@ -167,6 +168,12 @@ class VDP {
     /// Flag controlling render thread loop.
     bool running_ = false;
 
+    /// Rolling average of the latest 60 complete frame intervals, published
+    /// by the render thread and consumed by the SDL main thread.
+    std::atomic<uint64_t> averageFrameTimeNs_{0};
+    /// Last average shown in the title; only accessed on the SDL main thread.
+    uint64_t displayedFrameTimeNs_ = 0;
+
     /// Selected synchronization mode.
     Synchronization syncMode_;
     /// Selected scaling mode.
@@ -204,4 +211,7 @@ class VDP {
 
     /// Converts framebuffer to SDL texture and renders to window.
     void presentToScreen();
+
+    /// Updates the SDL window title with the rolling average frame time.
+    void updateWindowTitle();
 };
