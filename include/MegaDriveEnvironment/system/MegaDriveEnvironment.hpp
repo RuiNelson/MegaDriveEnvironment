@@ -78,7 +78,9 @@ class MegaDriveEnvironment {
     };
 
     /// Wires the subsystems together. Does not start any threads (see boot()).
-    MegaDriveEnvironment(VDP::Synchronization sync, VDP::Scaling scaling);
+    MegaDriveEnvironment(VDP::Synchronization sync,
+                         VDP::Scaling scaling,
+                         VDP::SpriteLimitMode spriteLimitMode = VDP::HardwareSpriteLimit);
 
     virtual ~MegaDriveEnvironment();
 

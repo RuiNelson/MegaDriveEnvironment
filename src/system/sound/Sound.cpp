@@ -18,6 +18,7 @@ constexpr double   kSnapCycles         = 0.250 * kMasterClock; // resync hard be
 constexpr double   kMaxRateTrim        = 0.005;                // ±0.5% render-rate trim toward the latency target
 constexpr int      kRenderChunkFrames  = 256;
 constexpr int      kRingBufferFrames   = 4096;
+constexpr size_t   kMaxPendingEvents   = 16'384;
 constexpr int      kFmPreampPercent    = 100;
 constexpr int      kPsgPreampPercent   = 150;
 constexpr uint32_t kLowpassRange       = 0x9999;
@@ -80,6 +81,8 @@ int psgVolume(uint8_t attenuation) {
 Sound::Sound(MegaDriveEnvironment *env) : env_(env), mutex_(SDL_CreateMutex()), ym_(ymInterface_) {
     baseTimeNS_   = SDL_GetTicksNS();
     fmSampleRate_ = ym_.sample_rate(kYM2612Clock);
+    pendingEvents_.reserve(kMaxPendingEvents);
+    renderEvents_.reserve(kMaxPendingEvents);
     psg_.reset();
 }
 
@@ -102,12 +105,17 @@ void Sound::start() {
     if (disabled())
         return;
 
-    SDL_LockMutex(mutex_);
-    resetChipState();
-    SDL_UnlockMutex(mutex_);
+    // Set this before touching shared sound state. From this point onward a
+    // producer may lose a write, but it can never wait for audio startup,
+    // rendering, device failure, or shutdown.
+    realtimeMode_.store(true, std::memory_order_release);
 
     if (stream_)
         return;
+
+    SDL_LockMutex(mutex_);
+    resetChipState();
+    SDL_UnlockMutex(mutex_);
 
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
         std::fprintf(stderr, "Sound: could not initialize SDL audio: %s\n", SDL_GetError());
@@ -125,10 +133,12 @@ void Sound::start() {
         std::fprintf(stderr, "Sound: could not open SDL audio stream: %s\n", SDL_GetError());
         return;
     }
+    consumerAvailable_.store(true, std::memory_order_release);
     SDL_ResumeAudioStreamDevice(stream_);
 }
 
 void Sound::stop() {
+    consumerAvailable_.store(false, std::memory_order_release);
     if (stream_) {
         SDL_DestroyAudioStream(stream_);
         stream_ = nullptr;
@@ -152,7 +162,7 @@ m_byte Sound::readYM2612At(uint64_t masterCycles, int port) {
     // must never block gameplay on it, so they return the last status the
     // renderer published (a few ms stale at worst — the busy-wait loops in
     // the drivers only need "not busy").
-    if (stream_)
+    if (realtimeMode_.load(std::memory_order_acquire))
         return cachedStatus_.load(std::memory_order_relaxed);
 
     SDL_LockMutex(mutex_);
@@ -170,14 +180,29 @@ void Sound::writeYM2612(int port, m_byte value) {
 void Sound::writeYM2612At(uint64_t masterCycles, int port, m_byte value) {
     if (disabled())
         return;
-    SDL_LockMutex(mutex_);
-    enqueueEvent(TimedEvent{
+
+    TimedEvent event{
         .masterCycle = masterCycles,
         .type        = EventType::YMWrite,
         .port        = static_cast<uint8_t>(port & 3),
         .value       = value,
-    });
-    if (!stream_)
+    };
+    if (realtimeMode_.load(std::memory_order_acquire)) {
+        if (!consumerAvailable_.load(std::memory_order_acquire)) {
+            unavailableDropCount_.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        if (!SDL_TryLockMutex(mutex_)) {
+            contentionDropCount_.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        enqueueEvent(event);
+        SDL_UnlockMutex(mutex_);
+        return;
+    }
+
+    SDL_LockMutex(mutex_);
+    if (enqueueEvent(event))
         processEventsUntil(masterCycles);
     SDL_UnlockMutex(mutex_);
 }
@@ -189,14 +214,29 @@ void Sound::writePSG(m_byte value) {
 void Sound::writePSGAt(uint64_t masterCycles, m_byte value) {
     if (disabled())
         return;
-    SDL_LockMutex(mutex_);
-    enqueueEvent(TimedEvent{
+
+    TimedEvent event{
         .masterCycle = masterCycles,
         .type        = EventType::PSGWrite,
         .port        = 0,
         .value       = value,
-    });
-    if (!stream_)
+    };
+    if (realtimeMode_.load(std::memory_order_acquire)) {
+        if (!consumerAvailable_.load(std::memory_order_acquire)) {
+            unavailableDropCount_.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        if (!SDL_TryLockMutex(mutex_)) {
+            contentionDropCount_.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        enqueueEvent(event);
+        SDL_UnlockMutex(mutex_);
+        return;
+    }
+
+    SDL_LockMutex(mutex_);
+    if (enqueueEvent(event))
         processEventsUntil(masterCycles);
     SDL_UnlockMutex(mutex_);
 }
@@ -212,23 +252,24 @@ void Sound::renderForDiagnostics(int16_t *dst, int frames) {
 }
 
 Sound::Diagnostics Sound::diagnostics() const {
-    SDL_LockMutex(mutex_);
-    const size_t   queued = pendingEvents_.size();
-    const uint64_t late   = lateEventCount_;
-    SDL_UnlockMutex(mutex_);
-    // The remaining counters are owned by the render thread; reading them
-    // unlocked is fine for diagnostics.
+    const uint64_t contentionDrops = contentionDropCount_.load(std::memory_order_relaxed);
+    const uint64_t queueFullDrops  = queueFullDropCount_.load(std::memory_order_relaxed);
+    const uint64_t unavailableDrops = unavailableDropCount_.load(std::memory_order_relaxed);
     return Diagnostics{
         .audioFramesRendered = audioFramesRendered_.load(std::memory_order_relaxed),
         .underruns           = underrunCount_.load(std::memory_order_relaxed),
         .overruns            = overrunCount_.load(std::memory_order_relaxed),
         .ymTimerExpirations  = ymInterface_.timerExpirationCount(),
-        .queuedEvents        = queued,
-        .lateEvents          = late,
+        .queuedEvents        = queuedEventCount_.load(std::memory_order_relaxed),
+        .lateEvents          = lateEventCount_.load(std::memory_order_relaxed),
+        .droppedEvents       = contentionDrops + queueFullDrops + unavailableDrops,
+        .contentionDrops     = contentionDrops,
+        .queueFullDrops      = queueFullDrops,
+        .unavailableDrops    = unavailableDrops,
         .clippedSamples      = clippedSampleCount_.load(std::memory_order_relaxed),
         .peakLeft            = peakSample_[0].load(std::memory_order_relaxed),
         .peakRight           = peakSample_[1].load(std::memory_order_relaxed),
-        .ringBufferedFrames  = ringBufferedFrames_,
+        .ringBufferedFrames  = ringBufferedFramesSnapshot_.load(std::memory_order_relaxed),
         .fmSourceSampleRate  = fmSampleRate_,
     };
 }
@@ -251,7 +292,10 @@ void Sound::resetChipState() {
     renderMasterCycle_ = std::max(0.0, static_cast<double>(masterCyclesNow()) - kEventLatencyCycles);
     lastRenderedMasterCycle_.store(0, std::memory_order_relaxed);
     queuedYMAddress_ = 0;
-    lateEventCount_  = 0;
+    lateEventCount_.store(0, std::memory_order_relaxed);
+    contentionDropCount_.store(0, std::memory_order_relaxed);
+    queueFullDropCount_.store(0, std::memory_order_relaxed);
+    unavailableDropCount_.store(0, std::memory_order_relaxed);
     clippedSampleCount_.store(0, std::memory_order_relaxed);
     peakSample_[0].store(0, std::memory_order_relaxed);
     peakSample_[1].store(0, std::memory_order_relaxed);
@@ -260,10 +304,13 @@ void Sound::resetChipState() {
     dcPrevOutput_.fill(0.0);
     lowpassState_.fill(0.0);
     pendingEvents_.clear();
+    renderEvents_.clear();
+    queuedEventCount_.store(0, std::memory_order_relaxed);
     ringBuffer_.assign(kRingBufferFrames * 2, 0);
     ringReadFrame_      = 0;
     ringWriteFrame_     = 0;
     ringBufferedFrames_ = 0;
+    ringBufferedFramesSnapshot_.store(0, std::memory_order_relaxed);
     audioFramesRendered_.store(0, std::memory_order_relaxed);
     underrunCount_.store(0, std::memory_order_relaxed);
     overrunCount_.store(0, std::memory_order_relaxed);
@@ -290,6 +337,7 @@ void Sound::ensureRingFrames(int frames) {
         ringReadFrame_      = 0;
         ringWriteFrame_     = 0;
         ringBufferedFrames_ = 0;
+        ringBufferedFramesSnapshot_.store(0, std::memory_order_relaxed);
     }
 
     const size_t capacityFrames = ringBuffer_.size() / 2;
@@ -321,6 +369,7 @@ void Sound::pushRingFrames(const int16_t *src, int frames) {
         ringWriteFrame_               = (ringWriteFrame_ + 1) % capacityFrames;
         ++ringBufferedFrames_;
     }
+    ringBufferedFramesSnapshot_.store(ringBufferedFrames_, std::memory_order_relaxed);
 }
 
 void Sound::popRingFrames(int16_t *dst, int frames) {
@@ -339,6 +388,7 @@ void Sound::popRingFrames(int16_t *dst, int frames) {
         ringReadFrame_        = (ringReadFrame_ + 1) % capacityFrames;
         --ringBufferedFrames_;
     }
+    ringBufferedFramesSnapshot_.store(ringBufferedFrames_, std::memory_order_relaxed);
 }
 
 void Sound::renderSamples(int16_t *dst, int frames) {
@@ -355,14 +405,34 @@ void Sound::renderSamples(int16_t *dst, int frames) {
         }
         const double step = (kMasterClock / static_cast<double>(kSampleRate)) *
                             (1.0 - std::clamp(error / kSnapCycles, -kMaxRateTrim, kMaxRateTrim));
+
+        // Drain once per render chunk. Both sides use try-lock in realtime:
+        // contention may make the audio less accurate, but neither the game
+        // nor the device callback inherits the other thread's latency.
+        renderEvents_.clear();
+        const uint64_t chunkLastCycle =
+            static_cast<uint64_t>(renderMasterCycle_ + (step * static_cast<double>(chunkFrames - 1)));
+        bool queueLocked = false;
+        if (realtimeMode_.load(std::memory_order_acquire))
+            queueLocked = SDL_TryLockMutex(mutex_);
+        else {
+            SDL_LockMutex(mutex_);
+            queueLocked = true;
+        }
+        if (queueLocked) {
+            drainEventsUntil(chunkLastCycle, renderEvents_);
+            SDL_UnlockMutex(mutex_);
+            std::stable_sort(renderEvents_.begin(), renderEvents_.end(), [](const TimedEvent &a, const TimedEvent &b) {
+                return a.masterCycle < b.masterCycle;
+            });
+        }
+
+        size_t nextEvent = 0;
         for (int i = 0; i < chunkFrames; ++i) {
             const int      frame       = base + i;
             const uint64_t masterCycle = static_cast<uint64_t>(renderMasterCycle_);
-            // Only the queue drain takes the lock; the chip is owned by this
-            // thread, so generation never blocks the producer (game) threads.
-            SDL_LockMutex(mutex_);
-            processEventsUntil(masterCycle);
-            SDL_UnlockMutex(mutex_);
+            while (nextEvent < renderEvents_.size() && renderEvents_[nextEvent].masterCycle <= masterCycle)
+                applyEvent(renderEvents_[nextEvent++]);
             ymInterface_.syncTimersToMasterCycle(masterCycle);
             const auto fm       = renderFM();
             const auto psg      = psg_.render();
@@ -380,20 +450,16 @@ void Sound::renderSamples(int16_t *dst, int frames) {
     }
 }
 
-void Sound::enqueueEvent(TimedEvent event) {
-    if (FILE *log = ymLogFile()) {
-        std::fprintf(log,
-                     "%c %llu tid=%llu port=%u val=%02X\n",
-                     event.type == EventType::YMWrite ? 'Y' : 'P',
-                     static_cast<unsigned long long>(event.masterCycle),
-                     static_cast<unsigned long long>(SDL_GetCurrentThreadID()),
-                     event.port,
-                     event.value);
+bool Sound::enqueueEvent(TimedEvent event) {
+    if (pendingEvents_.size() >= kMaxPendingEvents) {
+        queueFullDropCount_.fetch_add(1, std::memory_order_relaxed);
+        return false;
     }
+
     const uint64_t lastRendered = lastRenderedMasterCycle_.load(std::memory_order_relaxed);
     if (event.masterCycle < lastRendered) {
         event.masterCycle = lastRendered;
-        ++lateEventCount_;
+        lateEventCount_.fetch_add(1, std::memory_order_relaxed);
     }
 
     if (event.type == EventType::YMWrite) {
@@ -409,21 +475,44 @@ void Sound::enqueueEvent(TimedEvent event) {
         }
     }
 
-    auto it = pendingEvents_.end();
-    while (it != pendingEvents_.begin() && (it - 1)->masterCycle > event.masterCycle)
-        --it;
-    pendingEvents_.insert(it, event);
+    // Constant-time producer path. Different producer threads can append
+    // slightly out of timestamp order; the audio thread sorts drained events.
+    pendingEvents_.push_back(event);
+    queuedEventCount_.store(pendingEvents_.size(), std::memory_order_relaxed);
+    return true;
+}
+
+void Sound::drainEventsUntil(uint64_t masterCycle, std::vector<TimedEvent> &events) {
+    size_t keep = 0;
+    for (size_t i = 0; i < pendingEvents_.size(); ++i) {
+        if (pendingEvents_[i].masterCycle <= masterCycle)
+            events.push_back(pendingEvents_[i]);
+        else
+            pendingEvents_[keep++] = pendingEvents_[i];
+    }
+    pendingEvents_.resize(keep);
+    queuedEventCount_.store(keep, std::memory_order_relaxed);
 }
 
 void Sound::processEventsUntil(uint64_t masterCycle) {
-    while (!pendingEvents_.empty() && pendingEvents_.front().masterCycle <= masterCycle) {
-        TimedEvent event = pendingEvents_.front();
-        pendingEvents_.pop_front();
+    renderEvents_.clear();
+    drainEventsUntil(masterCycle, renderEvents_);
+    std::stable_sort(renderEvents_.begin(), renderEvents_.end(), [](const TimedEvent &a, const TimedEvent &b) {
+        return a.masterCycle < b.masterCycle;
+    });
+    for (const TimedEvent &event : renderEvents_)
         applyEvent(event);
-    }
 }
 
 void Sound::applyEvent(const TimedEvent &event) {
+    if (FILE *log = ymLogFile()) {
+        std::fprintf(log,
+                     "%c %llu port=%u val=%02X\n",
+                     event.type == EventType::YMWrite ? 'Y' : 'P',
+                     static_cast<unsigned long long>(event.masterCycle),
+                     event.port,
+                     event.value);
+    }
     ymInterface_.syncTimersToMasterCycle(event.masterCycle);
     if (event.type == EventType::YMWrite) {
         ym_.write(event.port & 3u, event.value);
@@ -482,7 +571,7 @@ void Sound::YMInterface::resetTiming() {
     timerActive_.fill(false);
     busyUntilMasterCycle_ = 0;
     currentMasterCycle_   = 0;
-    timerExpirations_     = 0;
+    timerExpirations_.store(0, std::memory_order_relaxed);
     irq_                  = false;
     syncingTimers_        = false;
 }
@@ -514,7 +603,7 @@ void Sound::YMInterface::syncTimersToMasterCycle(uint64_t masterCycle) {
 
         timerActive_[static_cast<size_t>(expiredTimer)]               = false;
         timerDeadlineMasterCycles_[static_cast<size_t>(expiredTimer)] = 0;
-        ++timerExpirations_;
+        timerExpirations_.fetch_add(1, std::memory_order_relaxed);
         if (m_engine)
             m_engine->engine_timer_expired(static_cast<uint32_t>(expiredTimer));
     }
@@ -565,7 +654,7 @@ bool Sound::YMInterface::irqAsserted() const {
 }
 
 uint64_t Sound::YMInterface::timerExpirationCount() const {
-    return timerExpirations_;
+    return timerExpirations_.load(std::memory_order_relaxed);
 }
 
 void Sound::PSG::reset() {

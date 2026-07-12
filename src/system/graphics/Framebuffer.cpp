@@ -1,6 +1,6 @@
 /**
  * @file Framebuffer.cpp
- * @brief 320×240 BGR framebuffer for the VDP emulator.
+ * @brief 320×480 BGR framebuffer for the VDP emulator.
  */
 
 #include "Framebuffer.hpp"

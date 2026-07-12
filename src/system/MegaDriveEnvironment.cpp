@@ -31,8 +31,10 @@ bool auxFileContainsAddress(const std::string &path, unsigned addr) {
 
 } // namespace
 
-MegaDriveEnvironment::MegaDriveEnvironment(VDP::Synchronization sync, VDP::Scaling scaling)
-    : memory_(this), z80_(this), sound_(this), controllers_(this), vdp_(this, sync, scaling) {
+MegaDriveEnvironment::MegaDriveEnvironment(VDP::Synchronization sync,
+                                           VDP::Scaling scaling,
+                                           VDP::SpriteLimitMode spriteLimitMode)
+    : memory_(this), z80_(this), sound_(this), controllers_(this), vdp_(this, sync, scaling, spriteLimitMode) {
 }
 
 MegaDriveEnvironment::~MegaDriveEnvironment() {
@@ -157,11 +159,17 @@ void MegaDriveEnvironment::logFrame(unsigned frame, bool displayEnabled) {
 
     const Sound::Diagnostics snd = sound_.diagnostics();
     std::fprintf(stderr,
-                 "[snd] frames=%llu queued=%llu late=%llu under=%llu over=%llu clip=%llu timers=%llu peakL=%d "
+                 "[snd] frames=%llu queued=%llu late=%llu drop=%llu(cont=%llu full=%llu unavailable=%llu) "
+                 "under=%llu over=%llu "
+                 "clip=%llu timers=%llu peakL=%d "
                  "peakR=%d\n",
                  static_cast<unsigned long long>(snd.audioFramesRendered),
                  static_cast<unsigned long long>(snd.queuedEvents),
                  static_cast<unsigned long long>(snd.lateEvents),
+                 static_cast<unsigned long long>(snd.droppedEvents),
+                 static_cast<unsigned long long>(snd.contentionDrops),
+                 static_cast<unsigned long long>(snd.queueFullDrops),
+                 static_cast<unsigned long long>(snd.unavailableDrops),
                  static_cast<unsigned long long>(snd.underruns),
                  static_cast<unsigned long long>(snd.overruns),
                  static_cast<unsigned long long>(snd.clippedSamples),
@@ -312,12 +320,12 @@ void MegaDriveEnvironment::powerOn() {
     cpu_.setStatus(0x2700);
     m68kMasterCycles_.store(0, std::memory_order_release);
     vdp_.start();
-    z80_.start();
     sound_.start();
+    z80_.start();
 }
 
 void MegaDriveEnvironment::powerOff() {
-    sound_.stop();
     z80_.stop();
+    sound_.stop();
     vdp_.stop();
 }

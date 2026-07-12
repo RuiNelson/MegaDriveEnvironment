@@ -64,11 +64,20 @@ class VDP {
         Scale3x = 3,  ///< 3x scaling (960×672)
     };
 
+    /// Sprite rendering policy. Hardware sets SOVR either way; this controls whether excess sprites are clipped.
+    enum SpriteLimitMode : int {
+        HardwareSpriteLimit = 0,
+        QuasiUnlimitedSprites = 1,
+    };
+
     /// Initializes VDP emulator with given sync and scaling modes. Creates the
     /// SDL window/renderer but does not spawn the render thread — call start().
     /// @param env Owning environment; receives vSync()/hSync() callbacks and
     ///            provides system memory for DMA. Must outlive this VDP.
-    VDP(MegaDriveEnvironment *env, Synchronization synchronization, Scaling scaling);
+    VDP(MegaDriveEnvironment *env,
+        Synchronization synchronization,
+        Scaling scaling,
+        SpriteLimitMode spriteLimitMode = HardwareSpriteLimit);
 
     /// Shuts down render thread and releases all resources.
     ~VDP();
@@ -142,7 +151,7 @@ class VDP {
     VDPRenderer renderer_;
     /// Debug PNG export helper.
     VDPRendererDebug rendererDebug_;
-    /// Output framebuffer (320×224, 3 bits per channel).
+    /// Output framebuffer (up to 320×480, 3 bits per channel).
     Framebuffer framebuffer_;
 
     /// SDL window handle for display.
@@ -174,7 +183,7 @@ class VDP {
     SDL_Mutex *irqMutex_ = nullptr;
     /// Upper bound on pending interrupts; oldest are dropped past this so a
     /// program that never services interrupts cannot grow the queue unbounded.
-    static constexpr size_t IRQ_QUEUE_MAX = VDPState::SCREEN_H * 3;
+    static constexpr size_t IRQ_QUEUE_MAX = VDPState::MAX_SCREEN_H * 3;
 
     /// Appends an interrupt to irqQueue_ (drops the oldest if at capacity).
     void scheduleInterrupt(Interrupt::Type type, int line);

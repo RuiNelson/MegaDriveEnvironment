@@ -14,13 +14,14 @@
 /// Initializes SDL, creates window and renderer, and resets VDP state. The
 /// render thread is not spawned here — call start() once the environment is
 /// fully constructed.
-VDP::VDP(MegaDriveEnvironment *env, Synchronization synchronization, Scaling scaling)
+VDP::VDP(MegaDriveEnvironment *env, Synchronization synchronization, Scaling scaling, SpriteLimitMode spriteLimitMode)
     : state_(), tile_(state_), port_(state_), renderer_(state_, tile_, framebuffer_),
       rendererDebug_(state_, tile_, framebuffer_), syncMode_(synchronization), scalingMode_(scaling), env_(env) {
     SDL_Init(SDL_INIT_VIDEO);
     mutex_    = SDL_CreateMutex();
     irqMutex_ = SDL_CreateMutex();
     port_.setEnvironment(env);
+    renderer_.setHardwareSpriteLimits(spriteLimitMode == HardwareSpriteLimit);
     state_.reset();
 
     int winW = VDPState::SCREEN_W;
@@ -65,8 +66,8 @@ VDP::VDP(MegaDriveEnvironment *env, Synchronization synchronization, Scaling sca
             texture_ = SDL_CreateTexture(sdlRenderer_,
                                          SDL_PIXELFORMAT_BGR24,
                                          SDL_TEXTUREACCESS_STREAMING,
-                                         VDPState::SCREEN_W,
-                                         VDPState::SCREEN_H);
+                                         VDPState::MAX_SCREEN_W,
+                                         VDPState::MAX_SCREEN_H);
             if (texture_) {
                 SDL_SetTextureScaleMode(texture_, (scalingMode_ == Fit) ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
             }
@@ -256,9 +257,7 @@ void VDP::sdlPresentCallback(void *userdata) {
 void VDP::sdlRepeatCallback(void *userdata) {
     auto *self = static_cast<VDP *>(userdata);
     if (self->sdlRenderer_ && self->texture_) {
-        SDL_RenderClear(self->sdlRenderer_);
-        SDL_RenderTexture(self->sdlRenderer_, self->texture_, nullptr, nullptr);
-        SDL_RenderPresent(self->sdlRenderer_);
+        self->presentToScreen();
     }
 }
 
@@ -267,8 +266,37 @@ void VDP::presentToScreen() {
     if (!texture_)
         return;
     framebuffer_.uploadToTexture(texture_);
+
+    m_byte bgR, bgG, bgB;
+    tile_.cramToRGB_FullRange(static_cast<m_byte>(state_.bgColorPalette()),
+                              static_cast<m_byte>(state_.bgColorIndex()),
+                              bgR,
+                              bgG,
+                              bgB);
+    SDL_SetRenderDrawColor(sdlRenderer_, bgR, bgG, bgB, SDL_ALPHA_OPAQUE);
     SDL_RenderClear(sdlRenderer_);
-    SDL_RenderTexture(sdlRenderer_, texture_, nullptr, nullptr);
+
+    int outputW = 0;
+    int outputH = 0;
+    if (!SDL_GetRenderOutputSize(sdlRenderer_, &outputW, &outputH) || outputW <= 0 || outputH <= 0)
+        return;
+
+    const int framebufferW = state_.activeWidth();
+    const int framebufferH = state_.activeOutputHeight();
+    const float scale = std::min(static_cast<float>(outputW) / static_cast<float>(framebufferW),
+                                 static_cast<float>(outputH) / static_cast<float>(framebufferH));
+    const float viewportW = static_cast<float>(framebufferW) * scale;
+    const float viewportH = static_cast<float>(framebufferH) * scale;
+
+    SDL_FRect src{0.0f,
+                  0.0f,
+                  static_cast<float>(framebufferW),
+                  static_cast<float>(framebufferH)};
+    SDL_FRect dst{(static_cast<float>(outputW) - viewportW) * 0.5f,
+                  (static_cast<float>(outputH) - viewportH) * 0.5f,
+                  viewportW,
+                  viewportH};
+    SDL_RenderTexture(sdlRenderer_, texture_, &src, &dst);
     SDL_RenderPresent(sdlRenderer_);
 }
 
@@ -296,8 +324,15 @@ int VDP::renderLoop() {
             // scheduleInterrupt(HSync) is safe under mutex_: it only touches
             // irqMutex_ + a raiseInterrupt atomic, never mutex_ itself.
             SDL_LockMutex(mutex_);
+            framebuffer_.clear();
+            state_.status_ &= ~0x0088; // clear VINT/VBlank at the start of active rendering
+            if (state_.interlaced() && state_.oddFrame_)
+                state_.status_ |= 0x0010;
+            else
+                state_.status_ &= ~0x0010;
             int hintCountdown = state_.hintReloadValue();
-            for (int line = 0; line < VDPState::SCREEN_H; ++line) {
+            const int activeLines = state_.activeHeight();
+            for (int line = 0; line < activeLines; ++line) {
                 state_.vCounter_ = static_cast<m_word>(line);
                 renderer_.renderScanline(line);
                 --hintCountdown;
@@ -312,7 +347,7 @@ int VDP::renderLoop() {
         }
 
         SDL_LockMutex(mutex_);
-        state_.status_ |= 0x0008; // VBlank flag
+        state_.status_ |= 0x0088; // VBlank + VINT flags
         SDL_UnlockMutex(mutex_);
 
         scheduleInterrupt(Interrupt::VSync, 0);
@@ -351,6 +386,11 @@ int VDP::renderLoop() {
         SDL_LockMutex(mutex_);
         state_.status_ &= ~0x0008;
         state_.vCounter_ = 0;
+        if (state_.interlaced()) {
+            state_.oddFrame_ = !state_.oddFrame_;
+        } else {
+            state_.oddFrame_ = false;
+        }
         SDL_UnlockMutex(mutex_);
 
         if (syncMode_ == InternalTimer) {

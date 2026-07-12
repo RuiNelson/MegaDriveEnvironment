@@ -10,7 +10,6 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <memory>
 #include <vector>
 
@@ -58,6 +57,10 @@ class Sound {
         uint64_t ymTimerExpirations  = 0;
         uint64_t queuedEvents        = 0;
         uint64_t lateEvents          = 0;
+        uint64_t droppedEvents       = 0;
+        uint64_t contentionDrops     = 0;
+        uint64_t queueFullDrops      = 0;
+        uint64_t unavailableDrops    = 0;
         uint64_t clippedSamples      = 0;
         int32_t  peakLeft            = 0;
         int32_t  peakRight           = 0;
@@ -93,7 +96,7 @@ class Sound {
         std::array<bool, 2>     timerActive_{};
         uint64_t                busyUntilMasterCycle_ = 0;
         uint64_t                currentMasterCycle_   = 0;
-        uint64_t                timerExpirations_     = 0;
+        std::atomic<uint64_t>   timerExpirations_{0};
         bool                    irq_                  = false;
         bool                    syncingTimers_        = false;
     };
@@ -136,23 +139,27 @@ class Sound {
     void               pushRingFrames(const int16_t *src, int frames);
     void               popRingFrames(int16_t *dst, int frames);
     void               renderSamples(int16_t *dst, int frames);
-    void               enqueueEvent(TimedEvent event);
+    bool               enqueueEvent(TimedEvent event);
+    void               drainEventsUntil(uint64_t masterCycle, std::vector<TimedEvent> &events);
     void               processEventsUntil(uint64_t masterCycle);
     void               applyEvent(const TimedEvent &event);
     std::array<int, 2> renderFM();
     std::array<int, 2> filterOutput(std::array<int, 2> sample);
     int16_t            clampMixedSample(int value, size_t channel);
 
-    // Threading model while streaming: producers (68K/Z80 threads) only touch
-    // the event queue under mutex_ (short critical sections) and read the
-    // atomic cachedStatus_; the chip state (ym_, psg_, ymInterface_, filters,
-    // render clock) is owned exclusively by the audio render thread. Headless
-    // (!stream_) everything runs on the caller's thread.
+    // Threading model while streaming: gameplay producers never wait for the
+    // sound thread. They try the queue mutex once and drop the write if it is
+    // busy or full. The audio thread likewise drains the queue without waiting
+    // and applies events only after releasing the mutex. Chip state belongs to
+    // the audio thread. Before start() (headless diagnostics), calls remain
+    // synchronous for deterministic tests.
     MegaDriveEnvironment *env_              = nullptr;
     SDL_Mutex            *mutex_            = nullptr; ///< guards pendingEvents_ + enqueue bookkeeping
     SDL_AudioStream      *stream_           = nullptr;
     bool                  audioInitialized_ = false;
     std::atomic<bool>     disabled_{false};
+    std::atomic<bool>     realtimeMode_{false}; ///< once started, gameplay-facing operations never block on audio
+    std::atomic<bool>     consumerAvailable_{false}; ///< an audio callback exists to drain producer events
     std::atomic<uint8_t>  cachedStatus_{0}; ///< last YM status published by the render thread
 
     YMInterface                         ymInterface_;
@@ -167,19 +174,25 @@ class Sound {
     std::atomic<uint64_t>               lastRenderedMasterCycle_{0};
     uint64_t                            baseTimeNS_      = 0;
     uint8_t                             queuedYMAddress_ = 0; ///< enqueue-time shadow of the port-0 address latch
-    uint64_t                            lateEventCount_  = 0;
+    std::atomic<uint64_t>               lateEventCount_{0};
+    std::atomic<uint64_t>               contentionDropCount_{0};
+    std::atomic<uint64_t>               queueFullDropCount_{0};
+    std::atomic<uint64_t>               unavailableDropCount_{0};
+    std::atomic<size_t>                 queuedEventCount_{0};
     std::atomic<uint64_t>               clippedSampleCount_{0};
     std::array<std::atomic<int32_t>, 2> peakSample_{};
     std::array<double, 2>               dcPrevInput_{};
     std::array<double, 2>               dcPrevOutput_{};
     std::array<double, 2>               lowpassState_{};
-    std::deque<TimedEvent>              pendingEvents_;
+    std::vector<TimedEvent>             pendingEvents_;
+    std::vector<TimedEvent>             renderEvents_;
     std::vector<int16_t>                callbackBuffer_;
     std::vector<int16_t>                renderBuffer_;
     std::vector<int16_t>                ringBuffer_;
     size_t                              ringReadFrame_      = 0;
     size_t                              ringWriteFrame_     = 0;
     size_t                              ringBufferedFrames_ = 0;
+    std::atomic<size_t>                 ringBufferedFramesSnapshot_{0};
     std::atomic<uint64_t>               audioFramesRendered_{0};
     std::atomic<uint64_t>               underrunCount_{0};
     std::atomic<uint64_t>               overrunCount_{0};

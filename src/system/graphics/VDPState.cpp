@@ -19,9 +19,13 @@ void VDPState::reset() {
     address_           = 0;
     dmaFillPending_    = false;
     status_            = 0x34C0;
+    dmaEndCycle_       = 0;
+    std::memset(fifoDrainCycle_, 0, sizeof(fifoDrainCycle_));
+    fifoIndex_  = 0;
     vCounter_          = 0;
     hCounter_          = 0;
     readBuffer_        = 0;
+    oddFrame_          = false;
 }
 
 /// Returns plane A base address from register $02 bits 5–3 shifted to VRAM offset.
@@ -145,4 +149,50 @@ bool VDPState::windowRight() const {
 /// Returns true if window is positioned on bottom of screen from register $12 bit 7.
 bool VDPState::windowDown() const {
     return (regs_[0x12] & 0x80) != 0;
+}
+
+bool VDPState::h40Mode() const {
+    return (regs_[0x0C] & 0x01) != 0;
+}
+
+int VDPState::activeWidth() const {
+    return h40Mode() ? 320 : 256;
+}
+
+int VDPState::activeHeight() const {
+    return (regs_[0x01] & 0x08) ? 240 : 224;
+}
+
+int VDPState::activeOutputHeight() const {
+    return activeHeight() * (interlaced() ? 2 : 1);
+}
+
+int VDPState::interlaceMode() const {
+    return (regs_[0x0C] >> 1) & 0x03;
+}
+
+bool VDPState::interlaced() const {
+    return interlaceMode() != 0;
+}
+
+bool VDPState::shadowHighlightEnabled() const {
+    return (regs_[0x0C] & 0x08) != 0;
+}
+
+int VDPState::linesPerFrame(bool pal) const {
+    return pal ? PAL_LINES_PER_FRAME : NTSC_LINES_PER_FRAME;
+}
+
+void VDPState::updateCountersFromCycles(uint64_t masterCycles, bool pal) {
+    const int frameLines = linesPerFrame(pal);
+    uint64_t  frameCycle = masterCycles % static_cast<uint64_t>(frameLines * MASTER_CYCLES_PER_LINE);
+    vCounter_ = static_cast<m_word>(frameCycle / MASTER_CYCLES_PER_LINE);
+
+    const uint64_t lineCycle = frameCycle % MASTER_CYCLES_PER_LINE;
+    hCounter_ = static_cast<m_word>((lineCycle * 256) / MASTER_CYCLES_PER_LINE);
+
+    if (dmaEndCycle_ != 0 && masterCycles >= dmaEndCycle_) {
+        dmaEndCycle_ = 0;
+        status_ &= ~0x0002;
+    }
 }

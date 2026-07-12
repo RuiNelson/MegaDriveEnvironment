@@ -1,5 +1,6 @@
 #pragma once
 #include "VDPState.hpp"
+#include <cstdint>
 
 class MegaDriveEnvironment;
 
@@ -92,4 +93,13 @@ class VDPPort {
 
     /// Mirrors one byte from vram_[] into sat_[] if byteAddr falls within the SAT region.
     void updateSATShadow(m_word byteAddr);
+
+    /// Current 68K master cycle estimate from the owning environment.
+    uint64_t currentMasterCycles() const;
+
+    /// Updates status/HV flags that depend on the current cycle estimate.
+    void updateDynamicStatus();
+
+    /// Tracks an external VDP data-port write in the simplified FIFO model.
+    void noteFIFOWrite(int accessSlots);
 };

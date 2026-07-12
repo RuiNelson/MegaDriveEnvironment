@@ -10,14 +10,15 @@
 VDPRenderer::VDPRenderer(VDPState &state, VDPTile &tile, Framebuffer &fb) : state_(state), tile_(tile), fb_(fb) {
 }
 
-/// Renders full 224-scanline frame if display is enabled; otherwise clears framebuffer to black.
+/// Renders the active visible frame if display is enabled; otherwise clears framebuffer to black.
 void VDPRenderer::renderFrame() {
+    fb_.clear();
+
     if (!state_.displayEnabled()) {
-        fb_.clear();
         return;
     }
 
-    for (int line = 0; line < VDPState::SCREEN_H; ++line) {
+    for (int line = 0; line < state_.activeHeight(); ++line) {
         state_.vCounter_ = static_cast<m_word>(line);
         renderScanline(line);
     }
@@ -70,7 +71,10 @@ void VDPRenderer::renderScanline(int line) {
     buildSpriteLine(line);
 
     // ── Per-pixel evaluation ─────────────────────────────────────────────
-    for (int x = 0; x < VDPState::SCREEN_W; ++x) {
+    const int activeWidth = s.activeWidth();
+    const int outputY = s.interlaced() ? line * 2 : line;
+
+    for (int x = 0; x < activeWidth; ++x) {
         int cellX = x / 8;
         int cellY = line / 8;
 
@@ -99,9 +103,15 @@ void VDPRenderer::renderScanline(int line) {
         CompositeResult cr = resolvePixel(planeBPx, planeAPx, spritePx, bgR, bgG, bgB);
 
         if (cr.valid) {
-            fb_.setPixel(x, line, cr.b, cr.g, cr.r);
+            fb_.setPixel(x, outputY, cr.b, cr.g, cr.r);
+            if (s.interlaced()) {
+                fb_.setPixel(x, outputY + 1, cr.b, cr.g, cr.r);
+            }
         } else {
-            fb_.setPixel(x, line, bgB, bgG, bgR);
+            fb_.setPixel(x, outputY, bgB, bgG, bgR);
+            if (s.interlaced()) {
+                fb_.setPixel(x, outputY + 1, bgB, bgG, bgR);
+            }
         }
     }
 }
@@ -152,9 +162,9 @@ VDPRenderer::getPlanePixel(int planeBase, int hscroll, int vscroll, int screenX,
         planeY += ph * 8;
 
     int cellX        = planeX / 8;
-    int cellY        = planeY / 8;
+    int cellY        = planeY / (s.interlaceMode() == 2 ? 16 : 8);
     int pixelInTileX = planeX % 8;
-    int pixelInTileY = planeY % 8;
+    int pixelInTileY = planeY % (s.interlaceMode() == 2 ? 16 : 8);
 
     int    entryAddr = (planeBase + (cellY * pw + cellX) * 2) & 0xFFFF;
     m_word entry     = static_cast<m_word>((s.vram_[entryAddr] << 8) | s.vram_[entryAddr + 1]);
@@ -163,7 +173,11 @@ VDPRenderer::getPlanePixel(int planeBase, int hscroll, int vscroll, int screenX,
     m_byte palette   = static_cast<m_byte>((entry >> 13) & 0x03);
     bool   vflip     = (entry & 0x1000) != 0;
     bool   hflip     = (entry & 0x0800) != 0;
-    int    tileIndex = entry & 0x07FF;
+    int tileIndex = entry & 0x07FF;
+    if (s.interlaceMode() == 2) {
+        tileIndex = ((entry & 0x03FF) << 1) | (pixelInTileY >> 3);
+        pixelInTileY &= 0x07;
+    }
 
     m_byte colorIdx = tile_.getTilePixel(tileIndex * 32, pixelInTileX, pixelInTileY, hflip, vflip);
 
@@ -174,12 +188,12 @@ VDPRenderer::getPlanePixel(int planeBase, int hscroll, int vscroll, int screenX,
 VDPRenderer::PixelResult VDPRenderer::getWindowPixel(int screenX, int screenY) const {
     const VDPState &s      = state_;
     int             wBase  = s.windowBase();
-    int             wWidth = 64; // Window nametable width in H40 mode
+    int             wWidth = s.h40Mode() ? 64 : 32;
 
     int cellX        = screenX / 8;
-    int cellY        = screenY / 8;
+    int cellY        = screenY / (s.interlaceMode() == 2 ? 16 : 8);
     int pixelInTileX = screenX % 8;
-    int pixelInTileY = screenY % 8;
+    int pixelInTileY = screenY % (s.interlaceMode() == 2 ? 16 : 8);
 
     int    entryAddr = (wBase + (cellY * wWidth + cellX) * 2) & 0xFFFF;
     m_word entry     = static_cast<m_word>((s.vram_[entryAddr] << 8) | s.vram_[entryAddr + 1]);
@@ -188,7 +202,11 @@ VDPRenderer::PixelResult VDPRenderer::getWindowPixel(int screenX, int screenY) c
     m_byte palette   = static_cast<m_byte>((entry >> 13) & 0x03);
     bool   vflip     = (entry & 0x1000) != 0;
     bool   hflip     = (entry & 0x0800) != 0;
-    int    tileIndex = entry & 0x07FF;
+    int tileIndex = entry & 0x07FF;
+    if (s.interlaceMode() == 2) {
+        tileIndex = ((entry & 0x03FF) << 1) | (pixelInTileY >> 3);
+        pixelInTileY &= 0x07;
+    }
 
     m_byte colorIdx = tile_.getTilePixel(tileIndex * 32, pixelInTileX, pixelInTileY, hflip, vflip);
 
@@ -202,8 +220,8 @@ VDPRenderer::PixelResult VDPRenderer::getWindowPixel(int screenX, int screenY) c
 /// frame, reverts to early-return semantics to keep rendering cost identical to a no-collision scan.
 VDPRenderer::PixelResult VDPRenderer::getSpritePixel(int screenX, int screenY) {
     VDPState            &s                    = state_;
-    static constexpr int HW_SPRITES_PER_LINE  = 20;   // hardware limit (H40); SOVR set when exceeded
-    static constexpr int MAX_SPRITES_PER_LINE = 1000; // extended render limit (not hardware-accurate)
+    const int            hwSpritesPerLine     = s.h40Mode() ? 20 : 16;
+    const int            maxSpritesPerLine    = hardwareSpriteLimits_ ? hwSpritesPerLine : 1000;
 
     int         base          = s.satBase();
     int         spriteIdx     = 0;
@@ -248,9 +266,9 @@ VDPRenderer::PixelResult VDPRenderer::getSpritePixel(int screenX, int screenY) {
 
             if (!masked) {
                 spritesOnLine++;
-                if (spritesOnLine == HW_SPRITES_PER_LINE + 1)
+                if (spritesOnLine == hwSpritesPerLine + 1)
                     s.status_ |= 0x40; // SOVR
-                if (spritesOnLine > MAX_SPRITES_PER_LINE)
+                if (spritesOnLine > maxSpritesPerLine)
                     break;
 
                 if (screenX >= spriteX && screenX < spriteX + spritePixelW) {
@@ -267,12 +285,15 @@ VDPRenderer::PixelResult VDPRenderer::getSpritePixel(int screenX, int screenY) {
                     if (vflip)
                         py = spritePixelH - 1 - py;
 
-                    int tileCol = px / 8;
-                    int tileRow = py / 8;
-                    int tileIdx = baseTile + tileCol * sizeH + tileRow;
-
+                    int tileCol    = px / 8;
+                    int tileRow    = py / (s.interlaceMode() == 2 ? 16 : 8);
                     int pixInTileX = px % 8;
-                    int pixInTileY = py % 8;
+                    int pixInTileY = py % (s.interlaceMode() == 2 ? 16 : 8);
+                    int tileIdx    = baseTile + tileCol * sizeH + tileRow;
+                    if (s.interlaceMode() == 2) {
+                        tileIdx = ((tileIdx & 0x03FF) << 1) | (pixInTileY >> 3);
+                        pixInTileY &= 0x07;
+                    }
 
                     m_byte colorIdx = tile_.getTilePixel(tileIdx * 32, pixInTileX, pixInTileY, false, false);
 
@@ -309,10 +330,12 @@ VDPRenderer::PixelResult VDPRenderer::getSpritePixel(int screenX, int screenY) {
 /// opaque sprite in chain order claims each pixel (a later opaque pixel landing on a taken slot sets SCOL).
 void VDPRenderer::buildSpriteLine(int line) {
     VDPState            &s                    = state_;
-    static constexpr int HW_SPRITES_PER_LINE  = 20;   // hardware limit (H40); SOVR set when exceeded
-    static constexpr int MAX_SPRITES_PER_LINE = 1000; // extended render limit (not hardware-accurate)
+    const int            hwSpritesPerLine     = s.h40Mode() ? 20 : 16;
+    const int            maxSpritesPerLine    = hardwareSpriteLimits_ ? hwSpritesPerLine : 1000;
+    const int            maxSpritePixels      = hardwareSpriteLimits_ ? s.activeWidth() : 1000000;
+    int                  spritePixelsOnLine   = 0;
 
-    for (int x = 0; x < VDPState::SCREEN_W; ++x)
+    for (int x = 0; x < VDPState::MAX_SCREEN_W; ++x)
         spriteLine_[x] = {0, 0, false, false};
 
     int  base          = s.satBase();
@@ -356,9 +379,9 @@ void VDPRenderer::buildSpriteLine(int line) {
 
             if (!masked) {
                 spritesOnLine++;
-                if (spritesOnLine == HW_SPRITES_PER_LINE + 1)
+                if (spritesOnLine == hwSpritesPerLine + 1)
                     s.status_ |= 0x40; // SOVR
-                if (spritesOnLine > MAX_SPRITES_PER_LINE)
+                if (spritesOnLine > maxSpritesPerLine)
                     break;
 
                 bool   priority = (tileWord & 0x8000) != 0;
@@ -366,19 +389,26 @@ void VDPRenderer::buildSpriteLine(int line) {
                 bool   vflip    = (tileWord & 0x1000) != 0;
                 bool   hflip    = (tileWord & 0x0800) != 0;
                 int    baseTile = tileWord & 0x07FF;
+                spritePixelsOnLine += spritePixelW;
 
                 // The row within the sprite is constant across the span — resolve it once.
                 int py = line - spriteY;
                 if (vflip)
                     py = spritePixelH - 1 - py;
-                int tileRow    = py / 8;
-                int pixInTileY = py % 8;
+                int tileRow    = py / (s.interlaceMode() == 2 ? 16 : 8);
+                int pixInTileY = py % (s.interlaceMode() == 2 ? 16 : 8);
 
                 // Clip the horizontal span to the visible screen so only on-screen pixels are touched.
                 int xStart = spriteX < 0 ? 0 : spriteX;
                 int xEnd   = spriteX + spritePixelW;
-                if (xEnd > VDPState::SCREEN_W)
-                    xEnd = VDPState::SCREEN_W;
+                if (xEnd > s.activeWidth())
+                    xEnd = s.activeWidth();
+                if (hardwareSpriteLimits_ && spritePixelsOnLine > maxSpritePixels) {
+                    xEnd -= spritePixelsOnLine - maxSpritePixels;
+                    if (xEnd < xStart)
+                        xEnd = xStart;
+                    s.status_ |= 0x40;
+                }
 
                 for (int screenX = xStart; screenX < xEnd; ++screenX) {
                     int px = screenX - spriteX;
@@ -388,8 +418,13 @@ void VDPRenderer::buildSpriteLine(int line) {
                     int tileCol    = px / 8;
                     int pixInTileX = px % 8;
                     int tileIdx    = baseTile + tileCol * sizeH + tileRow;
+                    int tilePixY   = pixInTileY;
+                    if (s.interlaceMode() == 2) {
+                        tileIdx = ((tileIdx & 0x03FF) << 1) | (tilePixY >> 3);
+                        tilePixY &= 0x07;
+                    }
 
-                    m_byte colorIdx = tile_.getTilePixel(tileIdx * 32, pixInTileX, pixInTileY, false, false);
+                    m_byte colorIdx = tile_.getTilePixel(tileIdx * 32, pixInTileX, tilePixY, false, false);
                     if (colorIdx != 0) {
                         if (!spriteLine_[screenX].opaque) {
                             spriteLine_[screenX] = {colorIdx, palette, priority, true};
@@ -397,6 +432,9 @@ void VDPRenderer::buildSpriteLine(int line) {
                             s.status_ |= 0x0020; // SCOL: two opaque sprite pixels overlap
                         }
                     }
+                }
+                if (hardwareSpriteLimits_ && spritePixelsOnLine >= maxSpritePixels) {
+                    break;
                 }
             }
         }
@@ -417,6 +455,35 @@ void VDPRenderer::buildSpriteLine(int line) {
 VDPRenderer::CompositeResult VDPRenderer::resolvePixel(
     PixelResult planeBPx, PixelResult planeAPx, PixelResult spritePx, m_byte bgR, m_byte bgG, m_byte bgB) const {
     CompositeResult cr{0, 0, 0, false};
+
+    if (state_.shadowHighlightEnabled() && spritePx.opaque && spritePx.palette == 3
+        && (spritePx.colorIndex == 14 || spritePx.colorIndex == 15)) {
+        auto pickUnderSprite = [&]() {
+            CompositeResult under{bgR, bgG, bgB, true};
+            if (planeAPx.opaque && planeAPx.priority) {
+                tile_.cramToRGB(planeAPx.palette, planeAPx.colorIndex, under.r, under.g, under.b);
+            } else if (planeBPx.opaque && planeBPx.priority) {
+                tile_.cramToRGB(planeBPx.palette, planeBPx.colorIndex, under.r, under.g, under.b);
+            } else if (planeAPx.opaque) {
+                tile_.cramToRGB(planeAPx.palette, planeAPx.colorIndex, under.r, under.g, under.b);
+            } else if (planeBPx.opaque) {
+                tile_.cramToRGB(planeBPx.palette, planeBPx.colorIndex, under.r, under.g, under.b);
+            }
+            return under;
+        };
+
+        cr = pickUnderSprite();
+        if (spritePx.colorIndex == 14) {
+            cr.r = static_cast<m_byte>(std::min<int>(7, cr.r + 3));
+            cr.g = static_cast<m_byte>(std::min<int>(7, cr.g + 3));
+            cr.b = static_cast<m_byte>(std::min<int>(7, cr.b + 3));
+        } else {
+            cr.r = static_cast<m_byte>(cr.r >> 1);
+            cr.g = static_cast<m_byte>(cr.g >> 1);
+            cr.b = static_cast<m_byte>(cr.b >> 1);
+        }
+        return cr;
+    }
 
     if (!planeAPx.opaque && !planeBPx.opaque && !spritePx.opaque) {
         return cr; // valid=false → use background

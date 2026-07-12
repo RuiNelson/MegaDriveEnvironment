@@ -11,10 +11,21 @@
 class VDPState {
     public:
     // ── Display constants ─────────────────────────────────────────────────
-    /// Screen width in pixels (H40 mode).
+    /// Default screen width in pixels (H40 mode).
     static constexpr int SCREEN_W = 320;
-    /// Screen height in pixels (NTSC visible area).
+    /// Default screen height in pixels (NTSC visible area).
     static constexpr int SCREEN_H = 224;
+    /// Maximum framebuffer width in pixels (H40 mode).
+    static constexpr int MAX_SCREEN_W = 320;
+    /// Maximum progressive framebuffer height in pixels (PAL/240-line mode).
+    static constexpr int MAX_PROGRESSIVE_H = 240;
+    /// Maximum output height, including interlaced output.
+    static constexpr int MAX_SCREEN_H = MAX_PROGRESSIVE_H * 2;
+    /// Approximate 68000 master cycles per scanline.
+    static constexpr int MASTER_CYCLES_PER_LINE = 3420;
+    /// NTSC/PAL total scanlines.
+    static constexpr int NTSC_LINES_PER_FRAME = 262;
+    static constexpr int PAL_LINES_PER_FRAME  = 313;
     /// Video RAM size in bytes (64 KB).
     static constexpr int VRAM_SIZE = 0x10000;
     /// Number of color entries in CRAM (4 palettes × 16 colors).
@@ -60,6 +71,12 @@ class VDPState {
     // ── Status register ─────────────────────────────────────────────────────
     /// Status register: Bit 9=FIFO empty (always 1), Bit 7–6=always 1, Bit 3=VBlank flag, Bit 1=DMA busy (always 0).
     m_word status_ = 0x34C0;
+    /// Cycle at which the current DMA operation is considered complete. Zero means no DMA is active.
+    uint64_t dmaEndCycle_ = 0;
+    /// Estimated cycles at which queued FIFO slots drain. Used for status full/empty flags.
+    uint64_t fifoDrainCycle_[4]{};
+    /// FIFO write index for status estimation.
+    int fifoIndex_ = 0;
 
     // ── HV counter ──────────────────────────────────────────────────────────
     /// Vertical counter: current scanline (0–261 in NTSC). Updated each frame.
@@ -70,6 +87,8 @@ class VDPState {
     // ── Read-ahead buffer ───────────────────────────────────────────────────
     /// Hardware read-ahead: holds value from previous data port read.
     m_word readBuffer_ = 0;
+    /// Current interlace field. Toggled once per rendered frame in interlace modes.
+    bool oddFrame_ = false;
 
     // ── Register accessors ──────────────────────────────────────────────────
 
@@ -136,6 +155,33 @@ class VDPState {
 
     /// True if window is positioned on bottom; false=top. From register $12 bit 7.
     bool windowDown() const;
+
+    /// True in H40 mode (320 pixels); false in H32 mode (256 pixels). From register $0C bit 0.
+    bool h40Mode() const;
+
+    /// Active display width in pixels (256 or 320).
+    int activeWidth() const;
+
+    /// Active progressive display height in pixels (224 or 240 for Mega Drive mode 5).
+    int activeHeight() const;
+
+    /// Active output height, doubled for interlaced output.
+    int activeOutputHeight() const;
+
+    /// Interlace mode from register $0C bits 2–1 (0=off, 1=interlace 1, 2=interlace 2).
+    int interlaceMode() const;
+
+    /// True when either interlace mode is enabled.
+    bool interlaced() const;
+
+    /// True when shadow/highlight mode is enabled. From register $0C bit 3.
+    bool shadowHighlightEnabled() const;
+
+    /// Total scanlines per frame for the selected video standard.
+    int linesPerFrame(bool pal) const;
+
+    /// Updates vCounter_/hCounter_ from an approximate 68K master cycle timestamp.
+    void updateCountersFromCycles(uint64_t masterCycles, bool pal);
 
     // ── Memory reset ────────────────────────────────────────────────────────
 

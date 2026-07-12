@@ -1,13 +1,14 @@
 #pragma once
 
+#include "VDPState.hpp"
 #include "data_types.hpp"
 #include <SDL3/SDL.h>
 #include <cstring>
 
 /**
- * @brief 320×224 BGR framebuffer (3 bytes per pixel).
+ * @brief 320×480 BGR framebuffer (3 bytes per pixel).
  *
- * Matches the Mega Drive NTSC visible area exactly (H40 mode: 320×224).
+ * Holds the largest Mega Drive VDP output used here: H40 plus 240-line interlace.
  * The VDP outputs 3 bits per colour channel (9-bit colour).
  * The framebuffer stores these native values; conversion to 8-bit-per-channel
  * is done on demand for display or PNG export.
@@ -15,9 +16,9 @@
 class Framebuffer {
     public:
     /// Framebuffer width (pixels). Mega Drive H40 mode.
-    static constexpr int WIDTH = 320;
-    /// Framebuffer height (pixels). NTSC visible area.
-    static constexpr int HEIGHT = 224;
+    static constexpr int WIDTH = VDPState::MAX_SCREEN_W;
+    /// Framebuffer height (pixels). 240-line interlaced output.
+    static constexpr int HEIGHT = VDPState::MAX_SCREEN_H;
     /// Bytes per pixel (BGR order, 3-bit per channel stored in low 3 bits).
     static constexpr int BPP = 3;
     /// Bytes per scanline (WIDTH × BPP).

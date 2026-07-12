@@ -15,7 +15,12 @@ class VDPRenderer {
     /// Initializes renderer with references to VDP state, tile decoder, and framebuffer.
     explicit VDPRenderer(VDPState &state, VDPTile &tile, Framebuffer &fb);
 
-    /// Renders a full frame (224 scanlines) into the framebuffer. Respects display enabled flag.
+    /// Enables hardware sprite clipping. When false, all linked sprites render while SOVR is still reported.
+    void setHardwareSpriteLimits(bool enabled) {
+        hardwareSpriteLimits_ = enabled;
+    }
+
+    /// Renders the active visible frame into the framebuffer. Respects display enabled flag.
     void renderFrame();
 
     /// Renders a single scanline into the framebuffer at the given Y position.
@@ -68,6 +73,8 @@ class VDPRenderer {
     VDPState    &state_;
     VDPTile     &tile_;
     Framebuffer &fb_;
+
+    bool hardwareSpriteLimits_ = true;
 
     /// Sprite layer for the scanline currently being rendered, filled by buildSpriteLine() and read by the
     /// per-pixel composite loop. Transparent (opaque=false) where no sprite covers the pixel.

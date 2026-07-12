@@ -5,6 +5,7 @@
 
 #include "VDPPort.hpp"
 #include "system/MegaDriveEnvironment.hpp"
+#include <algorithm>
 #include <vector>
 
 // ── Port I/O ─────────────────────────────────────────────────────────────────
@@ -36,9 +37,10 @@ void VDPPort::writeControlPort(m_word value) {
 
 m_word VDPPort::readControlPort() {
     VDPState &s          = *state_;
+    updateDynamicStatus();
     s.pendingSecondWord_ = false;
     m_word result        = s.status_;
-    s.status_ &= ~0x0020; // SCOL is cleared on status read (Mega Drive spec).
+    s.status_ &= ~0x0060; // SCOL/SOVR are cleared on status read.
     return result;
 }
 
@@ -92,7 +94,13 @@ m_word VDPPort::readDataPort() {
 
 m_word VDPPort::readHVCounter() {
     VDPState &s = *state_;
-    return static_cast<m_word>((s.vCounter_ << 8) | (s.hCounter_ & 0xFF));
+    updateDynamicStatus();
+    int vCounter = s.vCounter_;
+    if (s.interlaceMode() == 2) {
+        vCounter <<= 1;
+        vCounter = (vCounter & ~1) | ((vCounter >> 8) & 1);
+    }
+    return static_cast<m_word>(((vCounter & 0xFF) << 8) | (s.hCounter_ & 0xFF));
 }
 
 // ── Register write ─────────────────────────────────────────────────────────
@@ -130,6 +138,7 @@ void VDPPort::executeDMA() {
             break;
         case 2:
             s.dmaFillPending_ = true;
+            s.status_ |= 0x0002;
             break;
         case 3:
             executeDMAVRAMCopy();
@@ -148,6 +157,12 @@ void VDPPort::executeDMACopy() {
 
     int length = s.regs_[0x13] | (s.regs_[0x14] << 8);
     int count  = (length == 0) ? 65536 : length;
+
+    s.status_ |= 0x0002;
+    const int slotsPerLine = s.h40Mode() ? 18 : 16;
+    s.dmaEndCycle_ = currentMasterCycles()
+                   + std::max<uint64_t>(1, (static_cast<uint64_t>(count) * VDPState::MASTER_CYCLES_PER_LINE)
+                                               / static_cast<uint64_t>(slotsPerLine));
 
     std::vector<uint8_t> buf(static_cast<size_t>(count) * 2);
     if (env_) {
@@ -193,6 +208,12 @@ void VDPPort::executeDMAFill(m_word fillWord) {
     int    length   = s.regs_[0x13] | (s.regs_[0x14] << 8);
     int    count    = (length == 0) ? 65536 : length;
 
+    s.status_ |= 0x0002;
+    const int slotsPerLine = s.h40Mode() ? 17 : 15;
+    s.dmaEndCycle_ = currentMasterCycles()
+                   + std::max<uint64_t>(1, (static_cast<uint64_t>(count) * VDPState::MASTER_CYCLES_PER_LINE)
+                                               / static_cast<uint64_t>(slotsPerLine));
+
     s.address_ += static_cast<uint16_t>(s.autoIncrement());
     for (int i = 1; i < count; ++i) {
         s.vram_[s.address_ ^ 1] = fillByte;
@@ -208,6 +229,12 @@ void VDPPort::executeDMAVRAMCopy() {
     uint16_t  srcAddr = static_cast<uint16_t>(s.regs_[0x15] | (s.regs_[0x16] << 8));
     int       length  = s.regs_[0x13] | (s.regs_[0x14] << 8);
     int       count   = (length == 0) ? 65536 : length;
+
+    s.status_ |= 0x0002;
+    const int slotsPerLine = s.h40Mode() ? 9 : 8;
+    s.dmaEndCycle_ = currentMasterCycles()
+                   + std::max<uint64_t>(1, (static_cast<uint64_t>(count) * VDPState::MASTER_CYCLES_PER_LINE)
+                                               / static_cast<uint64_t>(slotsPerLine));
 
     for (int i = 0; i < count; ++i) {
         s.vram_[s.address_ ^ 1] = s.vram_[srcAddr ^ 1];
@@ -231,6 +258,7 @@ void VDPPort::updateSATShadow(m_word byteAddr) {
 /// Writes word to VRAM at current address (high byte to even addr, low byte to odd addr). Auto-increments address.
 void VDPPort::writeVRAM(m_word value) {
     VDPState &s    = *state_;
+    noteFIFOWrite(2);
     m_word    addr = s.address_;
     if (addr & 1) {
         value = ((value >> 8) | (value << 8)) & 0xFFFF;
@@ -255,6 +283,7 @@ m_word VDPPort::readVRAM() {
 /// Auto-increments address.
 void VDPPort::writeCRAM(m_word value) {
     VDPState &s     = *state_;
+    noteFIFOWrite(1);
     int       index = (s.address_ >> 1) & 0x3F;
     s.cram_[index]  = value & 0x0EEE;
     s.address_ += static_cast<m_word>(s.autoIncrement());
@@ -272,6 +301,7 @@ m_word VDPPort::readCRAM() {
 /// bits (0x07FF). Auto-increments address.
 void VDPPort::writeVSRAM(m_word value) {
     VDPState &s     = *state_;
+    noteFIFOWrite(1);
     int       index = (s.address_ >> 1) & 0x3F;
     if (index < VDPState::VSRAM_ENTRIES) {
         s.vsram_[index] = value & 0x07FF;
@@ -289,4 +319,59 @@ m_word VDPPort::readVSRAM() {
     }
     s.address_ += static_cast<uint16_t>(s.autoIncrement());
     return result;
+}
+
+uint64_t VDPPort::currentMasterCycles() const {
+    return env_ ? env_->current68KMasterCycles() : 0;
+}
+
+void VDPPort::updateDynamicStatus() {
+    VDPState &s = *state_;
+    const bool pal = env_ != nullptr && env_->isPal50Hz();
+    const uint64_t cycles = currentMasterCycles();
+    s.updateCountersFromCycles(cycles, pal);
+
+    m_word dynamic = s.status_ & ~(0x030C);
+
+    if (!s.displayEnabled() || s.vCounter_ >= s.activeHeight()) {
+        dynamic |= 0x0008;
+    }
+
+    if (s.interlaced() && s.oddFrame_) {
+        dynamic |= 0x0010;
+    } else {
+        dynamic &= ~0x0010;
+    }
+
+    const int hblankStart = s.h40Mode() ? 0xE8 : 0xDA;
+    const int hblankEnd   = s.h40Mode() ? 0x08 : 0x10;
+    if (s.hCounter_ >= hblankStart || s.hCounter_ < hblankEnd) {
+        dynamic |= 0x0004;
+    }
+
+    const uint64_t newest = s.fifoDrainCycle_[(s.fifoIndex_ + 3) & 3];
+    const uint64_t oldest = s.fifoDrainCycle_[s.fifoIndex_];
+    if (cycles >= newest) {
+        dynamic |= 0x0200;
+    } else if (cycles < oldest) {
+        dynamic |= 0x0100;
+    }
+
+    if (s.dmaEndCycle_ != 0 && cycles < s.dmaEndCycle_) {
+        dynamic |= 0x0002;
+    }
+
+    s.status_ = dynamic;
+}
+
+void VDPPort::noteFIFOWrite(int accessSlots) {
+    VDPState &s = *state_;
+    const uint64_t cycles = currentMasterCycles();
+    const int slotsPerLine = s.h40Mode() ? 18 : 16;
+    const uint64_t slotCycles = VDPState::MASTER_CYCLES_PER_LINE / static_cast<uint64_t>(slotsPerLine);
+
+    const int prev = (s.fifoIndex_ + 3) & 3;
+    uint64_t start = std::max(cycles, s.fifoDrainCycle_[prev]);
+    s.fifoDrainCycle_[s.fifoIndex_] = start + slotCycles * static_cast<uint64_t>(std::max(1, accessSlots));
+    s.fifoIndex_ = (s.fifoIndex_ + 1) & 3;
 }

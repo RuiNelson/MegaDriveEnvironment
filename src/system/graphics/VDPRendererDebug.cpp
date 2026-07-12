@@ -54,7 +54,7 @@ Image VDPRendererDebug::renderPaletteRow(int paletteIdx, bool fullRange) const {
 Image VDPRendererDebug::renderPlaneLayer(int planeBase, bool fullRange) const {
     Color black = {0, 0, 0, 255};
 
-    Image result(ImageSize{320, 224}, black);
+    Image result(ImageSize{state_.activeWidth(), state_.activeOutputHeight()}, black);
 
     int pw = state_.planeWidthCells();
     int ph = state_.planeHeightCells();
@@ -67,15 +67,15 @@ Image VDPRendererDebug::renderPlaneLayer(int planeBase, bool fullRange) const {
             nonZero++;
     }
 
-    for (int y = 0; y < VDPState::SCREEN_H; ++y) {
-        for (int x = 0; x < VDPState::SCREEN_W; ++x) {
+    for (int y = 0; y < state_.activeOutputHeight(); ++y) {
+        for (int x = 0; x < state_.activeWidth(); ++x) {
             int planeX = x % (pw * 8);
             int planeY = y % (ph * 8);
 
             int cellX        = planeX / 8;
-            int cellY        = planeY / 8;
+            int cellY        = planeY / (state_.interlaceMode() == 2 ? 16 : 8);
             int pixelInTileX = planeX % 8;
-            int pixelInTileY = planeY % 8;
+            int pixelInTileY = planeY % (state_.interlaceMode() == 2 ? 16 : 8);
 
             int    entryAddr = (planeBase + (cellY * pw + cellX) * 2) & 0xFFFF;
             m_word entry     = static_cast<m_word>((state_.vram_[entryAddr] << 8) | state_.vram_[entryAddr + 1]);
@@ -83,7 +83,11 @@ Image VDPRendererDebug::renderPlaneLayer(int planeBase, bool fullRange) const {
             m_byte palette   = static_cast<m_byte>((entry >> 13) & 0x03);
             bool   vflip     = (entry & 0x1000) != 0;
             bool   hflip     = (entry & 0x0800) != 0;
-            int    tileIndex = entry & 0x07FF;
+            int tileIndex = entry & 0x07FF;
+            if (state_.interlaceMode() == 2) {
+                tileIndex = ((entry & 0x03FF) << 1) | (pixelInTileY >> 3);
+                pixelInTileY &= 0x07;
+            }
 
             m_byte colorIdx = tile_.getTilePixel(tileIndex * 32, pixelInTileX, pixelInTileY, hflip, vflip);
 
@@ -273,15 +277,15 @@ Image VDPRendererDebug::renderSpriteLayer(bool fullRange) const {
 }
 
 Image VDPRendererDebug::renderWindowLayer(bool fullRange) const {
-    Image result(ImageSize{320, 224}, Color{0, 0, 0, 255});
+    Image result(ImageSize{state_.activeWidth(), state_.activeOutputHeight()}, Color{0, 0, 0, 255});
 
     int wBase  = state_.windowBase();
-    int wWidth = 64;
+    int wWidth = state_.h40Mode() ? 64 : 32;
 
-    for (int y = 0; y < VDPState::SCREEN_H; ++y) {
-        for (int x = 0; x < VDPState::SCREEN_W; ++x) {
+    for (int y = 0; y < state_.activeOutputHeight(); ++y) {
+        for (int x = 0; x < state_.activeWidth(); ++x) {
             int cellX = x / 8;
-            int cellY = y / 8;
+            int cellY = y / (state_.interlaceMode() == 2 ? 16 : 8);
 
             int  hpos   = state_.windowHPos() * 2;
             int  vpos   = state_.windowVPos();
@@ -309,7 +313,7 @@ Image VDPRendererDebug::renderWindowLayer(bool fullRange) const {
 
             if (active) {
                 int pixelInTileX = x % 8;
-                int pixelInTileY = y % 8;
+                int pixelInTileY = y % (state_.interlaceMode() == 2 ? 16 : 8);
 
                 int    entryAddr = (wBase + (cellY * wWidth + cellX) * 2) & 0xFFFF;
                 m_word entry     = static_cast<m_word>((state_.vram_[entryAddr] << 8) | state_.vram_[entryAddr + 1]);
@@ -317,7 +321,11 @@ Image VDPRendererDebug::renderWindowLayer(bool fullRange) const {
                 m_byte palette   = static_cast<m_byte>((entry >> 13) & 0x03);
                 bool   vflip     = (entry & 0x1000) != 0;
                 bool   hflip     = (entry & 0x0800) != 0;
-                int    tileIndex = entry & 0x07FF;
+                int tileIndex = entry & 0x07FF;
+                if (state_.interlaceMode() == 2) {
+                    tileIndex = ((entry & 0x03FF) << 1) | (pixelInTileY >> 3);
+                    pixelInTileY &= 0x07;
+                }
 
                 m_byte colorIdx = tile_.getTilePixel(tileIndex * 32, pixelInTileX, pixelInTileY, hflip, vflip);
 
@@ -339,11 +347,11 @@ Image VDPRendererDebug::renderWindowLayer(bool fullRange) const {
 // ── Public debug image methods ────────────────────────────────────────────────
 
 Image VDPRendererDebug::makeFinalOutputImage(bool fullRange) const {
-    Image result(ImageSize{320, 224}, Color{0, 0, 0, 255});
+    Image result(ImageSize{state_.activeWidth(), state_.activeOutputHeight()}, Color{0, 0, 0, 255});
 
     const m_byte *fbData = static_cast<const m_byte *>(fb_.getRawPointer());
-    for (int y = 0; y < VDPState::SCREEN_H; ++y) {
-        for (int x = 0; x < VDPState::SCREEN_W; ++x) {
+    for (int y = 0; y < state_.activeOutputHeight(); ++y) {
+        for (int x = 0; x < state_.activeWidth(); ++x) {
             int    fbIdx = (y * Framebuffer::PITCH + x * 3);
             m_byte b     = fbData[fbIdx];
             m_byte g     = fbData[fbIdx + 1];
