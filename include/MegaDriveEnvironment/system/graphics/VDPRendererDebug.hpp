@@ -34,6 +34,9 @@ class VDPRendererDebug {
     /// Creates image showing sprite layer (SAT).
     Image makeSpriteTablesImage(bool fullRange) const;
 
+    /// Creates a screen-sized image containing only the visible sprite plane.
+    Image makeSpriteLayerImage(bool fullRange) const;
+
     /// Creates image showing only plane B (background layer).
     Image makeBackgroundLayerImage(bool fullRange) const;
 
@@ -75,6 +78,9 @@ class VDPRendererDebug {
 
     /// Renders the sprite layer to an image.
     Image renderSpriteLayer(bool fullRange) const;
+
+    /// Renders the linked SAT sprites at their screen positions.
+    Image renderSpritePlane(bool fullRange) const;
 
     /// Renders the window layer to an image.
     Image renderWindowLayer(bool fullRange) const;

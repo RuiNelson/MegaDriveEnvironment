@@ -4,6 +4,7 @@
  */
 
 #include "VDPRendererDebug.hpp"
+#include <algorithm>
 #include <array>
 #include <iomanip>
 #include <sstream>
@@ -113,7 +114,6 @@ Image VDPRendererDebug::renderPlaneLayer(int planeBase, bool fullRange) const {
 Image VDPRendererDebug::renderSpriteLayer(bool fullRange) const {
     Color     black = {0, 0, 0, 255};
     Color     white = {200, 200, 200, 255};
-    Color     red   = {180, 0, 0, 255};
     const int gap   = 8;
 
     Image result = Image("#", black, white);
@@ -126,12 +126,9 @@ Image VDPRendererDebug::renderSpriteLayer(bool fullRange) const {
 
     int                                         base          = state_.satBase();
     int                                         spriteIdx     = 0;
-    bool                                        masked        = false;
-    bool                                        sawNonZeroX   = false;
-    int                                         spritesOnLine = 0;
     std::array<bool, VDPState::SAT_MAX_SPRITES> visited{};
 
-    for (int row = 0; row < 20; ++row) {
+    for (int row = 0; row < VDPState::SAT_MAX_SPRITES; ++row) {
         if (spriteIdx >= VDPState::SAT_MAX_SPRITES)
             break;
         if (visited[static_cast<size_t>(spriteIdx)])
@@ -156,50 +153,45 @@ Image VDPRendererDebug::renderSpriteLayer(bool fullRange) const {
         int spriteX = xRaw - 128;
         int spriteY = yRaw - 128;
 
-        if (xRaw != 0)
-            sawNonZeroX = true;
-        else if (sawNonZeroX)
-            masked = true;
-
-        if (!masked)
-            spritesOnLine++;
-        if (spritesOnLine > 20)
-            masked = true;
-
         char buf[32];
 
         Image preview = Image(ImageSize{32, 32}, black);
-
-        if (!masked) {
+        {
             m_byte palette  = static_cast<m_byte>((tileWord >> 13) & 0x03);
             int    baseTile = tileWord & 0x07FF;
+            bool   vflip    = (tileWord & 0x1000) != 0;
+            bool   hflip    = (tileWord & 0x0800) != 0;
+            int    tileH    = state_.interlaceMode() == 2 ? 16 : 8;
 
             int padX = (32 - sizeW * 8) / 2;
-            int padY = (32 - sizeH * 8) / 2;
+            int padY = (32 - sizeH * tileH) / 2;
 
-            Image    spriteImg = Image(ImageSize{sizeW * 8, sizeH * 8}, black);
+            Image    spriteImg = Image(ImageSize{sizeW * 8, sizeH * tileH}, black);
             uint8_t *spriteBuf = static_cast<uint8_t *>(spriteImg.getRawBuffer());
 
-            for (int ty = 0; ty < sizeH; ++ty) {
-                for (int tx = 0; tx < sizeW; ++tx) {
-                    int tileIdx = baseTile + tx * sizeH + ty;
-                    for (int py = 0; py < 8; ++py) {
-                        for (int px = 0; px < 8; ++px) {
-                            m_byte colorIdx = tile_.getTilePixel(tileIdx * 32, px, py, false, false);
-                            if (colorIdx != 0) {
-                                m_byte r8, g8, b8;
-                                if (fullRange)
-                                    tile_.cramToRGB_FullRange(palette, colorIdx, r8, g8, b8);
-                                else
-                                    tile_.cramToRGB(palette, colorIdx, r8, g8, b8);
-                                int destX          = tx * 8 + px;
-                                int destY          = ty * 8 + py;
-                                int idx            = (destY * sizeW * 8 + destX) * 3;
-                                spriteBuf[idx]     = r8; // Image buffer is RGB
-                                spriteBuf[idx + 1] = g8;
-                                spriteBuf[idx + 2] = b8;
-                            }
-                        }
+            for (int destY = 0; destY < sizeH * tileH; ++destY) {
+                for (int destX = 0; destX < sizeW * 8; ++destX) {
+                    int px = hflip ? sizeW * 8 - 1 - destX : destX;
+                    int py = vflip ? sizeH * tileH - 1 - destY : destY;
+                    int tileCol = px / 8;
+                    int tileRow = py / tileH;
+                    int tileIdx = baseTile + tileCol * sizeH + tileRow;
+                    int tileY = py % tileH;
+                    if (state_.interlaceMode() == 2) {
+                        tileIdx = ((tileIdx & 0x03FF) << 1) | (tileY >> 3);
+                        tileY &= 0x07;
+                    }
+                    m_byte colorIdx = tile_.getTilePixel(tileIdx * 32, px % 8, tileY, false, false);
+                    if (colorIdx != 0) {
+                        m_byte r8, g8, b8;
+                        if (fullRange)
+                            tile_.cramToRGB_FullRange(palette, colorIdx, r8, g8, b8);
+                        else
+                            tile_.cramToRGB(palette, colorIdx, r8, g8, b8);
+                        int idx            = (destY * sizeW * 8 + destX) * 3;
+                        spriteBuf[idx]     = r8; // Image buffer is RGB
+                        spriteBuf[idx + 1] = g8;
+                        spriteBuf[idx + 2] = b8;
                     }
                 }
             }
@@ -207,8 +199,8 @@ Image VDPRendererDebug::renderSpriteLayer(bool fullRange) const {
             Image centered = spriteImg;
 
             if (padX > 0) {
-                Image leftPad  = Image(ImageSize{padX, sizeH * 8}, black);
-                Image rightPad = Image(ImageSize{padX, sizeH * 8}, black);
+                Image leftPad  = Image(ImageSize{padX, sizeH * tileH}, black);
+                Image rightPad = Image(ImageSize{padX, sizeH * tileH}, black);
                 centered.addOnLeft(leftPad, 0, black);
                 centered.addOnRight(rightPad, 0, black);
             }
@@ -244,7 +236,7 @@ Image VDPRendererDebug::renderSpriteLayer(bool fullRange) const {
         Image col0 = Image(buf, black, white);
 
         snprintf(buf, sizeof(buf), "%d", spriteX);
-        Image col1 = Image(buf, black, masked ? red : white);
+        Image col1 = Image(buf, black, white);
 
         snprintf(buf, sizeof(buf), "%d", spriteY);
         Image col2 = Image(buf, black, white);
@@ -273,6 +265,96 @@ Image VDPRendererDebug::renderSpriteLayer(bool fullRange) const {
         spriteIdx = link;
     }
 
+    return result;
+}
+
+Image VDPRendererDebug::renderSpritePlane(bool fullRange) const {
+    Color black = {0, 0, 0, 255};
+    Image result(ImageSize{state_.activeWidth(), state_.activeOutputHeight()}, black);
+    const int logicalHeight = state_.interlaceMode() == 2 ? state_.activeOutputHeight() / 2
+                                                          : state_.activeOutputHeight();
+
+    for (int screenY = 0; screenY < logicalHeight; ++screenY) {
+        int  spriteIdx     = 0;
+        int  spritesOnLine = 0;
+        bool masked       = false;
+        bool sawNonZeroX  = false;
+        std::array<bool, VDPState::SAT_MAX_SPRITES> visited{};
+        std::array<bool, VDPState::MAX_SCREEN_W> occupied{};
+
+        for (int count = 0; count < VDPState::SAT_MAX_SPRITES; ++count) {
+            if (spriteIdx >= VDPState::SAT_MAX_SPRITES || visited[static_cast<size_t>(spriteIdx)])
+                break;
+            visited[static_cast<size_t>(spriteIdx)] = true;
+
+            int satAddr = state_.satBase() + spriteIdx * 8;
+            if (satAddr + 7 >= VDPState::VRAM_SIZE)
+                break;
+            int satShadow = spriteIdx * 8;
+            int yRaw      = ((state_.sat_[satShadow] & 0x03) << 8) | state_.sat_[satShadow + 1];
+            int link      = state_.sat_[satShadow + 3] & 0x7F;
+            int sizeW     = ((state_.sat_[satShadow + 2] >> 2) & 0x03) + 1;
+            int sizeH     = (state_.sat_[satShadow + 2] & 0x03) + 1;
+            m_word tileWord = static_cast<m_word>((state_.vram_[satAddr + 4] << 8) | state_.vram_[satAddr + 5]);
+            int xRaw = ((state_.vram_[satAddr + 6] & 0x01) << 8) | state_.vram_[satAddr + 7];
+            int spriteX = xRaw - 128;
+            int spriteY = yRaw - 128;
+            int spriteW = sizeW * 8;
+            int spriteH = sizeH * 8;
+
+            if (screenY >= spriteY && screenY < spriteY + spriteH) {
+                if (xRaw != 0)
+                    sawNonZeroX = true;
+                else if (sawNonZeroX)
+                    masked = true;
+
+                if (!masked && ++spritesOnLine <= (state_.h40Mode() ? 20 : 16)) {
+                    m_byte palette  = static_cast<m_byte>((tileWord >> 13) & 0x03);
+                    bool   vflip    = (tileWord & 0x1000) != 0;
+                    bool   hflip    = (tileWord & 0x0800) != 0;
+                    int    baseTile = tileWord & 0x07FF;
+                    int    py       = screenY - spriteY;
+                    if (vflip)
+                        py = spriteH - 1 - py;
+                    int tileH = state_.interlaceMode() == 2 ? 16 : 8;
+                    int tileRow = py / tileH;
+                    int tileY = py % tileH;
+
+                    for (int screenX = std::max(0, spriteX);
+                         screenX < std::min(state_.activeWidth(), spriteX + spriteW); ++screenX) {
+                        if (occupied[static_cast<size_t>(screenX)])
+                            continue;
+                        int px = screenX - spriteX;
+                        if (hflip)
+                            px = spriteW - 1 - px;
+                        int tileIdx = baseTile + (px / 8) * sizeH + tileRow;
+                        int pixelY = tileY;
+                        if (state_.interlaceMode() == 2) {
+                            tileIdx = ((tileIdx & 0x03FF) << 1) | (pixelY >> 3);
+                            pixelY &= 0x07;
+                        }
+                        m_byte colorIdx = tile_.getTilePixel(tileIdx * 32, px % 8, pixelY, false, false);
+                        if (colorIdx == 0)
+                            continue;
+                        m_byte r8, g8, b8;
+                        if (fullRange)
+                            tile_.cramToRGB_FullRange(palette, colorIdx, r8, g8, b8);
+                        else
+                            tile_.cramToRGB(palette, colorIdx, r8, g8, b8);
+                        int outputY = state_.interlaceMode() == 2 ? screenY * 2 : screenY;
+                        setImagePixel(result, screenX, outputY, b8, g8, r8);
+                        if (state_.interlaceMode() == 2)
+                            setImagePixel(result, screenX, outputY + 1, b8, g8, r8);
+                        occupied[static_cast<size_t>(screenX)] = true;
+                    }
+                }
+            }
+
+            if (link == 0 || link >= VDPState::SAT_MAX_SPRITES)
+                break;
+            spriteIdx = link;
+        }
+    }
     return result;
 }
 
@@ -411,6 +493,10 @@ Image VDPRendererDebug::makeSpriteTablesImage(bool fullRange) const {
     return renderSpriteLayer(fullRange);
 }
 
+Image VDPRendererDebug::makeSpriteLayerImage(bool fullRange) const {
+    return renderSpritePlane(fullRange);
+}
+
 Image VDPRendererDebug::makeBackgroundLayerImage(bool fullRange) const {
     return renderPlaneLayer(state_.planeBBase(), fullRange);
 }
@@ -547,6 +633,7 @@ void VDPRendererDebug::dumpEverythingToPNG(const std::string &path, bool fullRan
     Image foregroundLayer = makeForegroundLayerImage(fullRange);
     Image windowLayer     = makeWindowLayerImage(fullRange);
     Image spriteTables    = makeSpriteTablesImage(fullRange);
+    Image spriteLayer     = makeSpriteLayerImage(fullRange);
 
     finalOutput.addLabelOnTop("FinalOutput", 2, black, green);
     vramTiles.addLabelOnTop("VRAM Tiles", 2, black, green);
@@ -557,6 +644,7 @@ void VDPRendererDebug::dumpEverythingToPNG(const std::string &path, bool fullRan
     foregroundLayer.addLabelOnTop("Plane A", 2, black, green);
     windowLayer.addLabelOnTop("Window", 2, black, green);
     spriteTables.addLabelOnTop("SAT Sprites", 2, black, green);
+    spriteLayer.addLabelOnTop("Sprite Plane", 2, black, green);
 
     Image col0 = registers;
 
@@ -570,7 +658,8 @@ void VDPRendererDebug::dumpEverythingToPNG(const std::string &path, bool fullRan
     Image col3 = backgroundLayer;
     col3.addOnBottom(windowLayer, 2, black);
 
-    Image col4 = spriteTables;
+    Image col4 = spriteLayer;
+    col4.addOnBottom(spriteTables, 2, black);
 
     Image all = col0;
     all.addOnRight(col1, 2, black);
