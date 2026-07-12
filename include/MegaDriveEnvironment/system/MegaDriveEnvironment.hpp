@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 
 /**
@@ -288,6 +289,13 @@ class MegaDriveEnvironment {
     /// Stops every subsystem's thread. Idempotent.
     void powerOff();
 
+    /// Opens connected gamepads not already owned by the controller subsystem
+    /// so Option hotkeys receive buttons from every recognized gamepad.
+    void openOptionHotkeyGamepads();
+    void openOptionHotkeyGamepad(SDL_JoystickID id);
+    void closeOptionHotkeyGamepad(SDL_JoystickID id);
+    void closeOptionHotkeyGamepads();
+
     /// CPU-thread entry: runs run() then flags completion.
     static int cpuThreadEntry(void *data);
 
@@ -319,4 +327,7 @@ class MegaDriveEnvironment {
     std::uint32_t                paceCounter_{0};       ///< CPU thread only
     std::string                  auxAddrFile_;          ///< append unknown dispatch targets here (if set)
     std::unordered_set<unsigned> confirmedSpeculative_; ///< guards against duplicate confirmSpeculative logs
+    /// Gamepads opened solely to receive Option hotkeys. Gamepads already
+    /// opened by Controllers are deliberately not stored or closed here.
+    std::unordered_map<SDL_JoystickID, SDL_Gamepad *> optionHotkeyGamepads_;
 };

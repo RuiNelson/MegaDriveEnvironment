@@ -70,8 +70,9 @@ protected:
 ```
 
 Option hotkeys are delivered on the SDL main thread and do not alter the
-emulated controller ports. Overrides that mutate state owned by the game/CPU
-thread must synchronize that state explicitly.
+emulated controller ports. All recognized gamepads are monitored, including
+ones that are not assigned to an emulated player. Overrides that mutate state
+owned by the game/CPU thread must synchronize that state explicitly.
 
 ## Layout
 

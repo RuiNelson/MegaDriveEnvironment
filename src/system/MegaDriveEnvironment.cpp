@@ -43,11 +43,13 @@ MegaDriveEnvironment::~MegaDriveEnvironment() {
         SDL_WaitThread(cpuThread_, nullptr);
         cpuThread_ = nullptr;
     }
+    closeOptionHotkeyGamepads();
     powerOff();
 }
 
 void MegaDriveEnvironment::boot() {
     powerOn();
+    openOptionHotkeyGamepads();
 
     cpuDone_.store(false, std::memory_order_release);
     cpuThread_ = SDL_CreateThread(cpuThreadEntry, "CPU", this);
@@ -57,6 +59,12 @@ void MegaDriveEnvironment::boot() {
     SDL_Event event;
     while (!cpuDone_.load(std::memory_order_acquire)) {
         while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_GAMEPAD_ADDED) {
+                openOptionHotkeyGamepad(event.gdevice.which);
+            } else if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
+                closeOptionHotkeyGamepad(event.gdevice.which);
+            }
+
             if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && (event.key.mod & SDL_KMOD_ALT) &&
                 event.key.key != SDLK_LALT && event.key.key != SDLK_RALT) {
                 handleOptionHotkey(OptionHotkeyCode{
@@ -122,7 +130,41 @@ void MegaDriveEnvironment::boot() {
     // run() returned (on its own, or cooperatively after a quit request): clean up.
     SDL_WaitThread(cpuThread_, nullptr);
     cpuThread_ = nullptr;
+    closeOptionHotkeyGamepads();
     powerOff();
+}
+
+void MegaDriveEnvironment::openOptionHotkeyGamepads() {
+    int count = 0;
+    SDL_JoystickID *ids = SDL_GetGamepads(&count);
+    if (!ids)
+        return;
+    for (int i = 0; i < count; ++i)
+        openOptionHotkeyGamepad(ids[i]);
+    SDL_free(ids);
+}
+
+void MegaDriveEnvironment::openOptionHotkeyGamepad(SDL_JoystickID id) {
+    if (id == 0 || SDL_GetGamepadFromID(id) || optionHotkeyGamepads_.contains(id))
+        return;
+    if (SDL_Gamepad *gamepad = SDL_OpenGamepad(id))
+        optionHotkeyGamepads_.emplace(id, gamepad);
+}
+
+void MegaDriveEnvironment::closeOptionHotkeyGamepad(SDL_JoystickID id) {
+    const auto it = optionHotkeyGamepads_.find(id);
+    if (it == optionHotkeyGamepads_.end())
+        return;
+    SDL_CloseGamepad(it->second);
+    optionHotkeyGamepads_.erase(it);
+}
+
+void MegaDriveEnvironment::closeOptionHotkeyGamepads() {
+    for (const auto &[id, gamepad] : optionHotkeyGamepads_) {
+        (void)id;
+        SDL_CloseGamepad(gamepad);
+    }
+    optionHotkeyGamepads_.clear();
 }
 
 m_byte MegaDriveEnvironment::hardwareVersionRegister() const {
