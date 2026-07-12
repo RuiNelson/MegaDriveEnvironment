@@ -11,9 +11,11 @@ constexpr uint32_t kYM2612Clock   = 53'693'175u / 7u;
 constexpr uint64_t kMasterClockHz = 53'693'175ull;
 constexpr double   kMasterClock   = 53'693'175.0;
 constexpr double   kPSGClock      = 3'579'545.0;
-// The renderer trails the producers' wall clock by this margin so queued
-// events are still in its future and play at their exact timestamps.
-constexpr double   kEventLatencyCycles = 0.040 * kMasterClock;
+// A small scheduling margin keeps producer events in the renderer's future.
+// SDL and the physical device add their own buffering, so a larger software
+// margin makes music and effects perceptibly trail the game. Inaccurate late
+// events are preferable to making gameplay/audio response feel sluggish.
+constexpr double   kEventLatencyCycles = 0.012 * kMasterClock;
 constexpr double   kSnapCycles         = 0.250 * kMasterClock; // resync hard beyond this drift
 constexpr double   kMaxRateTrim        = 0.005;                // ±0.5% render-rate trim toward the latency target
 constexpr int      kRenderChunkFrames  = 256;
