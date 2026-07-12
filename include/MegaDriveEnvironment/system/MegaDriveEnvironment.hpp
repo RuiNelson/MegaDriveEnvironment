@@ -199,6 +199,8 @@ class MegaDriveEnvironment {
     /// 4 = HBlank) as pending. Called from the VDP render thread; lock-free.
     void raiseInterrupt(int level) {
         pendingIRQMask_.fetch_or(1u << level, std::memory_order_release);
+        interruptGeneration_.fetch_add(1, std::memory_order_release);
+        interruptGeneration_.notify_one();
     }
 
     protected:
@@ -212,6 +214,18 @@ class MegaDriveEnvironment {
     /// Clears the pending bit for @p level (after the handler has been entered).
     void clearInterrupt(int level) {
         pendingIRQMask_.fetch_and(~(1u << level), std::memory_order_release);
+    }
+
+    /// Blocks the CPU thread until an interrupt above the current 68000 mask is
+    /// pending. The predicate closes the check/sleep race, so an IRQ cannot be
+    /// lost between observing the mask and entering the host wait.
+    void waitForInterrupt() {
+        while (!quitRequested_.load(std::memory_order_acquire) && irqLevel() <= cpu_.interruptMask()) {
+            const std::uint64_t observed = interruptGeneration_.load(std::memory_order_acquire);
+            if (irqLevel() > cpu_.interruptMask())
+                break;
+            interruptGeneration_.wait(observed, std::memory_order_acquire);
+        }
     }
 
     /// Per-instruction pacing. Native code would otherwise outrun the VDP render
@@ -316,6 +330,7 @@ class MegaDriveEnvironment {
     /// Bit L set ⇒ an autovector interrupt of level L is pending. Set by the
     /// VDP render thread (raiseInterrupt), consumed on the run() thread.
     std::atomic<std::uint32_t>   pendingIRQMask_{0};
+    std::atomic<std::uint64_t>   interruptGeneration_{0};
     std::atomic<m_long>          traceFn_{0}; ///< entry of the running recompiled fn
     std::atomic<uint64_t>        m68kMasterCycles_{0};
     m_long                       traceHistory_[16]{};

@@ -161,6 +161,18 @@ void SystemMemory::_writeLong(m_long address, m_long value) {
     ptr[3]    = static_cast<char>(value & 0xFF);
 }
 
+m_byte SystemMemory::waitForByteValue(m_long address,
+                                      m_byte desiredValue,
+                                      const std::function<bool()> &waitForProgress) {
+    m_byte value = readByte(address);
+    while (value != desiredValue) {
+        if (!waitForProgress())
+            break;
+        value = readByte(address);
+    }
+    return value;
+}
+
 // ── Memory-mapped hardware (VDP / I/O / Z80 / TMSS) ─────────────────────────────
 //
 // Everything between the ROM (< 0x400000) and work RAM (>= 0xFF0000) is the

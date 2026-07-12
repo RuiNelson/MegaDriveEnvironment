@@ -4,6 +4,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <functional>
 #include <string>
 
 class MegaDriveEnvironment;
@@ -64,6 +65,15 @@ class SystemMemory {
 
     /// Writes a 32-bit long word (big-endian) to the given 68K address.
     void writeLong(m_long address, m_long value);
+
+    /// Waits until a byte equals @p desiredValue. While it differs, invokes
+    /// @p waitForProgress, which may block and must allow the producer of the
+    /// desired value to run. Returning false cancels the wait. This is useful
+    /// for replacing emulated polling loops without embedding scheduler or
+    /// interrupt policy in memory.
+    m_byte waitForByteValue(m_long address,
+                            m_byte desiredValue,
+                            const std::function<bool()> &waitForProgress);
 
     /// Copies one byte from @p from to @p to within the 68K address space.
     void copyByte(m_long from, m_long to);

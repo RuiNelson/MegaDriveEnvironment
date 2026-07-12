@@ -82,8 +82,12 @@ void MegaDriveEnvironment::boot() {
             // Window close or CTRL+Q both request a shutdown.
             if (event.type == SDL_EVENT_QUIT) {
                 quitRequested_.store(true, std::memory_order_release);
+                interruptGeneration_.fetch_add(1, std::memory_order_release);
+                interruptGeneration_.notify_all();
             } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_Q && (event.key.mod & SDL_KMOD_CTRL)) {
                 quitRequested_.store(true, std::memory_order_release);
+                interruptGeneration_.fetch_add(1, std::memory_order_release);
+                interruptGeneration_.notify_all();
             } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_P && (event.key.mod & SDL_KMOD_CTRL)) {
                 // CTRL+P: capture the composited frame to a numbered PNG.
                 static unsigned shot = 0;
