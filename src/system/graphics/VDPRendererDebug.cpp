@@ -507,22 +507,10 @@ Image VDPRendererDebug::makeForegroundLayerImage(bool fullRange) const {
 
 Image VDPRendererDebug::makeVramTilesImage(bool /*fullRange*/) const {
     static const Color palette[16] = {
-        {20, 20, 20, 255},    // 0: cinzento muito escuro (transparente)
-        {255, 50, 50, 255},   // 1: vermelho
-        {255, 140, 0, 255},   // 2: laranja
-        {255, 255, 0, 255},   // 3: amarelo
-        {0, 200, 50, 255},    // 4: verde
-        {0, 255, 200, 255},   // 5: verde-água
-        {0, 180, 255, 255},   // 6: azul-céu
-        {0, 50, 255, 255},    // 7: azul
-        {150, 0, 255, 255},   // 8: roxo
-        {255, 0, 200, 255},   // 9: magenta
-        {255, 100, 150, 255}, // 10: rosa
-        {200, 255, 0, 255},   // 11: lima
-        {0, 255, 100, 255},   // 12: menta
-        {255, 200, 0, 255},   // 13: âmbar
-        {100, 200, 255, 255}, // 14: azul-claro
-        {255, 80, 0, 255},    // 15: laranja-avermelhado
+        {0, 0, 0, 255},       {17, 17, 17, 255},    {34, 34, 34, 255},    {51, 51, 51, 255},
+        {68, 68, 68, 255},    {85, 85, 85, 255},    {102, 102, 102, 255}, {119, 119, 119, 255},
+        {136, 136, 136, 255}, {153, 153, 153, 255}, {170, 170, 170, 255}, {187, 187, 187, 255},
+        {204, 204, 204, 255}, {221, 221, 221, 255}, {238, 238, 238, 255}, {255, 255, 255, 255},
     };
 
     // Show the WHOLE VRAM as a tile sheet (64 KB / 32 bytes = 2048 tiles), not
@@ -654,12 +642,12 @@ void VDPRendererDebug::dumpEverythingToPNG(const std::string &path, bool fullRan
 
     Image col2 = vramTiles;
 
-    backgroundLayer.addOnRight(foregroundLayer, 2, black);
     Image col3 = backgroundLayer;
+    col3.addOnBottom(foregroundLayer, 2, black);
     col3.addOnBottom(windowLayer, 2, black);
+    col3.addOnBottom(spriteLayer, 2, black);
 
-    Image col4 = spriteLayer;
-    col4.addOnBottom(spriteTables, 2, black);
+    Image col4 = spriteTables;
 
     Image all = col0;
     all.addOnRight(col1, 2, black);
