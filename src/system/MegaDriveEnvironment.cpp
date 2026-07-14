@@ -57,12 +57,23 @@ void MegaDriveEnvironment::boot() {
     // Pump SDL events on the main thread so the VDP can present frames
     // (SDL_RunOnMainThread) and so window-close requests are observed.
     SDL_Event event;
+    bool      fullscreenActive = false;
+    bool      cursorWasVisible = true;
     while (!cpuDone_.load(std::memory_order_acquire)) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_EVENT_GAMEPAD_ADDED) {
                 openOptionHotkeyGamepad(event.gdevice.which);
             } else if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
                 closeOptionHotkeyGamepad(event.gdevice.which);
+            } else if (event.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN && !fullscreenActive) {
+                cursorWasVisible = SDL_CursorVisible();
+                SDL_HideCursor();
+                fullscreenActive = true;
+            } else if (event.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN && fullscreenActive) {
+                if (cursorWasVisible) {
+                    SDL_ShowCursor();
+                }
+                fullscreenActive = false;
             }
 
             if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && (event.key.mod & SDL_KMOD_ALT) &&
@@ -134,6 +145,9 @@ void MegaDriveEnvironment::boot() {
     // run() returned (on its own, or cooperatively after a quit request): clean up.
     SDL_WaitThread(cpuThread_, nullptr);
     cpuThread_ = nullptr;
+    if (fullscreenActive && cursorWasVisible) {
+        SDL_ShowCursor();
+    }
     closeOptionHotkeyGamepads();
     powerOff();
 }
