@@ -92,7 +92,7 @@ void MegaDriveEnvironment::boot() {
                 // CTRL+P: capture the composited frame to a numbered PNG.
                 static unsigned shot = 0;
                 char            path[64];
-                std::snprintf(path, sizeof path, "sor_screenshot_%03u.png", shot++);
+                std::snprintf(path, sizeof path, "screenshot_%03u.png", shot++);
                 vdp_.dumpFrameBufferToPNG(path, /*fullRange=*/true);
                 std::fprintf(stderr, "[capture] frame -> %s\n", path);
                 std::fflush(stderr);
@@ -101,7 +101,7 @@ void MegaDriveEnvironment::boot() {
                 // plane nametables + registers) to a numbered PNG.
                 static unsigned shot = 0;
                 char            path[64];
-                std::snprintf(path, sizeof path, "sor_vdp_%03u.png", shot++);
+                std::snprintf(path, sizeof path, "vpd_%03u.png", shot++);
                 vdp_.dumpEverythingToPNG(path, /*fullRange=*/true);
                 std::fprintf(stderr, "[capture] VDP debug view -> %s\n", path);
                 std::fflush(stderr);
