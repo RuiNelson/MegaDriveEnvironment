@@ -1,0 +1,153 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 780" role="img" aria-labelledby="title desc">
+  <title id="title">MegaDriveEnvironment runtime architecture</title>
+  <desc id="desc">The root environment owns memory, VDP, controllers, Z80 and sound while SDL main, CPU, VDP, Z80 and audio execution contexts exchange events and memory-mapped I/O.</desc>
+  <defs>
+    <linearGradient id="root" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="7" stdDeviation="9" flood-color="#111827" flood-opacity=".12"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" class="arrow-fill"/>
+    </marker>
+    <style>
+      :root { color-scheme: light dark; }
+      .canvas { fill: #f7f8fc; }
+      .lane { fill: #ffffff; stroke: #d8deea; stroke-width: 1.5; }
+      .node { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1.5; }
+      .memory { fill: #ecfeff; stroke: #67e8f9; stroke-width: 1.5; }
+      .video { fill: #eef2ff; stroke: #a5b4fc; stroke-width: 1.5; }
+      .audio { fill: #fff7ed; stroke: #fdba74; stroke-width: 1.5; }
+      .input { fill: #f0fdf4; stroke: #86efac; stroke-width: 1.5; }
+      .ink { fill: #172033; }
+      .muted { fill: #5f6b7d; }
+      .line { fill: none; stroke: #7c8799; stroke-width: 2.2; marker-end: url(#arrow); }
+      .bus { fill: none; stroke: #4f46e5; stroke-width: 3; marker-end: url(#arrow); }
+      .event { fill: none; stroke: #0f766e; stroke-width: 2.2; stroke-dasharray: 7 6; marker-end: url(#arrow); }
+      .arrow-fill { fill: #7c8799; }
+      .eyebrow { font: 700 12px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 1.5px; }
+      .heading { font: 700 27px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label { font: 700 17px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .body { font: 500 14px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .small { font: 600 12px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .white { fill: #ffffff; }
+      @media (prefers-color-scheme: dark) {
+        .canvas { fill: #0d1220; }
+        .lane { fill: #151c2d; stroke: #303a50; }
+        .node { fill: #1b2436; stroke: #3a465c; }
+        .memory { fill: #102a32; stroke: #157a8a; }
+        .video { fill: #1b2440; stroke: #4d5d96; }
+        .audio { fill: #302316; stroke: #8a5a24; }
+        .input { fill: #142a21; stroke: #397758; }
+        .ink { fill: #edf2ff; }
+        .muted { fill: #aab4c8; }
+        .line { stroke: #7f8ba1; }
+        .arrow-fill { fill: #7f8ba1; }
+      }
+    </style>
+  </defs>
+
+  <rect class="canvas" width="1200" height="780" rx="28"/>
+  <text x="600" y="45" text-anchor="middle" class="eyebrow muted">RUNTIME OWNERSHIP AND EXECUTION CONTEXTS</text>
+  <text x="600" y="79" text-anchor="middle" class="heading ink">One root object coordinates hardware-style subsystems</text>
+
+  <g filter="url(#shadow)">
+    <rect x="390" y="105" width="420" height="82" rx="22" fill="url(#root)"/>
+    <text x="600" y="137" text-anchor="middle" class="eyebrow white">ROOT OBJECT</text>
+    <text x="600" y="165" text-anchor="middle" class="label white">MegaDriveEnvironment · boot() / power lifecycle</text>
+  </g>
+
+  <path class="line" d="M500 187V220H168V251"/>
+  <path class="line" d="M550 187V251"/>
+  <path class="line" d="M650 187V220H790V251"/>
+  <path class="line" d="M700 187V220H1032V251"/>
+
+  <g>
+    <rect x="42" y="251" width="252" height="190" rx="20" class="lane"/>
+    <text x="66" y="281" class="eyebrow" fill="#0f766e">SDL MAIN THREAD</text>
+    <rect x="66" y="302" width="204" height="54" rx="13" class="input"/>
+    <text x="168" y="325" text-anchor="middle" class="label ink">Events &amp; controls</text>
+    <text x="168" y="344" text-anchor="middle" class="small muted">keyboard · gamepads · quit</text>
+    <rect x="66" y="371" width="204" height="48" rx="13" class="video"/>
+    <text x="168" y="394" text-anchor="middle" class="label ink">Frame presentation</text>
+    <text x="168" y="412" text-anchor="middle" class="small muted">SDL window · screenshots</text>
+  </g>
+
+  <g>
+    <rect x="316" y="251" width="252" height="190" rx="20" class="lane"/>
+    <text x="340" y="281" class="eyebrow" fill="#4f46e5">CPU THREAD</text>
+    <rect x="340" y="302" width="204" height="54" rx="13" class="node"/>
+    <text x="442" y="325" text-anchor="middle" class="label ink">run()</text>
+    <text x="442" y="344" text-anchor="middle" class="small muted">game or recompiled code</text>
+    <rect x="340" y="371" width="204" height="48" rx="13" class="node"/>
+    <text x="442" y="394" text-anchor="middle" class="label ink">CPU68K</text>
+    <text x="442" y="412" text-anchor="middle" class="small muted">register file for generated code</text>
+  </g>
+
+  <g>
+    <rect x="590" y="251" width="252" height="190" rx="20" class="lane"/>
+    <text x="614" y="281" class="eyebrow" fill="#6366f1">VDP RENDER THREAD</text>
+    <rect x="614" y="302" width="204" height="54" rx="13" class="video"/>
+    <text x="716" y="325" text-anchor="middle" class="label ink">VDP state &amp; ports</text>
+    <text x="716" y="344" text-anchor="middle" class="small muted">VRAM · CRAM · VSRAM · DMA</text>
+    <rect x="614" y="371" width="204" height="48" rx="13" class="video"/>
+    <text x="716" y="394" text-anchor="middle" class="label ink">Scanline renderer</text>
+    <text x="716" y="412" text-anchor="middle" class="small muted">planes · window · sprites</text>
+  </g>
+
+  <g>
+    <rect x="864" y="251" width="294" height="190" rx="20" class="lane"/>
+    <text x="888" y="281" class="eyebrow" fill="#d97706">AUDIO / Z80 CONTEXTS</text>
+    <rect x="888" y="302" width="117" height="117" rx="13" class="audio"/>
+    <text x="946" y="335" text-anchor="middle" class="label ink">Z80</text>
+    <text x="946" y="358" text-anchor="middle" class="small muted">core</text>
+    <text x="946" y="377" text-anchor="middle" class="small muted">8 KiB RAM</text>
+    <text x="946" y="396" text-anchor="middle" class="small muted">bus / reset</text>
+    <rect x="1019" y="302" width="115" height="117" rx="13" class="audio"/>
+    <text x="1076" y="335" text-anchor="middle" class="label ink">Sound</text>
+    <text x="1076" y="358" text-anchor="middle" class="small muted">YM2612</text>
+    <text x="1076" y="377" text-anchor="middle" class="small muted">PSG</text>
+    <text x="1076" y="396" text-anchor="middle" class="small muted">48 kHz</text>
+  </g>
+
+  <path class="event" d="M614 394C500 455 285 455 168 419"/>
+  <text x="392" y="463" text-anchor="middle" class="small" fill="#0f766e">frame pixels → main-thread presentation</text>
+  <path class="event" d="M716 419V476"/>
+  <text x="730" y="463" class="small" fill="#0f766e">H/V interrupts</text>
+
+  <g filter="url(#shadow)">
+    <rect x="96" y="505" width="1008" height="156" rx="24" class="memory"/>
+    <text x="122" y="538" class="eyebrow" fill="#0891b2">24-BIT SYSTEM BUS</text>
+    <text x="122" y="568" class="label ink">SystemMemory</text>
+    <text x="122" y="591" class="body muted">big-endian byte / word / long access · ROM and 64 KiB Work RAM · thread-safe routing</text>
+
+    <rect x="122" y="611" width="192" height="30" rx="9" class="node"/>
+    <text x="218" y="631" text-anchor="middle" class="small ink">ROM · Work RAM</text>
+    <rect x="330" y="611" width="166" height="30" rx="9" class="input"/>
+    <text x="413" y="631" text-anchor="middle" class="small ink">controller I/O</text>
+    <rect x="512" y="611" width="166" height="30" rx="9" class="video"/>
+    <text x="595" y="631" text-anchor="middle" class="small ink">VDP ports</text>
+    <rect x="694" y="611" width="166" height="30" rx="9" class="audio"/>
+    <text x="777" y="631" text-anchor="middle" class="small ink">Z80 / YM2612</text>
+    <rect x="876" y="611" width="202" height="30" rx="9" class="audio"/>
+    <text x="977" y="631" text-anchor="middle" class="small ink">PSG / control regs</text>
+  </g>
+
+  <path class="bus" d="M442 441V505"/>
+  <text x="455" y="486" class="small" fill="#4f46e5">memory-mapped I/O</text>
+  <path class="bus" d="M600 505V452H716V441"/>
+  <path class="bus" d="M775 505V468H946V441"/>
+  <path class="bus" d="M950 505V468H1076V441"/>
+  <path class="event" d="M168 441V479H413V505"/>
+
+  <g transform="translate(272 707)">
+    <line x1="0" y1="0" x2="44" y2="0" class="bus"/>
+    <text x="55" y="5" class="small muted">bus access</text>
+    <line x1="190" y1="0" x2="234" y2="0" class="event"/>
+    <text x="245" y="5" class="small muted">events / interrupts</text>
+    <line x1="444" y1="0" x2="488" y2="0" class="line"/>
+    <text x="499" y="5" class="small muted">ownership / lifecycle</text>
+  </g>
+</svg>

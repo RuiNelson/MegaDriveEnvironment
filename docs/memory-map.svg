@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">MegaDriveEnvironment 68000 memory map</title>
+  <desc id="desc">Schematic 24-bit address map showing ROM, routed Z80, audio, controllers and VDP registers, safe stub regions and 68000 Work RAM.</desc>
+  <defs>
+    <linearGradient id="rom" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="ram" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0891b2"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="7" stdDeviation="9" flood-color="#111827" flood-opacity=".12"/>
+    </filter>
+    <style>
+      :root { color-scheme: light dark; }
+      .canvas { fill: #f7f8fc; }
+      .panel { fill: #ffffff; stroke: #d8deea; stroke-width: 1.5; }
+      .stub { fill: #eef1f6; stroke: #d8deea; stroke-width: 1.5; }
+      .io { fill: #fff7ed; stroke: #fdba74; stroke-width: 1.5; }
+      .ink { fill: #172033; }
+      .muted { fill: #5f6b7d; }
+      .rule { stroke: #aab3c2; stroke-width: 1.5; }
+      .eyebrow { font: 700 12px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 1.5px; }
+      .heading { font: 700 27px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label { font: 700 17px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .body { font: 500 14px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .small { font: 600 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .white { fill: #ffffff; }
+      @media (prefers-color-scheme: dark) {
+        .canvas { fill: #0d1220; }
+        .panel { fill: #151c2d; stroke: #303a50; }
+        .stub { fill: #20283a; stroke: #364158; }
+        .io { fill: #302316; stroke: #8a5a24; }
+        .ink { fill: #edf2ff; }
+        .muted { fill: #aab4c8; }
+        .rule { stroke: #526078; }
+      }
+    </style>
+  </defs>
+
+  <rect class="canvas" width="1200" height="720" rx="28"/>
+  <text x="600" y="45" text-anchor="middle" class="eyebrow muted">SYSTEMMEMORY · SCHEMATIC, NOT TO SCALE</text>
+  <text x="600" y="79" text-anchor="middle" class="heading ink">A 24-bit, big-endian view of the Mega Drive bus</text>
+
+  <g filter="url(#shadow)">
+    <rect x="62" y="112" width="426" height="548" rx="24" class="panel"/>
+    <text x="92" y="145" class="eyebrow" fill="#4f46e5">ADDRESS SPACE</text>
+
+    <text x="94" y="184" class="small muted">$000000</text>
+    <rect x="186" y="163" width="266" height="98" rx="14" fill="url(#rom)"/>
+    <text x="209" y="198" class="label white">ROM image</text>
+    <text x="209" y="224" class="body white" opacity=".86">4 MiB · immutable after loadROM()</text>
+    <text x="209" y="246" class="small white" opacity=".78">$000000–$3FFFFF</text>
+
+    <text x="94" y="293" class="small muted">$400000</text>
+    <rect x="186" y="274" width="266" height="70" rx="14" class="stub"/>
+    <text x="209" y="304" class="label ink">Hardware space</text>
+    <text x="209" y="327" class="body muted">unimplemented ranges are safe stubs</text>
+
+    <text x="94" y="378" class="small muted">$A00000</text>
+    <rect x="186" y="357" width="266" height="92" rx="14" class="io"/>
+    <text x="209" y="387" class="label ink">Z80 · audio · I/O</text>
+    <text x="209" y="411" class="body muted">RAM, YM2612, joypads, bus/reset</text>
+    <text x="209" y="433" class="small muted">selected $A0xxxx–$A1xxxx ports</text>
+
+    <text x="94" y="483" class="small muted">$C00000</text>
+    <rect x="186" y="462" width="266" height="76" rx="14" class="io"/>
+    <text x="209" y="493" class="label ink">VDP &amp; PSG ports</text>
+    <text x="209" y="517" class="small muted">$C00000–$C00017</text>
+
+    <text x="94" y="579" class="small muted">$FF0000</text>
+    <rect x="186" y="558" width="266" height="76" rx="14" fill="url(#ram)"/>
+    <text x="209" y="589" class="label white">68000 Work RAM</text>
+    <text x="209" y="613" class="body white" opacity=".86">64 KiB · thread-safe host storage</text>
+    <text x="94" y="641" class="small muted">$FFFFFF</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="522" y="112" width="616" height="548" rx="24" class="panel"/>
+    <text x="552" y="145" class="eyebrow" fill="#d97706">ROUTED MEMORY-MAPPED I/O</text>
+
+    <text x="552" y="184" class="small" fill="#d97706">$A00000–$A01FFF</text>
+    <text x="746" y="184" class="label ink">Z80 RAM</text>
+    <text x="746" y="205" class="body muted">8 KiB, arbitrated through the Z80 subsystem</text>
+    <line x1="552" y1="224" x2="1108" y2="224" class="rule"/>
+
+    <text x="552" y="258" class="small" fill="#d97706">$A04000–$A04003</text>
+    <text x="746" y="258" class="label ink">YM2612</text>
+    <text x="746" y="279" class="body muted">address/data ports and status reads</text>
+    <line x1="552" y1="298" x2="1108" y2="298" class="rule"/>
+
+    <text x="552" y="332" class="small" fill="#d97706">$A10001</text>
+    <text x="746" y="332" class="label ink">Hardware version</text>
+    <text x="746" y="353" class="body muted">language and 50/60 Hz region pins</text>
+    <line x1="552" y1="372" x2="1108" y2="372" class="rule"/>
+
+    <text x="552" y="406" class="small" fill="#d97706">$A10003–$A1000B</text>
+    <text x="746" y="406" class="label ink">3-button joypads</text>
+    <text x="746" y="427" class="body muted">P1/P2 data ports and TH direction registers</text>
+    <line x1="552" y1="446" x2="1108" y2="446" class="rule"/>
+
+    <text x="552" y="480" class="small" fill="#d97706">$A11100 / $A11200</text>
+    <text x="746" y="480" class="label ink">Z80 bus &amp; reset</text>
+    <text x="746" y="501" class="body muted">request/acknowledge and active-low reset</text>
+    <line x1="552" y1="520" x2="1108" y2="520" class="rule"/>
+
+    <text x="552" y="554" class="small" fill="#d97706">$C00000–$C0000F</text>
+    <text x="746" y="554" class="label ink">VDP</text>
+    <text x="746" y="575" class="body muted">data, control/status and H/V counter ports</text>
+    <line x1="552" y1="594" x2="1108" y2="594" class="rule"/>
+
+    <text x="552" y="628" class="small" fill="#d97706">$C00011–$C00017</text>
+    <text x="746" y="628" class="label ink">PSG writes</text>
+    <text x="746" y="649" class="body muted">odd-byte SN76489-compatible data port</text>
+  </g>
+
+  <text x="600" y="692" text-anchor="middle" class="body muted">All addresses are normalized with $00FFFFFF; word and long values use Motorola big-endian order.</text>
+</svg>
