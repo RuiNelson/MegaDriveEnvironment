@@ -23,12 +23,19 @@ m_byte VDPTile::getTilePixel(int tileAddr, int pixelX, int pixelY, bool hflip, b
 }
 
 /// Converts CRAM palette entry to native 3-bit BGR values (0–7) directly from CRAM data layout.
-/// CRAM entry format: bits 9–11=B, 5–7=G, 1–3=R (0x0EEE mask).
+/// CRAM entry format: bits 9–11=B, 5–7=G, 1–3=R (0x0EEE mask). When register $00 bit 2 is clear,
+/// Mode 5 palette output is restricted to the least-significant bit of each component (00X00X00X).
 void VDPTile::cramToRGB(m_byte palette, m_byte colorIndex, m_byte &r, m_byte &g, m_byte &b) const {
     m_word entry = state_->cram_[(palette & 3) * 16 + (colorIndex & 15)];
     r            = static_cast<m_byte>((entry >> 1) & 0x07);
     g            = static_cast<m_byte>((entry >> 5) & 0x07);
     b            = static_cast<m_byte>((entry >> 9) & 0x07);
+
+    if (!state_->fullColorPaletteEnabled()) {
+        r &= 0x01;
+        g &= 0x01;
+        b &= 0x01;
+    }
 }
 
 /// Converts CRAM palette entry to full 8-bit BGR values (0–255) using lookup table.

@@ -67,7 +67,7 @@ void VDPTester::testRasterHSync() {
     }
 
     // Enable HBlank IRQ every scanline, and per-scanline HScroll.
-    writeReg(0x00, 0x10); // Mode 1: HINT enable
+    writeReg(0x00, 0x14); // Mode 1: full CRAM palette + HINT enable
     writeReg(0x0A, 0x00); // HINT counter = 0 → fires every line
     writeReg(0x0B, 0x03); // Mode 3: per-scanline HScroll, full-screen VScroll
 

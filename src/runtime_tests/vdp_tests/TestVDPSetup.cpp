@@ -330,7 +330,7 @@ void VDPTester::initVDP() {
     vdp().reset();
 
     // Mode registers
-    writeReg(0x00, 0x00); // Mode 1: no HBlank IRQ, no freeze, no left-col blank
+    writeReg(0x00, 0x04); // Mode 1: full CRAM palette, no HBlank IRQ/freeze/left-col blank
     writeReg(0x01, 0x74); // Mode 2: display on, VBlank IRQ, DMA enable, Mode 5
     writeReg(0x0B, 0x00); // Mode 3: HScroll full-screen, VScroll full-screen
     writeReg(0x0C, 0x81); // Mode 4: H40 (RS1=RS0=1), no interlace, no S/H

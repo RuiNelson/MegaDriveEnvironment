@@ -126,6 +126,11 @@ bool VDPState::hintEnabled() const {
     return (regs_[0x00] & 0x10) != 0;
 }
 
+/// Returns true when register $00 bit 2 selects the full 3-bit-per-channel Mode 5 palette.
+bool VDPState::fullColorPaletteEnabled() const {
+    return (regs_[0x00] & 0x04) != 0;
+}
+
 /// Returns reload value for the horizontal interrupt down-counter from register $0A.
 int VDPState::hintReloadValue() const {
     return static_cast<int>(regs_[0x0A]);

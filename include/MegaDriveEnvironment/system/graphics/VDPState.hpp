@@ -141,6 +141,9 @@ class VDPState {
     /// True if HBlank interrupt is enabled. From register $00 bit 4.
     bool hintEnabled() const;
 
+    /// True when all three CRAM bits per color channel are used. From register $00 bit 2.
+    bool fullColorPaletteEnabled() const;
+
     /// Reload value for the horizontal interrupt down-counter. From register $0A.
     int hintReloadValue() const;
 

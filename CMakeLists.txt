@@ -86,3 +86,13 @@ target_link_libraries(MegaDriveEnvironment PUBLIC
     png_static
     zlibstatic
 )
+
+include(CTest)
+if(BUILD_TESTING AND PROJECT_IS_TOP_LEVEL)
+    add_executable(megadrive_environment_vdp_color_test tests/vdp_color_test.cpp)
+    target_link_libraries(megadrive_environment_vdp_color_test PRIVATE MegaDriveEnvironment)
+    add_test(
+        NAME megadrive_environment_vdp_color_test
+        COMMAND megadrive_environment_vdp_color_test
+    )
+endif()

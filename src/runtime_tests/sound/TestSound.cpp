@@ -103,7 +103,7 @@ TestSound::TestSound() : MegaDriveEnvironment(VDP::InternalTimer, VDP::Integer) 
     VDP &v = vdp();
     v.reset();
 
-    writeReg(v, 0x00, 0x00);
+    writeReg(v, 0x00, 0x04); // full 3-bit-per-channel CRAM palette
     writeReg(v, 0x01, 0x74); // display on, VBlank IRQ, DMA, Mode 5
     writeReg(v, 0x0B, 0x00);
     writeReg(v, 0x0C, 0x81); // H40
