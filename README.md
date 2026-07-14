@@ -10,8 +10,6 @@ would for any other desktop program. Around that code, the environment models
 the memory map, VDP, 3-button controllers, Z80, YM2612 and PSG closely enough to
 develop and inspect real hardware-style interactions.
 
-![Development workflow from shared C++ to native PC testing and ROM validation](docs/development-loop.svg)
-
 The environment is deliberately **not a complete, cycle-accurate console
 emulator**, and it does not turn arbitrary desktop C++ into a ROM. It is the PC
 side of a portable game architecture. A real-hardware target still needs its
@@ -170,7 +168,54 @@ into a second tutorial.
 
 ## Runtime architecture
 
-![MegaDriveEnvironment runtime ownership, threads and subsystem connections](docs/runtime-architecture.svg)
+```mermaid
+classDiagram
+    direction LR
+
+    class GameApplication {
+        +run()
+        +vSync()
+        +hSync(line)
+    }
+
+    class MegaDriveEnvironment {
+        +boot()
+        +memory()
+        +vdp()
+        +controllers()
+        +z80()
+        +sound()
+        #run()
+        #vSync()
+        #hSync(line)
+    }
+
+    class SystemMemory {
+        +readByte(address)
+        +readWord(address)
+        +writeByte(address, value)
+        +writeWord(address, value)
+    }
+
+    class VDP
+    class Controllers
+    class Z80
+    class Sound
+    class CPU68K
+
+    GameApplication --|> MegaDriveEnvironment : extends
+    MegaDriveEnvironment *-- CPU68K
+    MegaDriveEnvironment *-- SystemMemory
+    MegaDriveEnvironment *-- VDP
+    MegaDriveEnvironment *-- Controllers
+    MegaDriveEnvironment *-- Z80
+    MegaDriveEnvironment *-- Sound
+
+    SystemMemory ..> VDP : mapped ports
+    SystemMemory ..> Controllers : mapped ports
+    SystemMemory ..> Z80 : mapped bus
+    SystemMemory ..> Sound : mapped ports
+```
 
 `MegaDriveEnvironment` owns one instance of every subsystem. Accessors expose
 them to derived applications:
@@ -214,8 +259,6 @@ For code intended to run on both PC and real hardware, prefer a small shared
 memory contract whose PC implementation delegates to `SystemMemory` and whose
 Mega Drive implementation performs direct volatile bus access. That keeps game
 code independent of SDL and prevents a second hardware-specific game loop.
-
-![Schematic Mega Drive address map implemented by SystemMemory](docs/memory-map.svg)
 
 Key mapped ranges:
 
@@ -404,7 +447,7 @@ the recommended starting point for a new project.
 include/MegaDriveEnvironment/  Public consumer headers
 src/                           Runtime implementation
 assets/                        Example/source art
-docs/                          Architecture diagrams used by this README
+docs/                          Supporting project documentation
 tests/                         Focused automated tests
 tools/                         Asset and development utilities
 ```
