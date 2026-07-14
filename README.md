@@ -170,55 +170,176 @@ into a second tutorial.
 
 ```mermaid
 classDiagram
-    direction LR
-
-    class GameApplication {
-        +run()
-        +vSync()
-        +hSync(line)
-    }
+    direction TB
 
     class MegaDriveEnvironment {
+        <<abstract>>
         +boot()
+        +shouldQuit()
         +memory()
         +vdp()
         +controllers()
         +z80()
         +sound()
+        #cpu()
+        #loadROM(path)
         #run()
         #vSync()
         #hSync(line)
+        #handleOptionHotkey(keyCode)
+    }
+
+    class CPU68K {
+        +d[8]
+        +a[7]
+        +ssp
+        +usp
+        +pc
+        +sr
+        +condition(cc)
     }
 
     class SystemMemory {
+        +loadROM(path)
         +readByte(address)
         +readWord(address)
+        +readLong(address)
         +writeByte(address, value)
         +writeWord(address, value)
+        +writeLong(address, value)
     }
 
-    class VDP
-    class Controllers
-    class Z80
-    class Sound
-    class CPU68K
+    class VDP {
+        +start()
+        +stop()
+        +writeControlPort(value)
+        +readControlPort()
+        +writeDataPort(value)
+        +readDataPort()
+        +readHVCounter()
+        +popInterrupt(out)
+        +dumpFrameBufferToPNG(path, fullRange)
+        +dumpEverythingToPNG(path, fullRange)
+    }
 
-    GameApplication --|> MegaDriveEnvironment : extends
-    MegaDriveEnvironment *-- CPU68K
-    MegaDriveEnvironment *-- SystemMemory
-    MegaDriveEnvironment *-- VDP
-    MegaDriveEnvironment *-- Controllers
-    MegaDriveEnvironment *-- Z80
-    MegaDriveEnvironment *-- Sound
+    class Controllers {
+        +getCurrentState()
+        +setDelegate(delegate)
+        +readPlayer1DataPort()
+        +readPlayer2DataPort()
+        +writePlayer1DataPort(value)
+        +writePlayer2DataPort(value)
+    }
 
-    SystemMemory ..> VDP : mapped ports
-    SystemMemory ..> Controllers : mapped ports
-    SystemMemory ..> Z80 : mapped bus
-    SystemMemory ..> Sound : mapped ports
+    class ControllersDelegate {
+        <<interface>>
+        +controllersStateDidUpdate(newState)
+    }
+
+    class ControlsConfigStore {
+        +player1
+        +player2
+        +save()
+    }
+
+    class Z80 {
+        +start()
+        +stop()
+        +readRAMFor68K(address)
+        +writeRAMFor68K(address, value)
+        +setBusRequest(requested)
+        +setReset(held)
+        +pulseVBlankIRQ()
+    }
+
+    class Sound {
+        +start()
+        +stop()
+        +readYM2612(port)
+        +writeYM2612(port, value)
+        +writePSG(value)
+        +diagnostics()
+    }
+
+    class VDPState {
+        +regs
+        +vram
+        +cram
+        +vsram
+        +reset()
+    }
+
+    class VDPPort {
+        +writeControlPort(value)
+        +readControlPort()
+        +writeDataPort(value)
+        +readDataPort()
+        +executeDMA()
+    }
+
+    class VDPTile {
+        +getTilePixel(tileAddr, pixelX, pixelY, hflip, vflip)
+        +cramToRGB(palette, colorIndex, r, g, b)
+    }
+
+    class VDPRenderer {
+        +renderFrame()
+        +renderScanline(line)
+    }
+
+    class VDPRendererDebug {
+        +dumpFrameBufferToPNG(path, fullRange)
+        +dumpEverythingToPNG(path, fullRange)
+    }
+
+    class Framebuffer {
+        +setPixel(x, y, b, g, r)
+        +getPixel(x, y, b, g, r)
+        +clear()
+        +uploadToTexture(texture)
+    }
+
+    MegaDriveEnvironment "1" *-- "1" CPU68K : register file
+    MegaDriveEnvironment "1" *-- "1" SystemMemory : owns
+    MegaDriveEnvironment "1" *-- "1" VDP : owns
+    MegaDriveEnvironment "1" *-- "1" Controllers : owns
+    MegaDriveEnvironment "1" *-- "1" Z80 : owns
+    MegaDriveEnvironment "1" *-- "1" Sound : owns
+
+    SystemMemory ..> VDP : mapped VDP ports
+    SystemMemory ..> Controllers : mapped joypad ports
+    SystemMemory ..> Z80 : RAM and bus control
+    SystemMemory ..> Sound : mapped audio ports
+    Z80 ..> SystemMemory : banked 68K and VDP access
+    Z80 ..> Sound : YM2612 and PSG writes
+    VDP ..> MegaDriveEnvironment : raises 68K IRQs
+    VDP ..> Z80 : raises VBlank IRQ
+
+    Controllers o-- ControllersDelegate : optional observer
+    Controllers ..> ControlsConfigStore : reads at construction
+
+    VDP "1" *-- "1" VDPState : hardware state
+    VDP "1" *-- "1" VDPPort : port and DMA logic
+    VDP "1" *-- "1" VDPTile : tile decoding
+    VDP "1" *-- "1" VDPRenderer : frame composition
+    VDP "1" *-- "1" VDPRendererDebug : PNG diagnostics
+    VDP "1" *-- "1" Framebuffer : pixel output
+
+    VDPPort --> VDPState : reads and mutates
+    VDPPort ..> SystemMemory : DMA source
+    VDPTile --> VDPState : reads VRAM and CRAM
+    VDPRenderer --> VDPState : reads display state
+    VDPRenderer --> VDPTile : decodes pixels
+    VDPRenderer --> Framebuffer : draws frame
+    VDPRendererDebug --> VDPState : reads diagnostics
+    VDPRendererDebug --> VDPTile : decodes diagnostics
+    VDPRendererDebug --> Framebuffer : reads output
 ```
 
-`MegaDriveEnvironment` owns one instance of every subsystem. Accessors expose
-them to derived applications:
+The filled diamonds correspond to by-value ownership in the headers. Dotted
+arrows show runtime calls between classes; the VDP helper classes are private
+implementation details composed inside `VDP`. `MegaDriveEnvironment` exposes
+its top-level subsystems to derived applications through these accessors:
 
 ```cpp
 memory();      // SystemMemory
