@@ -377,19 +377,14 @@ int VDP::renderLoop() {
 
         scheduleInterrupt(Interrupt::VSync, 0);
 
-        // Debug (under --debug): once per second (60 frames), dump the frame
-        // (composited output) and the full debug view (registers + tile
-        // sheets + plane nametables, via dumpEverythingToPNG) and log
-        // recompiled-CPU state, to watch boot/render progress.
+        // Keep --debug lightweight: emit diagnostics once per second without
+        // doing image encoding or filesystem I/O on the render thread. Debug
+        // PNGs remain available explicitly through the screenshot hotkeys.
         if (env_ != nullptr && env_->debugLog()) {
             static unsigned debugFrame = 0;
             ++debugFrame;
-            if (debugFrame % 20 == 0) {
-                env_->logFrame(debugFrame, displayEnabled);
-            }
             if (debugFrame % 60 == 0) {
-                dumpFrameBufferToPNG("sor_frame.png", true);
-                dumpEverythingToPNG("sor_everything.png", true);
+                env_->logFrame(debugFrame, displayEnabled);
             }
         }
 
