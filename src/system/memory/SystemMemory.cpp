@@ -173,6 +173,20 @@ m_byte SystemMemory::waitForByteValue(m_long address,
     return value;
 }
 
+m_word SystemMemory::waitForWordBits(m_long address,
+                                     m_word mask,
+                                     m_word expected,
+                                     const std::function<bool()> &waitForProgress) {
+    expected &= mask;
+    m_word value = readWord(address);
+    while ((value & mask) != expected) {
+        if (!waitForProgress())
+            break;
+        value = readWord(address);
+    }
+    return value;
+}
+
 // ── Memory-mapped hardware (VDP / I/O / Z80 / TMSS) ─────────────────────────────
 //
 // Everything between the ROM (< 0x400000) and work RAM (>= 0xFF0000) is the

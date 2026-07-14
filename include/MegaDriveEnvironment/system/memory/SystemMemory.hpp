@@ -75,6 +75,14 @@ class SystemMemory {
                             m_byte desiredValue,
                             const std::function<bool()> &waitForProgress);
 
+    /// Waits until `(readWord(address) & mask) == (expected & mask)`. While the
+    /// condition differs, invokes @p waitForProgress so an emulated producer
+    /// can advance without a host-side busy loop. Returning false cancels.
+    m_word waitForWordBits(m_long address,
+                           m_word mask,
+                           m_word expected,
+                           const std::function<bool()> &waitForProgress);
+
     /// Copies one byte from @p from to @p to within the 68K address space.
     void copyByte(m_long from, m_long to);
 
