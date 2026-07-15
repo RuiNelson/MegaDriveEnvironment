@@ -170,33 +170,21 @@ into a second tutorial.
 
 ```mermaid
 classDiagram
-    direction TB
+    direction LR
 
     class MegaDriveEnvironment {
         <<abstract>>
         +boot()
         +shouldQuit()
+        +setLanguagePin(pin)
+        +setVideoStandard(standard)
+        +setDebugLog(on)
+        +setFastMode(on)
         +memory()
         +vdp()
         +controllers()
         +z80()
         +sound()
-        #cpu()
-        #loadROM(path)
-        #run()
-        #vSync()
-        #hSync(line)
-        #handleOptionHotkey(keyCode)
-    }
-
-    class CPU68K {
-        +d[8]
-        +a[7]
-        +ssp
-        +usp
-        +pc
-        +sr
-        +condition(cc)
     }
 
     class SystemMemory {
@@ -231,17 +219,6 @@ classDiagram
         +writePlayer2DataPort(value)
     }
 
-    class ControllersDelegate {
-        <<interface>>
-        +controllersStateDidUpdate(newState)
-    }
-
-    class ControlsConfigStore {
-        +player1
-        +player2
-        +save()
-    }
-
     class Z80 {
         +start()
         +stop()
@@ -261,50 +238,11 @@ classDiagram
         +diagnostics()
     }
 
-    class VDPState {
-        +regs
-        +vram
-        +cram
-        +vsram
-        +reset()
-    }
-
-    class VDPPort {
-        +writeControlPort(value)
-        +readControlPort()
-        +writeDataPort(value)
-        +readDataPort()
-        +executeDMA()
-    }
-
-    class VDPTile {
-        +getTilePixel(tileAddr, pixelX, pixelY, hflip, vflip)
-        +cramToRGB(palette, colorIndex, r, g, b)
-    }
-
-    class VDPRenderer {
-        +renderFrame()
-        +renderScanline(line)
-    }
-
-    class VDPRendererDebug {
-        +dumpFrameBufferToPNG(path, fullRange)
-        +dumpEverythingToPNG(path, fullRange)
-    }
-
-    class Framebuffer {
-        +setPixel(x, y, b, g, r)
-        +getPixel(x, y, b, g, r)
-        +clear()
-        +uploadToTexture(texture)
-    }
-
-    MegaDriveEnvironment "1" *-- "1" CPU68K : register file
-    MegaDriveEnvironment "1" *-- "1" SystemMemory : owns
-    MegaDriveEnvironment "1" *-- "1" VDP : owns
-    MegaDriveEnvironment "1" *-- "1" Controllers : owns
-    MegaDriveEnvironment "1" *-- "1" Z80 : owns
-    MegaDriveEnvironment "1" *-- "1" Sound : owns
+    MegaDriveEnvironment "1" *-- "1" SystemMemory : memory()
+    MegaDriveEnvironment "1" *-- "1" VDP : vdp()
+    MegaDriveEnvironment "1" *-- "1" Controllers : controllers()
+    MegaDriveEnvironment "1" *-- "1" Z80 : z80()
+    MegaDriveEnvironment "1" *-- "1" Sound : sound()
 
     SystemMemory ..> VDP : mapped VDP ports
     SystemMemory ..> Controllers : mapped joypad ports
@@ -314,32 +252,13 @@ classDiagram
     Z80 ..> Sound : YM2612 and PSG writes
     VDP ..> MegaDriveEnvironment : raises 68K IRQs
     VDP ..> Z80 : raises VBlank IRQ
-
-    Controllers o-- ControllersDelegate : optional observer
-    Controllers ..> ControlsConfigStore : reads at construction
-
-    VDP "1" *-- "1" VDPState : hardware state
-    VDP "1" *-- "1" VDPPort : port and DMA logic
-    VDP "1" *-- "1" VDPTile : tile decoding
-    VDP "1" *-- "1" VDPRenderer : frame composition
-    VDP "1" *-- "1" VDPRendererDebug : PNG diagnostics
-    VDP "1" *-- "1" Framebuffer : pixel output
-
-    VDPPort --> VDPState : reads and mutates
-    VDPPort ..> SystemMemory : DMA source
-    VDPTile --> VDPState : reads VRAM and CRAM
-    VDPRenderer --> VDPState : reads display state
-    VDPRenderer --> VDPTile : decodes pixels
-    VDPRenderer --> Framebuffer : draws frame
-    VDPRendererDebug --> VDPState : reads diagnostics
-    VDPRendererDebug --> VDPTile : decodes diagnostics
-    VDPRendererDebug --> Framebuffer : reads output
 ```
 
-The filled diamonds correspond to by-value ownership in the headers. Dotted
-arrows show runtime calls between classes; the VDP helper classes are private
-implementation details composed inside `VDP`. `MegaDriveEnvironment` exposes
-its top-level subsystems to derived applications through these accessors:
+The diagram intentionally stops at the public boundary. The filled diamonds
+identify the subsystem returned by each public accessor; private implementation
+objects are omitted. Dotted arrows show runtime calls between those public
+subsystems. `MegaDriveEnvironment` exposes them to derived applications through
+these accessors:
 
 ```cpp
 memory();      // SystemMemory
