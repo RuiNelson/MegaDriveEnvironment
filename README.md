@@ -127,7 +127,8 @@ Public headers are included from `include/MegaDriveEnvironment`:
 ### Minimal host application
 
 Derive one application object from `MegaDriveEnvironment`, choose the VDP
-timing/scaling policy, implement `run()`, and call `boot()` on the main thread:
+timing/scaling policy, implement `run()` and the VDP interrupt handlers, then
+call `boot()` on the main thread:
 
 ```cpp
 #include "system/MegaDriveEnvironment.hpp"
@@ -148,6 +149,15 @@ class MyGame final : public MegaDriveEnvironment {
             // Update game state and access mapped hardware here.
             pace();
         }
+    }
+
+    void vSync() override {
+        // Handle the vertical-blank interrupt once per frame.
+    }
+
+    void hSync(int line) override {
+        // Handle the horizontal-blank interrupt for this scanline.
+        (void)line;
     }
 };
 
