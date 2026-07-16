@@ -468,11 +468,11 @@ master-cycle timeline described above.
 
 ### Z80
 
-The Z80 subsystem uses a portable Z80 core derived from Juergen Buchmueller's
-emulator (with later fixes present in the vendored sources under
-`system/z80/mame_z80/`). It owns 8 KiB of Z80 RAM, banked access into the 68000
-map, bus request/reset and VBlank IRQ delivery so sound drivers can run as they
-would on hardware.
+The Z80 subsystem uses **[SUZUKI PLAN - Z80 Emulator](https://github.com/suzukiplan/z80)**
+(MIT, Yoji Suzuki), a single-header C++ core vendored under
+`include/MegaDriveEnvironment/system/z80/suzukiplan/`. It owns 8 KiB of Z80 RAM,
+banked access into the 68000 map, bus request/reset and VBlank IRQ delivery so
+sound drivers can run as they would on hardware.
 
 Environment-only code may call `sound().writeYM2612()` and
 `sound().writePSG()` directly. Shared game code should use memory-mapped ports
@@ -569,8 +569,7 @@ Copyright (c) 2026 Rui Carneiro.
 Third-party code and host dependencies keep their own terms. In particular:
 
 - **ymfm** (YM2612) — BSD 3-Clause, Copyright (c) 2021 Aaron Giles;
-- **Z80 core** — freeware license by Juergen Buchmueller (credit required;
-  commercial use needs the author's permission — see the notice in `z80.c`);
+- **SUZUKI PLAN Z80** — MIT, Copyright (c) 2019 Yoji Suzuki;
 - **SDL3**, **yaml-cpp**, **zlib** and **libpng** — obtained at build time under
   their upstream licenses.
 

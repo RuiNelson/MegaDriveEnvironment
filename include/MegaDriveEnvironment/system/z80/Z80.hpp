@@ -7,6 +7,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <memory>
 
 class MegaDriveEnvironment;
 
@@ -34,10 +35,12 @@ class Z80 {
     void pulseVBlankIRQ();
 
     private:
+    struct Core;
+
     static int threadEntry(void *data);
     void       runThread();
     void       resetCPU();
-    void       installCallbacks();
+    void       installClockCallback();
     void       runCoreForTStates(uint32_t tStates);
     void       runTowardWallClock(uint32_t maxTStates);
     uint64_t   wallMasterCycles() const;
@@ -48,14 +51,15 @@ class Z80 {
     uint8_t readPortForCore(uint16_t port);
     void    writePortForCore(uint16_t port, uint8_t value);
 
-    static uint8_t staticRead8(unsigned int address);
-    static void    staticWrite8(unsigned int address, uint8_t value);
-    static uint8_t staticReadPort(unsigned int port);
-    static void    staticWritePort(unsigned int port, uint8_t value);
+    static uint8_t staticRead8(void *arg, unsigned short address);
+    static void    staticWrite8(void *arg, unsigned short address, unsigned char value);
+    static uint8_t staticReadPort(void *arg, unsigned short port);
+    static void    staticWritePort(void *arg, unsigned short port, unsigned char value);
 
     MegaDriveEnvironment      *env_    = nullptr;
     SDL_Thread                *thread_ = nullptr;
     SDL_Mutex                 *mutex_  = nullptr;
+    std::unique_ptr<Core>      core_;
     std::array<m_byte, 0x2000> ram_{};
     std::atomic<bool>          running_{false};
     std::atomic<bool>          busRequested_{true};

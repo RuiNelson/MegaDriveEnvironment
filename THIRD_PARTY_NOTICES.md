@@ -44,30 +44,35 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-## Z80 emulator core
+## SUZUKI PLAN - Z80 Emulator
 
-- **Location:** `include/MegaDriveEnvironment/system/z80/mame_z80/`,
-  `src/system/z80/mame_z80/`
-- **Author:** Juergen Buchmueller (with later changes attributed in the source)
-- **License:** freeware for non-commercial purposes; commercial use requires
-  contacting the author (see the notice in `z80.c`)
+- **Location:** `include/MegaDriveEnvironment/system/z80/suzukiplan/`
+- **Upstream:** [https://github.com/suzukiplan/z80](https://github.com/suzukiplan/z80)
+- **Author:** Yoji Suzuki
+- **License:** MIT (see also `suzukiplan/LICENSE.txt`)
 
 ```
-Portable Z80 emulator V3.9
+The MIT License (MIT)
 
-Copyright Juergen Buchmueller, all rights reserved.
+Copyright (c) 2019 Yoji Suzuki.
 
-- This source code is released as freeware for non-commercial purposes.
-- You are free to use and redistribute this code in modified or
-  unmodified form, provided you list me in the credits.
-- If you modify this source code, you must add a notice to each modified
-  source file that it has been changed.  If you're a nice person, you
-  will clearly mark each change too.  :)
-- If you wish to use this for commercial purposes, please contact me at
-  pullmoll@t-online.de
-- The author of this copywritten work reserves the right to change the
-  terms of its usage and license at any time, including retroactively
-- This entire notice must remain in the source code.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ## Other runtime dependencies

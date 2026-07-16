@@ -2,34 +2,21 @@
 
 #include "system/MegaDriveEnvironment.hpp"
 
+// Keep the vendor core lean: no debug/breakpoint/call-nest machinery.
+#define Z80_DISABLE_DEBUG
+#define Z80_DISABLE_BREAKPOINT
+#define Z80_DISABLE_NESTCHECK
+#include "system/z80/suzukiplan/z80.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
-extern "C" {
-void         z80_init(const void *config, int (*irqcallback)(int));
-void         z80_reset(void);
-void         z80_run(unsigned int cycles);
-void         z80_set_cycle_counter(unsigned int cycles);
-unsigned int z80_get_cycle_counter(void);
-void         z80_set_irq_line(unsigned int state);
-void         z80_set_nmi_line(unsigned int state);
-
-extern void (*z80_writemem)(unsigned int address, unsigned char data);
-extern unsigned char (*z80_readmem)(unsigned int address);
-extern void (*z80_writeport)(unsigned int port, unsigned char data);
-extern unsigned char (*z80_readport)(unsigned int port);
-}
-
 namespace {
-// The GPX-derived core's cycle tables are premultiplied by 15 (e.g. `4*15`),
-// so Z80.cycles counts Mega Drive MASTER cycles, not T-states. Convert at the
-// boundary: ×15 when feeding T-states in, and the counter maps 1:1 onto the
-// shared master-cycle timeline.
+// Mega Drive Z80 T-states map to master cycles 1:15 (7.6 MHz vs 53.7 MHz).
 constexpr uint32_t kMasterCyclesPerZ80TState = 15;
 constexpr uint32_t kMaxRunChunkTStates       = 512;
-constexpr uint64_t kCycleCounterWrapNear     = 0x70000000u;
 // Genesis Plus GX asserts the Z80 INT at VBlank and clears it at the end of
 // that scanline; hold it for one scanline of emulated time (~228 T-states).
 constexpr uint64_t kIRQHoldTStates = 228;
@@ -44,15 +31,37 @@ constexpr uint64_t kMaxBacklogMasterCycles = 120'000ull * 15ull;
 constexpr uint32_t kBusReleaseTStates = 2048;
 // Per-pass budget for the Z80 thread.
 constexpr uint32_t kThreadRunTStates = 32'768;
-constexpr uint8_t  CLEAR_LINE        = 0;
-constexpr uint8_t  ASSERT_LINE       = 1;
-
-Z80 *gActiveZ80 = nullptr;
+// Mega Drive VDP asserts /INT with data bus typically read as $FF in IM 1;
+// mode 1 ignores the vector and vectors to $0038, but mode 0 would use it.
+constexpr unsigned char kIRQVector = 0xFF;
 } // namespace
 
-Z80::Z80(MegaDriveEnvironment *env) : env_(env), mutex_(SDL_CreateMutex()) {
+struct Z80::Core {
+    suzukiplan::Z80 cpu;
+
+    explicit Core(Z80 *owner)
+        : cpu(&Z80::staticRead8,
+              &Z80::staticWrite8,
+              &Z80::staticReadPort,
+              &Z80::staticWritePort,
+              owner) {}
+};
+
+// ymfm/PSG writes are stamped with the core timeline. The previous GPX core
+// exposed a live cycle counter during memory callbacks; suzukiplan only returns
+// total clocks after execute() unless we mirror progress via consumeClock.
+void Z80::installClockCallback() {
+    core_->cpu.setConsumeClockCallback([](void *arg, int clocks) {
+        if (clocks <= 0)
+            return;
+        auto *self = static_cast<Z80 *>(arg);
+        self->executedCoreMasterCycles_ +=
+            static_cast<uint64_t>(clocks) * kMasterCyclesPerZ80TState;
+    });
+}
+
+Z80::Z80(MegaDriveEnvironment *env) : env_(env), mutex_(SDL_CreateMutex()), core_(std::make_unique<Core>(this)) {
     fallbackBaseNS_ = SDL_GetTicksNS();
-    installCallbacks();
     SDL_LockMutex(mutex_);
     resetCPU();
     SDL_UnlockMutex(mutex_);
@@ -68,8 +77,6 @@ uint64_t Z80::wallMasterCycles() const {
 
 Z80::~Z80() {
     stop();
-    if (gActiveZ80 == this)
-        gActiveZ80 = nullptr;
     if (mutex_) {
         SDL_DestroyMutex(mutex_);
         mutex_ = nullptr;
@@ -79,7 +86,6 @@ Z80::~Z80() {
 void Z80::start() {
     if (running_.exchange(true))
         return;
-    installCallbacks();
     thread_ = SDL_CreateThread(threadEntry, "Z80", this);
 }
 
@@ -89,14 +95,6 @@ void Z80::stop() {
         SDL_WaitThread(thread_, nullptr);
         thread_ = nullptr;
     }
-}
-
-void Z80::installCallbacks() {
-    gActiveZ80    = this;
-    z80_readmem   = staticRead8;
-    z80_writemem  = staticWrite8;
-    z80_readport  = staticReadPort;
-    z80_writeport = staticWritePort;
 }
 
 void Z80::setBusRequest(bool requested) {
@@ -115,7 +113,6 @@ void Z80::setBusRequest(bool requested) {
         // (native-speed 68K). Bounded by the real wall-clock deficit, so it
         // cannot drift the timeline ahead.
         SDL_LockMutex(mutex_);
-        installCallbacks();
         runTowardWallClock(kBusReleaseTStates);
         SDL_UnlockMutex(mutex_);
     }
@@ -182,7 +179,6 @@ void Z80::runThread() {
         busAcked_.store(false, std::memory_order_release);
 
         SDL_LockMutex(mutex_);
-        installCallbacks();
         runTowardWallClock(kThreadRunTStates);
         SDL_UnlockMutex(mutex_);
 
@@ -218,11 +214,11 @@ void Z80::runTowardWallClock(uint32_t maxTStates) {
 }
 
 void Z80::resetCPU() {
-    installCallbacks();
-    z80_init(nullptr, nullptr);
-    z80_reset();
-    z80_set_irq_line(CLEAR_LINE);
-    z80_set_nmi_line(CLEAR_LINE);
+    core_->cpu.initialize();
+    // initialize() clears the consumeClock hook; restore the live timeline.
+    installClockCallback();
+    // Mega Drive sound drivers almost always use interrupt mode 1 (RST $38).
+    core_->cpu.reg.interrupt = 0b00000001;
     executedCoreMasterCycles_ = 0;
     cycleEpochMasterCycles_   = 0;
     bankRegister_             = 0;
@@ -235,35 +231,44 @@ void Z80::runCoreForTStates(uint32_t tStates) {
     if (tStates == 0)
         return;
 
-    if (executedCoreMasterCycles_ > kCycleCounterWrapNear) {
-        cycleEpochMasterCycles_ += executedCoreMasterCycles_;
-        irqClearAtMasterCycles_ = (irqClearAtMasterCycles_ > executedCoreMasterCycles_)
-                                    ? irqClearAtMasterCycles_ - executedCoreMasterCycles_
-                                    : 0;
-        z80_set_cycle_counter(0);
-        executedCoreMasterCycles_ = 0;
-    }
-
     if (irqPending_.exchange(false, std::memory_order_acq_rel)) {
-        z80_set_irq_line(ASSERT_LINE);
+        core_->cpu.generateIRQ(kIRQVector);
         irqLineAsserted_        = true;
         irqClearAtMasterCycles_ = executedCoreMasterCycles_ + (kIRQHoldTStates * kMasterCyclesPerZ80TState);
     }
 
+    // execute() advances executedCoreMasterCycles_ via installClockCallback()
+    // so YM/PSG port writes mid-batch get distinct timestamps.
+    auto runSlice = [this](uint32_t sliceTStates) {
+        if (sliceTStates == 0)
+            return;
+        (void)core_->cpu.execute(static_cast<int>(sliceTStates));
+    };
+
     const uint64_t targetMasterCycles =
         executedCoreMasterCycles_ + (static_cast<uint64_t>(tStates) * kMasterCyclesPerZ80TState);
+
     if (irqLineAsserted_ && irqClearAtMasterCycles_ < targetMasterCycles) {
-        if (irqClearAtMasterCycles_ > executedCoreMasterCycles_)
-            z80_run(static_cast<unsigned int>(irqClearAtMasterCycles_));
-        z80_set_irq_line(CLEAR_LINE);
+        if (irqClearAtMasterCycles_ > executedCoreMasterCycles_) {
+            const uint64_t remainingMaster = irqClearAtMasterCycles_ - executedCoreMasterCycles_;
+            const uint32_t untilClear =
+                static_cast<uint32_t>((remainingMaster + kMasterCyclesPerZ80TState - 1) / kMasterCyclesPerZ80TState);
+            runSlice(untilClear);
+        }
+        core_->cpu.cancelIRQ();
         irqLineAsserted_ = false;
     }
-    z80_run(static_cast<unsigned int>(targetMasterCycles));
-    executedCoreMasterCycles_ = static_cast<uint64_t>(z80_get_cycle_counter());
+
+    if (executedCoreMasterCycles_ < targetMasterCycles) {
+        const uint64_t remainingMaster = targetMasterCycles - executedCoreMasterCycles_;
+        const uint32_t remainingTStates =
+            static_cast<uint32_t>((remainingMaster + kMasterCyclesPerZ80TState - 1) / kMasterCyclesPerZ80TState);
+        runSlice(remainingTStates);
+    }
 }
 
 uint64_t Z80::currentMasterCyclesForCore() const {
-    return cycleEpochMasterCycles_ + static_cast<uint64_t>(z80_get_cycle_counter());
+    return cycleEpochMasterCycles_ + executedCoreMasterCycles_;
 }
 
 m_byte Z80::readRAMFor68K(uint16_t address) {
@@ -338,20 +343,18 @@ void Z80::writePortForCore(uint16_t port, uint8_t value) {
     (void)value;
 }
 
-uint8_t Z80::staticRead8(unsigned int address) {
-    return gActiveZ80 ? gActiveZ80->read8ForCore(static_cast<uint16_t>(address)) : 0xFF;
+uint8_t Z80::staticRead8(void *arg, unsigned short address) {
+    return static_cast<Z80 *>(arg)->read8ForCore(static_cast<uint16_t>(address));
 }
 
-void Z80::staticWrite8(unsigned int address, uint8_t value) {
-    if (gActiveZ80)
-        gActiveZ80->write8ForCore(static_cast<uint16_t>(address), value);
+void Z80::staticWrite8(void *arg, unsigned short address, unsigned char value) {
+    static_cast<Z80 *>(arg)->write8ForCore(static_cast<uint16_t>(address), value);
 }
 
-uint8_t Z80::staticReadPort(unsigned int port) {
-    return gActiveZ80 ? gActiveZ80->readPortForCore(static_cast<uint16_t>(port)) : 0xFF;
+uint8_t Z80::staticReadPort(void *arg, unsigned short port) {
+    return static_cast<Z80 *>(arg)->readPortForCore(static_cast<uint16_t>(port));
 }
 
-void Z80::staticWritePort(unsigned int port, uint8_t value) {
-    if (gActiveZ80)
-        gActiveZ80->writePortForCore(static_cast<uint16_t>(port), value);
+void Z80::staticWritePort(void *arg, unsigned short port, unsigned char value) {
+    static_cast<Z80 *>(arg)->writePortForCore(static_cast<uint16_t>(port), value);
 }

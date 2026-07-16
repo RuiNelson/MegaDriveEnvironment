@@ -67,7 +67,7 @@ target_include_directories(MegaDriveEnvironment PUBLIC
     ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/system/sound
     ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/system/sound/mame_ymfm
     ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/system/z80
-    ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/system/z80/mame_z80
+    ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/system/z80/suzukiplan
     ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/config
     ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/config/controls
     ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/runtime_tests
