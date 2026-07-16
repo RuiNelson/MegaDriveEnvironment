@@ -43,6 +43,7 @@ demonstrates that complete two-target workflow.
   - [Portability to real hardware](#portability-to-real-hardware)
   - [Public API map](#public-api-map)
   - [Repository layout](#repository-layout)
+  - [License](#license)
 
 ## Why use it?
 
@@ -445,6 +446,34 @@ The mapped sound path mirrors the console architecture:
   audio is active. Under contention or queue pressure, diagnostics report
   dropped events rather than stalling the game.
 
+### YM2612 (ymfm)
+
+FM synthesis for the YM2612 is provided by **[ymfm](https://github.com/aaronsgiles/ymfm)**,
+Aaron Giles' BSD-licensed Yamaha FM core (the same family of cores used in MAME).
+A vendored copy lives under:
+
+- `include/MegaDriveEnvironment/system/sound/mame_ymfm/`
+- `src/system/sound/mame_ymfm/`
+
+The environment drives `ymfm::ym2612` at the Mega Drive master-clock-derived
+YM2612 rate, mixes it with a host SN76489-compatible PSG implementation, and
+outputs stereo audio at 48 kHz through SDL3. Host code does not need to talk to
+ymfm directly; use the mapped ports or the `Sound` helpers.
+
+### PSG and host mixing
+
+The SN76489-style PSG is implemented inside `Sound` (not part of ymfm). PSG and
+FM streams are preamplified, mixed, lightly filtered and delivered on the shared
+master-cycle timeline described above.
+
+### Z80
+
+The Z80 subsystem uses a portable Z80 core derived from Juergen Buchmueller's
+emulator (with later fixes present in the vendored sources under
+`system/z80/mame_z80/`). It owns 8 KiB of Z80 RAM, banked access into the 68000
+map, bus request/reset and VBlank IRQ delivery so sound drivers can run as they
+would on hardware.
+
 Environment-only code may call `sound().writeYM2612()` and
 `sound().writePSG()` directly. Shared game code should use memory-mapped ports
 so the same sound routine remains valid on real hardware.
@@ -523,9 +552,29 @@ assets/                        Example/source art
 docs/                          Supporting project documentation
 tests/                         Focused automated tests
 tools/                         Asset and development utilities
+LICENSE                        Project MIT license
+THIRD_PARTY_NOTICES.md         Vendored and dependency license notices
 ```
 
 When changing emulated behaviour, add a focused test where possible and verify
 the result against independent emulator documentation or real hardware. The
 fast native loop is most valuable when it remains honest about where hardware
 validation still matters.
+
+## License
+
+MegaDriveEnvironment is released under the [MIT License](LICENSE).
+Copyright (c) 2026 Rui Carneiro.
+
+Third-party code and host dependencies keep their own terms. In particular:
+
+- **ymfm** (YM2612) — BSD 3-Clause, Copyright (c) 2021 Aaron Giles;
+- **Z80 core** — freeware license by Juergen Buchmueller (credit required;
+  commercial use needs the author's permission — see the notice in `z80.c`);
+- **SDL3**, **yaml-cpp**, **zlib** and **libpng** — obtained at build time under
+  their upstream licenses.
+
+Full text and paths for vendored components are in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). When redistributing
+binaries that include this library, retain the MIT notice from `LICENSE` and
+reproduce the applicable third-party notices.
