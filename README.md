@@ -61,7 +61,7 @@ demonstrates that complete two-target workflow.
 
 | Area | Implemented behaviour |
 | --- | --- |
-| 68000 execution | Native C++ game code plus a `CPU68K` register file for mechanically generated/recompiled code; no 68000 interpreter |
+| 68000 execution | Native C++ game code on a dedicated CPU thread; no 68000 interpreter or register-file emulation (recompilation hosts supply their own) |
 | System memory | 24-bit address normalization, 4 MiB ROM, 64 KiB Work RAM, big-endian byte/word/long access and mapped-device routing |
 | VDP | Mode 5 ports and registers, VRAM/CRAM/VSRAM, planes A/B, window, scrolling, linked sprites, priorities, sprite limits/collision, DMA, H/V counters, HBlank/VBlank events, interlace and shadow/highlight |
 | Video output | SDL3 window, integer/fitted scaling, internal 50/60 Hz timer or display VSync modes, PNG captures |
@@ -556,7 +556,6 @@ the recommended starting point for a new project.
 | [`system/sound/Sound.hpp`](include/MegaDriveEnvironment/system/sound/Sound.hpp) | YM2612/PSG access and audio diagnostics |
 | [`system/z80/Z80.hpp`](include/MegaDriveEnvironment/system/z80/Z80.hpp) | Z80 RAM, bus/reset and execution lifecycle |
 | [`config/controls/ControlsConfigUI.hpp`](include/MegaDriveEnvironment/config/controls/ControlsConfigUI.hpp) | Interactive keyboard/gamepad binding UI |
-| [`system/cpu/CPU68K.hpp`](include/MegaDriveEnvironment/system/cpu/CPU68K.hpp) | Register and condition-code model for generated code |
 
 ## Repository layout
 

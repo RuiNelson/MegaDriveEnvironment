@@ -53,7 +53,6 @@ handlers include `vSync()` and `hSync(int line)`.
 Key systems:
 
 - `system/MegaDriveEnvironment` - root object and subsystem ownership.
-- `system/cpu/CPU68K` - 68000 register file for generated code.
 - `system/memory/SystemMemory` - ROM/WRAM address space.
 - `system/graphics` - VDP state, ports, tiles, renderer, framebuffer.
 - `system/controllers` - Mega Drive joypad protocol.

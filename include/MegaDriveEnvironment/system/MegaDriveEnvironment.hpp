@@ -4,8 +4,8 @@
 #include "SystemMemory.hpp"
 #include "Z80.hpp"
 #include "controllers/Controllers.hpp"
-#include "cpu/CPU68K.hpp"
 #include "graphics/VDP.hpp"
+#include "data_types.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -216,16 +216,30 @@ class MegaDriveEnvironment {
         pendingIRQMask_.fetch_and(~(1u << level), std::memory_order_release);
     }
 
-    /// Blocks the CPU thread until an interrupt above the current 68000 mask is
+    /// Blocks the CPU thread until an interrupt above cpuInterruptMask() is
     /// pending. The predicate closes the check/sleep race, so an IRQ cannot be
     /// lost between observing the mask and entering the host wait.
     void waitForInterrupt() {
-        while (!quitRequested_.load(std::memory_order_acquire) && irqLevel() <= cpu_.interruptMask()) {
+        while (!quitRequested_.load(std::memory_order_acquire) &&
+               irqLevel() <= cpuInterruptMask()) {
             const std::uint64_t observed = interruptGeneration_.load(std::memory_order_acquire);
-            if (irqLevel() > cpu_.interruptMask())
+            if (irqLevel() > cpuInterruptMask())
                 break;
             interruptGeneration_.wait(observed, std::memory_order_acquire);
         }
+    }
+
+    /// 68000 IPL mask consulted by waitForInterrupt() and debug logs.
+    /// Default 0 accepts every pending IRQ (native games). Recompiled
+    /// cartridges override this to expose the emulated SR interrupt mask.
+    virtual int cpuInterruptMask() const {
+        return 0;
+    }
+
+    /// Called from powerOn() after cycle counters are cleared and before
+    /// subsystem threads start. Recompilation hosts reset their register file
+    /// here; native games typically leave this empty.
+    virtual void onPowerOn() {
     }
 
     /// Per-instruction pacing. Native code would otherwise outrun the VDP render
@@ -259,14 +273,10 @@ class MegaDriveEnvironment {
     /// re-seed and regenerate, otherwise aborts. Never returns.
     [[noreturn]] void reportUnhandledDispatch(m_long addr);
 
-    /// 68000 register file: D0–D7, A0–A6, SSP, USP, PC and SR.
-    ///
-    /// Intended exclusively for mechanically-generated cartridge code inside
-    /// run(). Hand-written subclasses (tests, tools) should not use this —
-    /// they interact with the hardware through the public subsystem accessors
-    /// (vdp(), memory(), controllers(), etc.).
-    CPU68K &cpu() {
-        return cpu_;
+    /// Optional extra diagnostics for reportUnhandledDispatch (e.g. emulated
+    /// 68000 register dump). Empty by default — register emulation is not part
+    /// of this environment.
+    virtual void dumpUnhandledDispatchCpuState() {
     }
 
     /// Loads a cartridge ROM image from @p path into the system memory's ROM
@@ -314,9 +324,7 @@ class MegaDriveEnvironment {
     static int cpuThreadEntry(void *data);
 
     // Declaration order is construction order.
-    // cpu_ first: the register file is plain data, no dependencies.
     // memory_ before vdp_: VDP DMA reads system memory.
-    CPU68K       cpu_;
     SystemMemory memory_;
     Z80          z80_;
     Sound        sound_;
