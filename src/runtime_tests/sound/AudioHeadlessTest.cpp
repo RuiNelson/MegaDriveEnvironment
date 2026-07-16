@@ -191,7 +191,53 @@ bool testPSGToneAndVolume() {
     const uint64_t silentEnergy = monoEnergy(silent);
     const bool     pass         = loudEnergy > 100'000 && silentEnergy < (loudEnergy / 8);
     reportCheck("PSG tone/volume", pass);
+    if (!pass)
+        reportEnergy("PSG tone energy", energyOf(loud));
     return pass;
+}
+
+bool testPSGZeroPeriodAndNoise() {
+    Sound                sound(nullptr);
+    std::vector<int16_t> zeroPeriod;
+    std::vector<int16_t> whiteNoise;
+    std::vector<int16_t> periodicNoise;
+    sound.resetForDiagnostics();
+
+    // Integrated ASIC: tone period 0 behaves like period 1 (very high pitch, not silence).
+    sound.writePSG(0x80); // channel 0 period low nibble = 0
+    sound.writePSG(0x00); // period high bits = 0 → period 0
+    sound.writePSG(0x90); // full volume
+    render(sound, zeroPeriod, 4096);
+    const uint64_t zeroEnergy = monoEnergy(zeroPeriod);
+    const bool     zeroOk     = zeroEnergy > 50'000;
+    reportCheck("PSG period 0 (integrated)", zeroOk);
+
+    sound.resetForDiagnostics();
+    // White noise, fixed rate N/512 (control = 0b100).
+    sound.writePSG(0xE4);
+    sound.writePSG(0xF0); // noise channel full volume
+    render(sound, whiteNoise, 8192);
+    const uint64_t whiteEnergy = monoEnergy(whiteNoise);
+    const bool     whiteOk     = whiteEnergy > 50'000;
+    reportCheck("PSG white noise", whiteOk);
+
+    sound.resetForDiagnostics();
+    // Periodic noise, rate N/1024 (control = 0b001).
+    sound.writePSG(0xE1);
+    sound.writePSG(0xF0);
+    render(sound, periodicNoise, 8192);
+    const uint64_t periodicEnergy = monoEnergy(periodicNoise);
+    const bool     periodicOk     = periodicEnergy > 20'000;
+    reportCheck("PSG periodic noise", periodicOk);
+
+    if (!zeroOk)
+        reportEnergy("period 0 energy", energyOf(zeroPeriod));
+    if (!whiteOk)
+        reportEnergy("white noise energy", energyOf(whiteNoise));
+    if (!periodicOk)
+        reportEnergy("periodic noise energy", energyOf(periodicNoise));
+
+    return zeroOk && whiteOk && periodicOk;
 }
 
 bool testZ80SelfTest() {
@@ -284,6 +330,7 @@ int runAudioHeadlessTest(const AudioHeadlessOptions &options) {
     pass &= testYMStereoAndKeyOff();
     pass &= testYMTimerStatus();
     pass &= testPSGToneAndVolume();
+    pass &= testPSGZeroPeriodAndNoise();
     pass &= testZ80SelfTest();
 
     if (!options.wavPath.empty())

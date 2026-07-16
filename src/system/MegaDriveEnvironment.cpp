@@ -215,7 +215,7 @@ void MegaDriveEnvironment::logFrame(unsigned frame, bool displayEnabled) {
     m_byte fa05  = memory_.readByte(0xFFFFFA05u); // fade mode flags
 
     std::fprintf(stderr,
-                 "[sor] t=%2us frame=%u  IPL=%d  fn=$%06X  mode($FF00)=%04X cnt($FA30)=%02X gate($FB06)=%04X  "
+                 "[MDE] t=%2us frame=%u  IPL=%d  fn=$%06X  mode($FF00)=%04X cnt($FA30)=%02X gate($FB06)=%04X  "
                  "master[$DD90]=%04X master[$DDA0]=%04X  live[$F410]=%04X  fade($FA61)=%02X f63=%02X f05=%02X\n",
                  frame / 60,
                  frame,

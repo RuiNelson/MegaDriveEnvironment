@@ -441,7 +441,9 @@ The mapped sound path mirrors the console architecture:
 - odd-byte writes in `$C00010–$C00017` reach the PSG;
 - Z80 RAM, bus request, reset and VBlank IRQ are modelled;
 - writes from different producers are stamped on a shared master-cycle
-  timeline and consumed by the audio renderer;
+  timeline;
+- the YM2612 is advanced on the SDL audio callback thread; the PSG runs on a
+  dedicated `md-psg` worker that fills a SPSC sample ring mixed at callback time;
 - gameplay-facing audio writes do not block the producer thread once real-time
   audio is active. Under contention or queue pressure, diagnostics report
   dropped events rather than stalling the game.
@@ -462,9 +464,22 @@ ymfm directly; use the mapped ports or the `Sound` helpers.
 
 ### PSG and host mixing
 
-The SN76489-style PSG is implemented inside `Sound` (not part of ymfm). PSG and
-FM streams are preamplified, mixed, lightly filtered and delivered on the shared
-master-cycle timeline described above.
+The SN76489-style PSG is implemented inside `Sound` (not part of ymfm). It models
+the **Mega Drive integrated (ASIC) SN76489A clone** with:
+
+- master-cycle-accurate tone/noise generators (`(master/15)/16` half-period units);
+- period `0` ≡ `1` (integrated behaviour, not the discrete `0x400` quirk);
+- 16-bit LFSR white/periodic noise with taps 0⊕3, shifted on the rising edge only;
+- 2 dB attenuation table and ~1.5× PSG preamp (VA4 MD1 FM/PSG balance);
+- sample-period integration so square/noise edges are anti-aliased at 48 kHz.
+
+In realtime mode the PSG chip and its write queue live on a dedicated thread
+(`md-psg`); the audio callback only pops pre-rendered stereo frames from the
+PSG ring and mixes them with FM. Headless diagnostics keep both chips
+synchronous on the calling thread.
+
+PSG and FM streams are preamplified, mixed, lightly filtered and delivered on
+the shared master-cycle timeline described above.
 
 ### Z80
 
