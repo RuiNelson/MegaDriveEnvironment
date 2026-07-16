@@ -28,9 +28,19 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ```
 
+Builds a **shared** library by default (`libMegaDriveEnvironment.dylib` /
+`.so` / `.dll`) so sibling games can rebuild only the dylib for
+implementation-only edits. Force a static archive with:
+
+```bash
+cmake -S . -B build -DMEGADRIVE_ENVIRONMENT_BUILD_SHARED=OFF
+```
+
 Consumer projects normally include it with CMake:
 
 ```cmake
+# Skip re-linking the game when only the shared lib was rebuilt.
+set(CMAKE_LINK_DEPENDS_NO_SHARED ON)
 add_subdirectory("../MegaDriveEnvironment" "${CMAKE_BINARY_DIR}/MegaDriveEnvironment")
 target_link_libraries(my_game PRIVATE MegaDriveEnvironment::MegaDriveEnvironment)
 ```
@@ -43,7 +53,8 @@ target_link_libraries(my_game PRIVATE MegaDriveEnvironment::MegaDriveEnvironment
 - FetchContent dependencies: `yaml-cpp`, `zlib`, `libpng`
 
 `CMakeLists.txt` disables libpng shared/framework/tests/tools/example targets to
-avoid toolchain breakage.
+avoid toolchain breakage. Static FetchContent deps are compiled PIC and linked
+privately into the shared library.
 
 ## Architecture
 

@@ -98,8 +98,11 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-This repository builds a static library; it is normally embedded in a game or
-tool rather than launched by itself. To see a complete runnable project:
+This repository builds a **shared** library by default (faster incremental
+rebuilds for games that only touch environment sources). Pass
+`-DMEGADRIVE_ENVIRONMENT_BUILD_SHARED=OFF` for a static archive. The library is
+normally consumed by a game or tool rather than launched by itself. To see a
+complete runnable project:
 
 ```bash
 cd ..

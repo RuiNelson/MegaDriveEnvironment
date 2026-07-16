@@ -11,6 +11,17 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
+# Shared by default: consumers only re-link when their own objects change.
+# Implementation-only edits rebuild the dylib in place. Set OFF for a static .a.
+option(MEGADRIVE_ENVIRONMENT_BUILD_SHARED
+    "Build MegaDriveEnvironment as a shared library"
+    ON
+)
+
+# Required when embedding static FetchContent deps into a shared library;
+# harmless for a pure static build.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 find_package(SDL3 REQUIRED)
 
 include(FetchContent)
@@ -50,7 +61,17 @@ file(GLOB_RECURSE MEGADRIVE_ENVIRONMENT_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
 )
 
-add_library(MegaDriveEnvironment STATIC ${MEGADRIVE_ENVIRONMENT_SOURCES})
+if(MEGADRIVE_ENVIRONMENT_BUILD_SHARED)
+    add_library(MegaDriveEnvironment SHARED ${MEGADRIVE_ENVIRONMENT_SOURCES})
+    set_target_properties(MegaDriveEnvironment PROPERTIES
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+        # Same folder as sibling consumer binaries under a unified build tree is
+        # not guaranteed; RPATH on consumers points at this target's output dir.
+        BUILD_WITH_INSTALL_RPATH OFF
+    )
+else()
+    add_library(MegaDriveEnvironment STATIC ${MEGADRIVE_ENVIRONMENT_SOURCES})
+endif()
 add_library(MegaDriveEnvironment::MegaDriveEnvironment ALIAS MegaDriveEnvironment)
 
 set(MEGADRIVE_ENVIRONMENT_INCLUDE_DIR
@@ -79,12 +100,22 @@ target_include_directories(MegaDriveEnvironment PUBLIC
     ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/art
 )
 
-target_link_libraries(MegaDriveEnvironment PUBLIC
-    SDL3::SDL3
-    yaml-cpp::yaml-cpp
-    png_static
-    zlibstatic
-)
+# SDL appears in public headers. Implementation-only deps stay private for a
+# shared build so consumers do not re-link yaml/png/zlib on every dylib rebuild.
+target_link_libraries(MegaDriveEnvironment PUBLIC SDL3::SDL3)
+if(MEGADRIVE_ENVIRONMENT_BUILD_SHARED)
+    target_link_libraries(MegaDriveEnvironment PRIVATE
+        yaml-cpp::yaml-cpp
+        png_static
+        zlibstatic
+    )
+else()
+    target_link_libraries(MegaDriveEnvironment PUBLIC
+        yaml-cpp::yaml-cpp
+        png_static
+        zlibstatic
+    )
+endif()
 
 include(CTest)
 if(BUILD_TESTING AND PROJECT_IS_TOP_LEVEL)
