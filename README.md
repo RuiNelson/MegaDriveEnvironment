@@ -1,5 +1,9 @@
 # MegaDriveEnvironment
 
+<p align="center">
+  <img src="docs/box.webp" alt="Mega Drive Box" width="280">
+</p>
+
 Develop Sega Mega Drive / Genesis software as a normal C++23 application on
 your PC, with the hardware-facing parts of the program connected to a focused
 Mega Drive runtime.
@@ -19,15 +23,26 @@ demonstrates that complete two-target workflow.
 
 ## Documentation map
 
-- [Build and test](#build-and-test)
-- [Add it to a CMake project](#add-it-to-a-cmake-project)
-- [Runtime architecture](#runtime-architecture)
-- [Memory and hardware access](#memory-and-hardware-access)
-- [VDP and frame timing](#vdp-and-frame-timing)
-- [Controllers and configuration](#controllers-and-configuration)
-- [Sound and Z80](#sound-and-z80)
-- [Debugging tools](#debugging-tools)
-- [Portability to real hardware](#portability-to-real-hardware)
+- [MegaDriveEnvironment](#megadriveenvironment)
+  - [Documentation map](#documentation-map)
+  - [Why use it?](#why-use-it)
+  - [Current scope](#current-scope)
+  - [Requirements](#requirements)
+  - [Build and test](#build-and-test)
+  - [Add it to a CMake project](#add-it-to-a-cmake-project)
+    - [Minimal host application](#minimal-host-application)
+  - [Runtime architecture](#runtime-architecture)
+  - [Memory and hardware access](#memory-and-hardware-access)
+    - [Host memory is not console memory](#host-memory-is-not-console-memory)
+  - [VDP and frame timing](#vdp-and-frame-timing)
+    - [Synchronization modes](#synchronization-modes)
+    - [Scaling modes](#scaling-modes)
+  - [Controllers and configuration](#controllers-and-configuration)
+  - [Sound and Z80](#sound-and-z80)
+  - [Debugging tools](#debugging-tools)
+  - [Portability to real hardware](#portability-to-real-hardware)
+  - [Public API map](#public-api-map)
+  - [Repository layout](#repository-layout)
 
 ## Why use it?
 
