@@ -2,10 +2,17 @@
 
 #include "data_types.hpp"
 
-#include <SDL3/SDL.h>
-
 #include <functional>
 #include <string>
+
+// Darwin never implemented POSIX spinlocks (pthread_spinlock_t). Use the
+// platform's cheap userspace lock: pthread_spin_* on Linux/BSD, os_unfair_lock
+// on Apple (the recommended replacement for short critical sections).
+#if defined(__APPLE__)
+#include <os/lock.h>
+#else
+#include <pthread.h>
+#endif
 
 class MegaDriveEnvironment;
 
@@ -21,18 +28,24 @@ class MegaDriveEnvironment;
  * the parent (e.g. `env->memory()`).
  *
  * All multi-byte values are read/written in big-endian (Motorola) byte order,
- * matching the native format of the 68000 CPU. All public operations are
- * thread-safe, serialized by an SDL_Mutex for portability.
+ * matching the native format of the 68000 CPU.
+ *
+ * Threading: cartridge ROM is immutable after loadROM() and is read lock-free.
+ * Work RAM is shared with the VDP (DMA from 68K bus), so WRAM accesses are
+ * serialized by a short spin-style lock (pthread_spin_lock where available).
+ * Memory-mapped hardware is routed outside the lock (each subsystem
+ * self-synchronizes; holding the WRAM lock across a VDP call would deadlock
+ * when DMA re-enters memory).
  */
 class SystemMemory {
     public:
-    /// Allocates and zero-initializes ROM and work RAM, and creates the mutex.
+    /// Allocates and zero-initializes ROM and work RAM.
     /// @p env (optional) lets memory-mapped hardware accesses (VDP, I/O ports,
     /// Z80, TMSS) route to the owning environment's subsystems; when null those
     /// regions read as 0 and ignore writes.
     explicit SystemMemory(MegaDriveEnvironment *env = nullptr);
 
-    /// Releases ROM, work RAM, and the mutex.
+    /// Releases ROM, work RAM, and the WRAM lock.
     ~SystemMemory();
 
     SystemMemory(const SystemMemory &)            = delete;
@@ -102,10 +115,40 @@ class SystemMemory {
     void writeFromBuffer(void *ptr, m_long address, int count);
 
     private:
+    /// Platform WRAM lock: pthread_spinlock_t (POSIX) or os_unfair_lock (Apple).
+    /// Hold sections must stay short: never call VDP/Z80/sound while locked.
+#if defined(__APPLE__)
+    using WramLock = os_unfair_lock;
+#else
+    using WramLock = pthread_spinlock_t;
+#endif
+
+    struct WramSpinGuard {
+        explicit WramSpinGuard(WramLock &lock) noexcept : lock_(lock) {
+#if defined(__APPLE__)
+            os_unfair_lock_lock(&lock_);
+#else
+            pthread_spin_lock(&lock_);
+#endif
+        }
+        ~WramSpinGuard() {
+#if defined(__APPLE__)
+            os_unfair_lock_unlock(&lock_);
+#else
+            pthread_spin_unlock(&lock_);
+#endif
+        }
+        WramSpinGuard(const WramSpinGuard &)            = delete;
+        WramSpinGuard &operator=(const WramSpinGuard &) = delete;
+
+        private:
+        WramLock &lock_;
+    };
+
     /// Maps a 68K address to a host pointer (handles 32-bit sign-extended mirrors).
     char *convertAddress(m_long address);
 
-    // ── Unlocked primitives (caller holds mutex_) ───────────────────────────
+    // ── Unlocked primitives (caller holds wramLock_ when touching WRAM) ─────
     m_byte _readByte(m_long address);
     m_word _readWord(m_long address);
     m_long _readLong(m_long address);
@@ -117,8 +160,8 @@ class SystemMemory {
     void   _writeFromBuffer(void *ptr, m_long address, int count);
 
     // ── Memory-mapped hardware (VDP / I/O / Z80 / TMSS) ──────────────────────
-    // Routed outside mutex_ (each subsystem self-locks; the VDP's DMA reads back
-    // through this memory, so holding mutex_ here would deadlock).
+    // Routed outside wramLock_ (each subsystem self-locks; the VDP's DMA reads
+    // back through this memory, so holding the WRAM lock here would deadlock).
     static bool isHardware(m_long address);
     static bool isROM(m_long address);
     m_byte      hwReadByte(m_long address);
@@ -133,5 +176,9 @@ class SystemMemory {
     void *rom_  = nullptr; ///< 0x000000-0x3FFFFF (4 MiB)
     void *wram_ = nullptr; ///< 0xFF0000-0xFFFFFF (64 KiB)
 
-    SDL_Mutex *mutex_ = nullptr; ///< Serializes ROM/work-RAM access.
+#if defined(__APPLE__)
+    WramLock wramLock_ = OS_UNFAIR_LOCK_INIT;
+#else
+    WramLock wramLock_{};
+#endif
 };

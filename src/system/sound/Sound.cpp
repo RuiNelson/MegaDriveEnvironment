@@ -14,14 +14,19 @@ constexpr double   kMasterClock   = 53'693'175.0;
 // SDL and the physical device add their own buffering, so a larger software
 // margin makes music and effects perceptibly trail the game. Inaccurate late
 // events are preferable to making gameplay/audio response feel sluggish.
-constexpr double   kEventLatencyCycles = 0.012 * kMasterClock;
+constexpr double   kEventLatencyCycles = 0.016 * kMasterClock; // ~16 ms (was 12)
 constexpr double   kSnapCycles         = 0.250 * kMasterClock; // resync hard beyond this drift
 constexpr double   kMaxRateTrim        = 0.005;                // ±0.5% render-rate trim toward the latency target
-constexpr int      kRenderChunkFrames = 256;
-constexpr int      kRingBufferFrames  = 4096;
-constexpr int      kPsgRingFrames     = 4096;
-constexpr int      kPsgTargetFrames   = 1024; ///< PSG thread keeps this many frames ahead
-constexpr size_t   kMaxPendingEvents  = 16'384;
+constexpr int      kRenderChunkFrames  = 256;
+constexpr int      kRingBufferFrames   = 4096;
+/// Soft prebuffer for the mixed output ring (~21 ms at 48 kHz). The callback
+/// used to pull just-in-time only; a modest watermark absorbs host scheduling
+/// jitter without making audio feel laggy.
+constexpr int      kRingTargetFrames = 1024;
+constexpr int      kPsgRingFrames    = 4096;
+/// PSG worker stays a little ahead of the mixer (~32 ms at 48 kHz).
+constexpr int      kPsgTargetFrames  = 1536;
+constexpr size_t   kMaxPendingEvents = 16'384;
 constexpr int      kFmPreampPercent   = 100;
 constexpr uint32_t kLowpassRange      = 0x9999;
 constexpr double   kDCBlockR          = 0.995;
@@ -163,6 +168,16 @@ void Sound::start() {
         stopPsgThread();
         return;
     }
+
+    // Let the PSG worker get a little ahead, then prefill the mixed ring so the
+    // first device pulls do not underrun into silence (crackling on start).
+    for (int i = 0; i < 20; ++i) {
+        if (psgRingBuffered_.load(std::memory_order_acquire) >= static_cast<size_t>(kPsgTargetFrames / 2))
+            break;
+        SDL_DelayNS(500'000); // 0.5 ms
+    }
+    ensureRingFrames(kRingTargetFrames);
+
     consumerAvailable_.store(true, std::memory_order_release);
     SDL_ResumeAudioStreamDevice(stream_);
 }
@@ -527,8 +542,13 @@ void Sound::ensureRingFrames(int frames) {
         ringBufferedFramesSnapshot_.store(0, std::memory_order_relaxed);
     }
 
+    // Always top up to the soft watermark so a single late callback does not
+    // drain the ring to empty (underrun → crackle). Still honour larger
+    // device pulls when the OS asks for more than the watermark.
+    const size_t want =
+        std::max(static_cast<size_t>(frames), static_cast<size_t>(kRingTargetFrames));
     const size_t capacityFrames = ringBuffer_.size() / 2;
-    while (ringBufferedFrames_ < static_cast<size_t>(frames)) {
+    while (ringBufferedFrames_ < want) {
         const size_t freeFrames = capacityFrames - ringBufferedFrames_;
         if (freeFrames == 0) {
             ++overrunCount_;

@@ -33,17 +33,20 @@
 // owning MegaDriveEnvironment.
 
 SystemMemory::SystemMemory(MegaDriveEnvironment *env) : env_(env) {
-    rom_   = malloc(ROM_SIZE);
-    wram_  = malloc(WORK_RAM_SIZE);
-    mutex_ = SDL_CreateMutex();
+    rom_  = malloc(ROM_SIZE);
+    wram_ = malloc(WORK_RAM_SIZE);
+#if !defined(__APPLE__)
+    // Process-private POSIX spinlock (Linux/BSD). Darwin has no pthread_spinlock_t;
+    // there we use os_unfair_lock (initialized in-class via OS_UNFAIR_LOCK_INIT).
+    pthread_spin_init(&wramLock_, PTHREAD_PROCESS_PRIVATE);
+#endif
     initRAM();
 }
 
 SystemMemory::~SystemMemory() {
-    if (mutex_) {
-        SDL_DestroyMutex(mutex_);
-        mutex_ = nullptr;
-    }
+#if !defined(__APPLE__)
+    pthread_spin_destroy(&wramLock_);
+#endif
     free(rom_);
     free(wram_);
     rom_  = nullptr;
@@ -367,10 +370,8 @@ m_byte SystemMemory::readByte(m_long address) {
         return hwReadByte(address);
     if (isROM(address))
         return _readByte(address); // ROM is immutable after loadROM(): lock-free
-    SDL_LockMutex(mutex_);
-    auto val = _readByte(address);
-    SDL_UnlockMutex(mutex_);
-    return val;
+    WramSpinGuard guard(wramLock_);
+    return _readByte(address);
 }
 
 m_word SystemMemory::readWord(m_long address) {
@@ -378,10 +379,8 @@ m_word SystemMemory::readWord(m_long address) {
         return hwReadWord(address);
     if (isROM(address))
         return _readWord(address); // ROM is immutable after loadROM(): lock-free
-    SDL_LockMutex(mutex_);
-    auto val = _readWord(address);
-    SDL_UnlockMutex(mutex_);
-    return val;
+    WramSpinGuard guard(wramLock_);
+    return _readWord(address);
 }
 
 m_long SystemMemory::readLong(m_long address) {
@@ -389,10 +388,8 @@ m_long SystemMemory::readLong(m_long address) {
         return hwReadLong(address);
     if (isROM(address))
         return _readLong(address); // ROM is immutable after loadROM(): lock-free
-    SDL_LockMutex(mutex_);
-    auto val = _readLong(address);
-    SDL_UnlockMutex(mutex_);
-    return val;
+    WramSpinGuard guard(wramLock_);
+    return _readLong(address);
 }
 
 void SystemMemory::writeByte(m_long address, m_byte value) {
@@ -402,9 +399,8 @@ void SystemMemory::writeByte(m_long address, m_byte value) {
     }
     if (isROM(address))
         return; // cartridge ROM is read-only — writes are ignored on hardware
-    SDL_LockMutex(mutex_);
+    WramSpinGuard guard(wramLock_);
     _writeByte(address, value);
-    SDL_UnlockMutex(mutex_);
 }
 
 void SystemMemory::writeWord(m_long address, m_word value) {
@@ -414,9 +410,8 @@ void SystemMemory::writeWord(m_long address, m_word value) {
     }
     if (isROM(address))
         return;
-    SDL_LockMutex(mutex_);
+    WramSpinGuard guard(wramLock_);
     _writeWord(address, value);
-    SDL_UnlockMutex(mutex_);
 }
 
 void SystemMemory::writeLong(m_long address, m_long value) {
@@ -426,9 +421,8 @@ void SystemMemory::writeLong(m_long address, m_long value) {
     }
     if (isROM(address))
         return;
-    SDL_LockMutex(mutex_);
+    WramSpinGuard guard(wramLock_);
     _writeLong(address, value);
-    SDL_UnlockMutex(mutex_);
 }
 
 void SystemMemory::_copyByte(m_long from, m_long to) {
@@ -437,31 +431,27 @@ void SystemMemory::_copyByte(m_long from, m_long to) {
 }
 
 void SystemMemory::copyByte(m_long from, m_long to) {
-    SDL_LockMutex(mutex_);
+    WramSpinGuard guard(wramLock_);
     _copyByte(from, to);
-    SDL_UnlockMutex(mutex_);
 }
 
 void SystemMemory::copyBytes(m_long from, m_long to, int count) {
-    SDL_LockMutex(mutex_);
+    WramSpinGuard guard(wramLock_);
     for (int i = 0; i < count; i++) {
         _copyByte(from + i, to + i);
     }
-    SDL_UnlockMutex(mutex_);
 }
 
 void SystemMemory::copyWord(m_long from, m_long to) {
-    SDL_LockMutex(mutex_);
+    WramSpinGuard guard(wramLock_);
     auto val = _readWord(from);
     _writeWord(to, val);
-    SDL_UnlockMutex(mutex_);
 }
 
 void SystemMemory::copyLong(m_long from, m_long to) {
-    SDL_LockMutex(mutex_);
+    WramSpinGuard guard(wramLock_);
     auto val = _readLong(from);
     _writeLong(to, val);
-    SDL_UnlockMutex(mutex_);
 }
 
 void SystemMemory::_copyToBuffer(m_long address, void *ptr, int count) {
@@ -471,9 +461,18 @@ void SystemMemory::_copyToBuffer(m_long address, void *ptr, int count) {
 }
 
 void SystemMemory::copyToBuffer(m_long address, void *ptr, int count) {
-    SDL_LockMutex(mutex_);
+    // VDP DMA (and bulk debug reads) use this path. ROM is immutable so a
+    // pure-ROM transfer can skip the WRAM spinlock; anything that may touch
+    // WRAM (or unmapped convertAddress targets) stays serialized with the 68K.
+    if (isROM(address)) {
+        const m_long a = address & 0x00FFFFFFu;
+        if (count >= 0 && static_cast<m_long>(count) <= static_cast<m_long>(ROM_END - a)) {
+            _copyToBuffer(address, ptr, count);
+            return;
+        }
+    }
+    WramSpinGuard guard(wramLock_);
     _copyToBuffer(address, ptr, count);
-    SDL_UnlockMutex(mutex_);
 }
 
 void SystemMemory::_writeFromBuffer(void *ptr, m_long address, int count) {
@@ -483,7 +482,6 @@ void SystemMemory::_writeFromBuffer(void *ptr, m_long address, int count) {
 }
 
 void SystemMemory::writeFromBuffer(void *ptr, m_long address, int count) {
-    SDL_LockMutex(mutex_);
+    WramSpinGuard guard(wramLock_);
     _writeFromBuffer(ptr, address, count);
-    SDL_UnlockMutex(mutex_);
 }
