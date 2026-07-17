@@ -23,30 +23,32 @@ demonstrates that complete two-target workflow.
 
 ## Documentation map
 
-- [Why use it?](#why-use-it)
-- [Current scope](#current-scope)
-- [Runtime architecture](#runtime-architecture)
-- [Getting started](#getting-started)
-  - [Requirements](#requirements)
-  - [Build and test](#build-and-test)
-  - [Add it to a CMake project](#add-it-to-a-cmake-project)
-  - [Minimal host application](#minimal-host-application)
-- [Memory and hardware access](#memory-and-hardware-access)
-  - [Host memory is not console memory](#host-memory-is-not-console-memory)
-- [VDP and frame timing](#vdp-and-frame-timing)
-  - [Synchronization modes](#synchronization-modes)
-  - [Scaling modes](#scaling-modes)
-- [Controllers and configuration](#controllers-and-configuration)
-- [Sound and Z80](#sound-and-z80)
-  - [YM2612 (ymfm)](#ym2612-ymfm)
-  - [PSG and host mixing](#psg-and-host-mixing)
-  - [Z80](#z80)
-- [Debugging tools](#debugging-tools)
-- [Portability to real hardware](#portability-to-real-hardware)
-- [Reference](#reference)
-  - [Public API map](#public-api-map)
-  - [Repository layout](#repository-layout)
-  - [License](#license)
+- [MegaDriveEnvironment](#megadriveenvironment)
+  - [Documentation map](#documentation-map)
+  - [Why use it?](#why-use-it)
+  - [Current scope](#current-scope)
+  - [Runtime architecture](#runtime-architecture)
+  - [Getting started](#getting-started)
+    - [Requirements](#requirements)
+    - [Build and test](#build-and-test)
+    - [Add it to a CMake project](#add-it-to-a-cmake-project)
+    - [Minimal host application](#minimal-host-application)
+  - [Memory and hardware access](#memory-and-hardware-access)
+    - [Host memory is not console memory](#host-memory-is-not-console-memory)
+  - [VDP and frame timing](#vdp-and-frame-timing)
+    - [Synchronization modes](#synchronization-modes)
+    - [Scaling modes](#scaling-modes)
+  - [Controllers and configuration](#controllers-and-configuration)
+  - [Sound and Z80](#sound-and-z80)
+    - [YM2612 (ymfm)](#ym2612-ymfm)
+    - [PSG and host mixing](#psg-and-host-mixing)
+    - [Z80](#z80)
+  - [Debugging tools](#debugging-tools)
+  - [Portability to real hardware](#portability-to-real-hardware)
+  - [Reference](#reference)
+    - [Public API map](#public-api-map)
+    - [Repository layout](#repository-layout)
+    - [License](#license)
 
 ## Why use it?
 
@@ -63,7 +65,7 @@ demonstrates that complete two-target workflow.
 ## Current scope
 
 <p>
-  <img src="docs/grafitti.webp" height="250">
+  <img src="docs/grafitti.webp" height="350">
 </p>
 
 | Area | Implemented behaviour |
@@ -202,6 +204,10 @@ The important threading rules are:
 
 ## Getting started
 
+<p>
+  <img src="docs/porsche.webp" height="300">
+</p>
+
 ### Requirements
 
 - [CMake](https://cmake.org/) 3.24 or newer;
@@ -332,6 +338,10 @@ memory adapter, use the Sample Game rather than growing the minimal snippet
 into a second tutorial.
 
 ## Memory and hardware access
+
+<p>
+  <img src="docs/library.webp" height="300">
+</p>
 
 `SystemMemory` is the central compatibility boundary. It normalizes addresses
 to 24 bits, preserves Motorola big-endian ordering and routes mapped accesses
@@ -511,6 +521,10 @@ so the same sound routine remains valid on real hardware.
 
 ## Debugging tools
 
+<p>
+  <img src="docs/cyberpunk.webp" height="300">
+</p>
+
 Because the executable is native, launch it directly under LLDB, GDB or your
 IDE. CMake exports `compile_commands.json`, which language servers can consume.
 
@@ -539,6 +553,10 @@ to judge play speed, raster effects or audio behaviour.
 
 ## Portability to real hardware
 
+<p>
+  <img src="docs/robot.webp" height="300">
+</p>
+
 MegaDriveEnvironment makes shared code practical; it cannot make host-only C++
 portable automatically. Keep the boundary explicit:
 
@@ -554,7 +572,6 @@ portable automatically. Keep the boundary explicit:
 
 - PC `main()` and `MegaDriveEnvironment` adapter;
 - Mega Drive reset/header/interrupt startup;
-- host synchronization versus hardware busy-waiting;
 - direct bus access and linker/ROM layout;
 - freestanding runtime, allocation policy and memory initialization.
 
