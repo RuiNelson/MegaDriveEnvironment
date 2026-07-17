@@ -23,24 +23,27 @@ demonstrates that complete two-target workflow.
 
 ## Documentation map
 
-- [MegaDriveEnvironment](#megadriveenvironment)
-  - [Documentation map](#documentation-map)
-  - [Why use it?](#why-use-it)
-  - [Current scope](#current-scope)
+- [Why use it?](#why-use-it)
+- [Current scope](#current-scope)
+- [Runtime architecture](#runtime-architecture)
+- [Getting started](#getting-started)
   - [Requirements](#requirements)
   - [Build and test](#build-and-test)
   - [Add it to a CMake project](#add-it-to-a-cmake-project)
-    - [Minimal host application](#minimal-host-application)
-  - [Runtime architecture](#runtime-architecture)
-  - [Memory and hardware access](#memory-and-hardware-access)
-    - [Host memory is not console memory](#host-memory-is-not-console-memory)
-  - [VDP and frame timing](#vdp-and-frame-timing)
-    - [Synchronization modes](#synchronization-modes)
-    - [Scaling modes](#scaling-modes)
-  - [Controllers and configuration](#controllers-and-configuration)
-  - [Sound and Z80](#sound-and-z80)
-  - [Debugging tools](#debugging-tools)
-  - [Portability to real hardware](#portability-to-real-hardware)
+  - [Minimal host application](#minimal-host-application)
+- [Memory and hardware access](#memory-and-hardware-access)
+  - [Host memory is not console memory](#host-memory-is-not-console-memory)
+- [VDP and frame timing](#vdp-and-frame-timing)
+  - [Synchronization modes](#synchronization-modes)
+  - [Scaling modes](#scaling-modes)
+- [Controllers and configuration](#controllers-and-configuration)
+- [Sound and Z80](#sound-and-z80)
+  - [YM2612 (ymfm)](#ym2612-ymfm)
+  - [PSG and host mixing](#psg-and-host-mixing)
+  - [Z80](#z80)
+- [Debugging tools](#debugging-tools)
+- [Portability to real hardware](#portability-to-real-hardware)
+- [Reference](#reference)
   - [Public API map](#public-api-map)
   - [Repository layout](#repository-layout)
   - [License](#license)
@@ -59,6 +62,10 @@ demonstrates that complete two-target workflow.
 
 ## Current scope
 
+<p>
+  <img src="docs/grafitti.webp" height="250">
+</p>
+
 | Area | Implemented behaviour |
 | --- | --- |
 | 68000 execution | Native C++ game code on a dedicated CPU thread; no 68000 interpreter or register-file emulation (recompilation hosts supply their own) |
@@ -74,136 +81,11 @@ Accuracy is feature-driven. Unimplemented hardware ranges currently behave as
 safe stubs, and host thread scheduling is not a substitute for console timing.
 Always validate a release ROM in an independent emulator and on real hardware.
 
-## Requirements
-
-- [CMake](https://cmake.org/) 3.24 or newer;
-- a C++23 compiler;
-- [SDL3](https://wiki.libsdl.org/SDL3/FrontPage) installed where CMake can find
-  its package configuration;
-- Git and network access during the first configure, while CMake fetches
-  `yaml-cpp`, `zlib` and `libpng`.
-
-The project builds on macOS and other desktop platforms supported by its
-dependencies. Compiler and SDL3 availability ultimately determine whether a
-particular host configuration is supported.
-
-## Build and test
-
-```bash
-git clone https://github.com/RuiNelson/MegaDriveEnvironment.git
-cd MegaDriveEnvironment
-
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build --parallel
-ctest --test-dir build --output-on-failure
-```
-
-This repository builds a **shared** library by default (faster incremental
-rebuilds for games that only touch environment sources). Pass
-`-DMEGADRIVE_ENVIRONMENT_BUILD_SHARED=OFF` for a static archive. The library is
-normally consumed by a game or tool rather than launched by itself. To see a
-complete runnable project:
-
-```bash
-cd ..
-git clone https://github.com/RuiNelson/MegaDriveEnvironmentSampleGame.git
-cd MegaDriveEnvironmentSampleGame
-./build_pc.sh
-./run_pc.sh
-```
-
-Keep the two repositories side by side for the sample's default configuration,
-or set its `MEGADRIVE_ENVIRONMENT_DIR` variable.
-
-## Add it to a CMake project
-
-```cmake
-cmake_minimum_required(VERSION 3.24)
-project(MyMegaDriveGame LANGUAGES CXX)
-
-set(CMAKE_CXX_STANDARD 23)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-add_subdirectory(
-    "../MegaDriveEnvironment"
-    "${CMAKE_BINARY_DIR}/MegaDriveEnvironment"
-)
-
-add_executable(my_game src/main.cpp)
-target_link_libraries(my_game PRIVATE
-    MegaDriveEnvironment::MegaDriveEnvironment
-)
-```
-
-Public headers are included from `include/MegaDriveEnvironment`:
-
-```cpp
-#include "system/MegaDriveEnvironment.hpp"
-#include "system/graphics/VDP.hpp"
-#include "system/memory/SystemMemory.hpp"
-```
-
-### Minimal host application
-
-Derive one application object from `MegaDriveEnvironment`, choose the VDP
-timing/scaling policy, implement `setup()`, `loop()` and the VDP interrupt
-handlers, then call `boot()` on the main thread:
-
-```cpp
-#include "system/MegaDriveEnvironment.hpp"
-
-class MyGame final : public MegaDriveEnvironment {
-  public:
-    MyGame()
-        : MegaDriveEnvironment(
-              VDP::InternalTimer,
-              VDP::Integer,
-              VDP::HardwareSpriteLimit) {
-    }
-
-  private:
-    void run() override {
-        // run() executes on the environment's CPU thread.
-        setup();
-        while (1) {
-            loop();
-        }
-    }
-
-    void setup() {
-        // Initialize game state and hardware here.
-    }
-
-    void loop() {
-        // Update game state and access mapped hardware here.
-    }
-
-    void vSync() override {
-        // Handle the vertical-blank interrupt once per frame.
-    }
-
-    void hSync(int line) override {
-        // Handle the horizontal-blank interrupt for this scanline.
-        (void)line;
-    }
-};
-
-int main() {
-    MyGame game;
-    game.boot(); // blocks while the SDL event loop and game are running
-}
-```
-
-`boot()` owns the runtime lifecycle: it starts the VDP, audio and Z80, runs
-`run()` on a dedicated CPU thread, and keeps SDL event processing and frame
-presentation on the calling thread. Closing the window or pressing `Ctrl+Q`
-sets `shouldQuit()`; cooperative game loops should observe it and return.
-
-For a practical VBlank-driven loop, VDP initialization, assets and a portable
-memory adapter, use the Sample Game rather than growing the minimal snippet
-into a second tutorial.
-
 ## Runtime architecture
+
+The root object is `MegaDriveEnvironment`. Derived applications implement
+`run()` (and optional VDP interrupt handlers); the environment owns the
+subsystems and exposes them through public accessors.
 
 ```mermaid
 classDiagram
@@ -317,6 +199,137 @@ The important threading rules are:
   Your own game objects are not automatically thread-safe.
 - If an option hotkey or callback touches CPU-thread state, add explicit
   synchronization or send a message to the CPU thread.
+
+## Getting started
+
+### Requirements
+
+- [CMake](https://cmake.org/) 3.24 or newer;
+- a C++23 compiler;
+- [SDL3](https://wiki.libsdl.org/SDL3/FrontPage) installed where CMake can find
+  its package configuration;
+- Git and network access during the first configure, while CMake fetches
+  `yaml-cpp`, `zlib` and `libpng`.
+
+The project builds on macOS and other desktop platforms supported by its
+dependencies. Compiler and SDL3 availability ultimately determine whether a
+particular host configuration is supported.
+
+### Build and test
+
+```bash
+git clone https://github.com/RuiNelson/MegaDriveEnvironment.git
+cd MegaDriveEnvironment
+
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+This repository builds a **shared** library by default (faster incremental
+rebuilds for games that only touch environment sources). Pass
+`-DMEGADRIVE_ENVIRONMENT_BUILD_SHARED=OFF` for a static archive. The library is
+normally consumed by a game or tool rather than launched by itself. To see a
+complete runnable project:
+
+```bash
+cd ..
+git clone https://github.com/RuiNelson/MegaDriveEnvironmentSampleGame.git
+cd MegaDriveEnvironmentSampleGame
+./build_pc.sh
+./run_pc.sh
+```
+
+Keep the two repositories side by side for the sample's default configuration,
+or set its `MEGADRIVE_ENVIRONMENT_DIR` variable.
+
+### Add it to a CMake project
+
+```cmake
+cmake_minimum_required(VERSION 3.24)
+project(MyMegaDriveGame LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+add_subdirectory(
+    "../MegaDriveEnvironment"
+    "${CMAKE_BINARY_DIR}/MegaDriveEnvironment"
+)
+
+add_executable(my_game src/main.cpp)
+target_link_libraries(my_game PRIVATE
+    MegaDriveEnvironment::MegaDriveEnvironment
+)
+```
+
+Public headers are included from `include/MegaDriveEnvironment`:
+
+```cpp
+#include "system/MegaDriveEnvironment.hpp"
+#include "system/graphics/VDP.hpp"
+#include "system/memory/SystemMemory.hpp"
+```
+
+### Minimal host application
+
+Derive one application object from `MegaDriveEnvironment`, choose the VDP
+timing/scaling policy, implement `setup()`, `loop()` and the VDP interrupt
+handlers, then call `boot()` on the main thread:
+
+```cpp
+#include "system/MegaDriveEnvironment.hpp"
+
+class MyGame final : public MegaDriveEnvironment {
+  public:
+    MyGame()
+        : MegaDriveEnvironment(
+              VDP::InternalTimer,
+              VDP::Integer,
+              VDP::HardwareSpriteLimit) {
+    }
+
+  private:
+    void run() override {
+        // run() executes on the environment's CPU thread.
+        setup();
+        while (1) {
+            loop();
+        }
+    }
+
+    void setup() {
+        // Initialize game state and hardware here.
+    }
+
+    void loop() {
+        // Update game state and access mapped hardware here.
+    }
+
+    void vSync() override {
+        // Handle the vertical-blank interrupt once per frame.
+    }
+
+    void hSync(int line) override {
+        // Handle the horizontal-blank interrupt for this scanline.
+        (void)line;
+    }
+};
+
+int main() {
+    MyGame game;
+    game.boot(); // blocks while the SDL event loop and game are running
+}
+```
+
+`boot()` owns the runtime lifecycle: it starts the VDP, audio and Z80, runs
+`run()` on a dedicated CPU thread, and keeps SDL event processing and frame
+presentation on the calling thread. Closing the window or pressing `Ctrl+Q`
+sets `shouldQuit()`; cooperative game loops should observe it and return.
+
+For a practical VBlank-driven loop, VDP initialization, assets and a portable
+memory adapter, use the Sample Game rather than growing the minimal snippet
+into a second tutorial.
 
 ## Memory and hardware access
 
@@ -548,7 +561,9 @@ portable automatically. Keep the boundary explicit:
 The Sample Game compiles the same gameplay and VDP code for both targets and is
 the recommended starting point for a new project.
 
-## Public API map
+## Reference
+
+### Public API map
 
 | Header | Purpose |
 | --- | --- |
@@ -560,7 +575,7 @@ the recommended starting point for a new project.
 | [`system/z80/Z80.hpp`](include/MegaDriveEnvironment/system/z80/Z80.hpp) | Z80 RAM, bus/reset and execution lifecycle |
 | [`config/controls/ControlsConfigUI.hpp`](include/MegaDriveEnvironment/config/controls/ControlsConfigUI.hpp) | Interactive keyboard/gamepad binding UI |
 
-## Repository layout
+### Repository layout
 
 ```text
 include/MegaDriveEnvironment/  Public consumer headers
@@ -578,7 +593,7 @@ the result against independent emulator documentation or real hardware. The
 fast native loop is most valuable when it remains honest about where hardware
 validation still matters.
 
-## License
+### License
 
 MegaDriveEnvironment is released under the [MIT License](LICENSE).
 Copyright (c) 2026 Rui Carneiro.
