@@ -18,8 +18,8 @@ option(MEGADRIVE_ENVIRONMENT_BUILD_SHARED
     ON
 )
 
-# Required when embedding static FetchContent deps into a shared library;
-# harmless for a pure static build.
+# External FetchContent deps (yaml-cpp, zlib, libpng) are shared libraries.
+# PIC keeps objects safe if MEGADRIVE_ENVIRONMENT_BUILD_SHARED is turned off.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 find_package(SDL3 REQUIRED)
@@ -32,10 +32,13 @@ FetchContent_Declare(
     GIT_TAG        yaml-cpp-0.9.0
 )
 
+# OVERRIDE_FIND_PACKAGE: libpng's find_package(ZLIB) resolves to this build
+# instead of the host system library.
 FetchContent_Declare(
     zlib
     GIT_REPOSITORY https://github.com/madler/zlib.git
     GIT_TAG        v1.3.1
+    OVERRIDE_FIND_PACKAGE
 )
 
 FetchContent_Declare(
@@ -46,14 +49,31 @@ FetchContent_Declare(
 
 set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
 set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(PNG_SHARED      OFF CACHE BOOL "" FORCE)
-set(PNG_STATIC      ON  CACHE BOOL "" FORCE)
+
+# Shared external libraries (dynamic link into MegaDriveEnvironment / consumers).
+set(YAML_BUILD_SHARED_LIBS ON  CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_TOOLS   OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_TESTS   OFF CACHE BOOL "" FORCE)
+set(PNG_SHARED      ON  CACHE BOOL "" FORCE)
+set(PNG_STATIC      OFF CACHE BOOL "" FORCE)
 set(PNG_FRAMEWORK   OFF CACHE BOOL "" FORCE)
 set(PNG_TESTS       OFF CACHE BOOL "" FORCE)
 set(PNG_TOOLS       OFF CACHE BOOL "" FORCE)
 set(PNG_EXECUTABLES OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(yaml-cpp zlib)
+
+# zlib's CMake only creates the `zlib` target; libpng expects ZLIB::ZLIB.
+if(NOT TARGET ZLIB::ZLIB)
+    add_library(ZLIB::ZLIB ALIAS zlib)
+endif()
+# Module-mode find_package(ZLIB) variables used by some consumers.
+set(ZLIB_FOUND TRUE)
+set(ZLIB_INCLUDE_DIR "${zlib_SOURCE_DIR}" CACHE PATH "" FORCE)
+set(ZLIB_INCLUDE_DIRS "${zlib_SOURCE_DIR}" "${zlib_BINARY_DIR}")
+set(ZLIB_LIBRARY zlib CACHE FILEPATH "" FORCE)
+set(ZLIB_LIBRARIES zlib)
+
 FetchContent_MakeAvailable(libpng)
 
 file(GLOB_RECURSE MEGADRIVE_ENVIRONMENT_SOURCES CONFIGURE_DEPENDS
@@ -73,6 +93,14 @@ else()
     add_library(MegaDriveEnvironment STATIC ${MEGADRIVE_ENVIRONMENT_SOURCES})
 endif()
 add_library(MegaDriveEnvironment::MegaDriveEnvironment ALIAS MegaDriveEnvironment)
+
+# Runtime lookup for shared FetchContent deps (yaml-cpp, libpng, zlib).
+set_target_properties(MegaDriveEnvironment PROPERTIES
+    BUILD_RPATH
+        "$<TARGET_FILE_DIR:yaml-cpp>;$<TARGET_FILE_DIR:png_shared>;$<TARGET_FILE_DIR:zlib>"
+    INSTALL_RPATH
+        "$<TARGET_FILE_DIR:yaml-cpp>;$<TARGET_FILE_DIR:png_shared>;$<TARGET_FILE_DIR:zlib>"
+)
 
 set(MEGADRIVE_ENVIRONMENT_INCLUDE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/include/MegaDriveEnvironment"
@@ -100,20 +128,22 @@ target_include_directories(MegaDriveEnvironment PUBLIC
     ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/art
 )
 
-# SDL appears in public headers. Implementation-only deps stay private for a
+# SDL appears in public headers. Shared FetchContent deps stay private for a
 # shared build so consumers do not re-link yaml/png/zlib on every dylib rebuild.
+# Runtime still loads those dylibs as dependencies of MegaDriveEnvironment.
 target_link_libraries(MegaDriveEnvironment PUBLIC SDL3::SDL3)
 if(MEGADRIVE_ENVIRONMENT_BUILD_SHARED)
     target_link_libraries(MegaDriveEnvironment PRIVATE
         yaml-cpp::yaml-cpp
-        png_static
-        zlibstatic
+        png_shared
+        zlib
     )
 else()
+    # Static archive still dynamically depends on the shared external libs.
     target_link_libraries(MegaDriveEnvironment PUBLIC
         yaml-cpp::yaml-cpp
-        png_static
-        zlibstatic
+        png_shared
+        zlib
     )
 endif()
 
