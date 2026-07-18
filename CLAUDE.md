@@ -50,13 +50,12 @@ target_link_libraries(my_game PRIVATE MegaDriveEnvironment::MegaDriveEnvironment
 - CMake 3.24+
 - C++23 compiler
 - SDL3 installed on the host
-- FetchContent dependencies: `yaml-cpp`, `zlib`, `libpng` (all built as
-  **shared** libraries and linked dynamically)
+- FetchContent dependencies: `yaml-cpp`, `zlib`, `libpng`
 
-`CMakeLists.txt` builds libpng shared (not static/framework) and disables its
-tests/tools/example targets. Shared FetchContent deps are linked privately into
-the shared MegaDriveEnvironment library; RPATH points at their build output
-dirs so consumers can run without installing the deps system-wide.
+By default FetchContent deps are **static** (PIC) and linked privately into the
+shared library. Consumers that want shared deps set
+`MEGADRIVE_ENVIRONMENT_SHARED_DEPS=ON` before `add_subdirectory` (see
+`StreetsOfRageRecompilation`). libpng tests/tools/framework targets stay off.
 
 ## Architecture
 
