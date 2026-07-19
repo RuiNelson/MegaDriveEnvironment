@@ -194,4 +194,18 @@ if(BUILD_TESTING AND PROJECT_IS_TOP_LEVEL)
         NAME megadrive_environment_remote_access_protocol_test
         COMMAND megadrive_environment_remote_access_protocol_test
     )
+
+    find_package(Python3 3.9 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME megadrive_environment_python_remote_client_test
+            COMMAND ${Python3_EXECUTABLE} -m unittest discover
+                -s ${CMAKE_CURRENT_SOURCE_DIR}/python/tests
+                -v
+        )
+        set_tests_properties(megadrive_environment_python_remote_client_test PROPERTIES
+            ENVIRONMENT
+                "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/python/src;PYTHONDONTWRITEBYTECODE=1"
+        )
+    endif()
 endif()

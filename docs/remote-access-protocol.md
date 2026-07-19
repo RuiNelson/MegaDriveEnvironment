@@ -8,6 +8,9 @@ disable the service.
 The server is strictly request/reply: it never sends unsolicited events. All
 integer fields are unsigned big-endian unless explicitly marked signed.
 
+For Python applications, the typed client in [`../python/`](../python/) wraps
+all framing, validation and VDP record decoding.
+
 ## Framing
 
 Every request consists of this 12-byte header, its payload, and one `ETX` byte:

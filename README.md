@@ -6,6 +6,20 @@ on port 6969 by default; pass port `0` as the fourth `MegaDriveEnvironment`
 constructor argument to disable it. The wire format is documented in
 [`docs/remote-access-protocol.md`](docs/remote-access-protocol.md).
 
+A typed, dependency-free Python client is available under [`python/`](python/):
+
+```bash
+python3 -m pip install ./python
+```
+
+```python
+from megadrive_remote import Buttons, MegaDriveClient
+
+with MegaDriveClient() as mega_drive:
+    mega_drive.press_buttons(player1=Buttons.A | Buttons.START, frames=2)
+    frame = mega_drive.read_framebuffer()
+```
+
 <p align="center">
   <img src="docs/box.webp" alt="Mega Drive Box" width="280">
 </p>
