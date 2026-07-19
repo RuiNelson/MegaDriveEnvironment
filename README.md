@@ -1,25 +1,5 @@
 # MegaDriveEnvironment
 
-Applications also expose an optional single-client binary TCP automation
-service for controller input, system-bus memory, and VDP inspection. It listens
-on port 6969 by default; pass port `0` as the fourth `MegaDriveEnvironment`
-constructor argument to disable it. The wire format is documented in
-[`docs/remote-access-protocol.md`](docs/remote-access-protocol.md).
-
-A typed, dependency-free Python client is available under [`python/`](python/):
-
-```bash
-python3 -m pip install ./python
-```
-
-```python
-from megadrive_remote import Buttons, MegaDriveClient
-
-with MegaDriveClient() as mega_drive:
-    mega_drive.press_buttons(player1=Buttons.A | Buttons.START, frames=2)
-    frame = mega_drive.read_framebuffer()
-```
-
 <p align="center">
   <img src="docs/box.webp" alt="Mega Drive Box" width="280">
 </p>
@@ -64,6 +44,7 @@ demonstrates that complete two-target workflow.
     - [PSG and host mixing](#psg-and-host-mixing)
     - [Z80](#z80)
   - [Debugging tools](#debugging-tools)
+    - [Remote access and automation](#remote-access-and-automation)
   - [Portability to real hardware](#portability-to-real-hardware)
   - [Reference](#reference)
     - [Public API map](#public-api-map)
@@ -563,6 +544,28 @@ Built-in host shortcuts:
 The full VDP sheet contains the frame, tile sheets, plane name tables, palette,
 VSRAM, window/sprite views and registers. The mouse cursor is hidden while the
 VDP window is fullscreen and restored on exit.
+
+### Remote access and automation
+
+Applications also expose an optional single-client binary TCP automation
+service for controller input, system-bus memory, and VDP inspection. It listens
+on port 6969 by default; pass port `0` as the fourth `MegaDriveEnvironment`
+constructor argument to disable it. The wire format is documented in
+[`docs/remote-access-protocol.md`](docs/remote-access-protocol.md).
+
+A typed, dependency-free Python client is available under [`python/`](python/):
+
+```bash
+python3 -m pip install ./python
+```
+
+```python
+from megadrive_remote import Buttons, MegaDriveClient
+
+with MegaDriveClient() as mega_drive:
+    mega_drive.press_buttons(player1=Buttons.A | Buttons.START, frames=2)
+    frame = mega_drive.read_framebuffer()
+```
 
 Additional runtime controls:
 
