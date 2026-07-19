@@ -195,6 +195,15 @@ if(BUILD_TESTING AND PROJECT_IS_TOP_LEVEL)
         COMMAND megadrive_environment_remote_access_protocol_test
     )
 
+    add_executable(megadrive_environment_restart_test
+        tests/restart_test.cpp
+    )
+    target_link_libraries(megadrive_environment_restart_test PRIVATE MegaDriveEnvironment)
+    add_test(
+        NAME megadrive_environment_restart_test
+        COMMAND megadrive_environment_restart_test
+    )
+
     find_package(Python3 3.9 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
         add_test(

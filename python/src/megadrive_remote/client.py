@@ -208,6 +208,20 @@ class MegaDriveClient:
     def ping(self) -> None:
         self._request(Command.PING)
 
+    def restart_game(self, *, timeout_ms: int = 5_000) -> None:
+        """Cold-restart the game while preserving this TCP connection and ROM patches.
+
+        The call returns after the restarted cartridge's new ``run()``
+        invocation has begun.
+        """
+
+        timeout_ms = self._positive(timeout_ms, "timeout_ms")
+        self._request(
+            Command.RESTART_GAME,
+            pack(">I", timeout_ms),
+            operation_timeout_ms=timeout_ms,
+        )
+
     def press_buttons(
         self,
         *,

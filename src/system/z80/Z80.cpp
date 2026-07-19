@@ -98,6 +98,19 @@ void Z80::stop() {
     }
 }
 
+void Z80::reset() {
+    stop();
+    SDL_LockMutex(mutex_);
+    ram_.fill(0);
+    resetCPU();
+    busRequested_.store(true, std::memory_order_release);
+    busAcked_.store(true, std::memory_order_release);
+    resetHeld_.store(true, std::memory_order_release);
+    irqPending_.store(false, std::memory_order_release);
+    fallbackBaseNS_ = SDL_GetTicksNS();
+    SDL_UnlockMutex(mutex_);
+}
+
 void Z80::setBusRequest(bool requested) {
     busRequested_.store(requested, std::memory_order_release);
     if (requested) {

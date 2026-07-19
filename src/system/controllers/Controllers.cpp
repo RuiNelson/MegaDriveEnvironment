@@ -101,6 +101,17 @@ void Controllers::clearRemoteState() {
     setRemoteState({});
 }
 
+void Controllers::reset() {
+    SDL_LockMutex(stateMutex_);
+    remoteState1_ = {};
+    remoteState2_ = {};
+    player1Slot_.controlPort = 0x00;
+    player2Slot_.controlPort = 0x00;
+    player1Slot_.dataPortOut = 0x40;
+    player2Slot_.dataPortOut = 0x40;
+    SDL_UnlockMutex(stateMutex_);
+}
+
 void Controllers::setDelegate(ControllersDelegate *delegate) {
     SDL_LockMutex(delegateMutex_);
     delegate_ = delegate;

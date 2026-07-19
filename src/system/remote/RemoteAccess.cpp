@@ -43,6 +43,7 @@ constexpr std::uint32_t kRomEnd = 0x00400000u;
 
 enum class Command : std::uint8_t {
     Ping = 0x00,
+    RestartGame = 0x01,
     PressButtons = 0x10,
     ReleaseButtons = 0x11,
     ReadMemory = 0x20,
@@ -356,6 +357,8 @@ class RemoteAccess::Impl {
         switch (static_cast<Command>(request.command)) {
             case Command::Ping:
                 return payload.empty() ? Result{} : Result::failure(Error::MalformedPayload, "PING has no payload");
+            case Command::RestartGame:
+                return restartGame(payload);
             case Command::PressButtons:
                 return pressButtons(payload);
             case Command::ReleaseButtons:
@@ -391,6 +394,17 @@ class RemoteAccess::Impl {
                 return waitHSyncLine(payload);
         }
         return Result::failure(Error::UnknownCommand, "unknown command");
+    }
+
+    Result restartGame(std::span<const std::uint8_t> payload) {
+        if (payload.size() != 4)
+            return Result::failure(Error::MalformedPayload, "RESTART_GAME requires a 4-byte timeout");
+        const std::uint32_t timeoutMs = readU32(payload, 0);
+        if (timeoutMs == 0)
+            return Result::failure(Error::InvalidArgument, "timeout must be non-zero");
+        return environment_->restart(timeoutMs)
+            ? Result{}
+            : Result::failure(Error::Timeout, "game restart timed out or the environment stopped");
     }
 
     Result pressButtons(std::span<const std::uint8_t> payload) {

@@ -5,8 +5,11 @@
 
 #include "MegaDriveEnvironment.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <iterator>
 #include "Logger.hpp"
 
 namespace {
@@ -47,110 +50,183 @@ MegaDriveEnvironment::~MegaDriveEnvironment() {
         cpuThread_ = nullptr;
     }
     closeOptionHotkeyGamepads();
+    remoteAccess_.stop();
     powerOff();
 }
 
 void MegaDriveEnvironment::boot() {
-    powerOn();
+    quitRequested_.store(false, std::memory_order_release);
+    restartRequested_.store(false, std::memory_order_release);
+    bootRunning_.store(true, std::memory_order_release);
+    remoteAccess_.start();
+    powerOn(false);
     openOptionHotkeyGamepads();
-
-    cpuDone_.store(false, std::memory_order_release);
-    cpuThread_ = SDL_CreateThread(cpuThreadEntry, "CPU", this);
 
     // Pump SDL events on the main thread so the VDP can present frames
     // (SDL_RunOnMainThread) and so window-close requests are observed.
     SDL_Event event;
     bool      fullscreenActive = false;
     bool      cursorWasVisible = true;
-    while (!cpuDone_.load(std::memory_order_acquire)) {
-        while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_EVENT_GAMEPAD_ADDED) {
-                openOptionHotkeyGamepad(event.gdevice.which);
-            } else if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
-                closeOptionHotkeyGamepad(event.gdevice.which);
-            } else if (event.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN && !fullscreenActive) {
-                cursorWasVisible = SDL_CursorVisible();
-                SDL_HideCursor();
-                fullscreenActive = true;
-            } else if (event.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN && fullscreenActive) {
-                if (cursorWasVisible) {
-                    SDL_ShowCursor();
-                }
-                fullscreenActive = false;
-            }
-
-            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && (event.key.mod & SDL_KMOD_ALT) &&
-                event.key.key != SDLK_LALT && event.key.key != SDLK_RALT) {
-                handleOptionHotkey(OptionHotkeyCode{
-                    .source      = OptionHotkeyCode::Source::Keyboard,
-                    .keyboardKey = event.key.key,
-                });
-            } else if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && (SDL_GetModState() & SDL_KMOD_ALT)) {
-                handleOptionHotkey(OptionHotkeyCode{
-                    .source        = OptionHotkeyCode::Source::Gamepad,
-                    .gamepadButton = static_cast<SDL_GamepadButton>(event.gbutton.button),
-                    .gamepadId     = event.gbutton.which,
-                });
-            }
-
-            // Window close or CTRL+Q both request a shutdown.
-            if (event.type == SDL_EVENT_QUIT) {
-                quitRequested_.store(true, std::memory_order_release);
-                interruptGeneration_.fetch_add(1, std::memory_order_release);
-                interruptGeneration_.notify_all();
-            } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_Q && (event.key.mod & SDL_KMOD_CTRL)) {
-                quitRequested_.store(true, std::memory_order_release);
-                interruptGeneration_.fetch_add(1, std::memory_order_release);
-                interruptGeneration_.notify_all();
-            } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_P && (event.key.mod & SDL_KMOD_CTRL)) {
-                // CTRL+P: capture the composited frame to a numbered PNG.
-                static unsigned shot = 0;
-                char            path[64];
-                std::snprintf(path, sizeof path, "screenshot_%03u.png", shot++);
-                vdp_.dumpFrameBufferToPNG(path, /*fullRange=*/true);
-                Logger::log("[capture] frame -> %s", path);
-            } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_S && (event.key.mod & SDL_KMOD_CTRL)) {
-                // CTRL+S: capture the full VDP debug view (frame + tile sheets +
-                // plane nametables + registers) to a numbered PNG.
-                static unsigned shot = 0;
-                char            path[64];
-                std::snprintf(path, sizeof path, "vpd_%03u.png", shot++);
-                vdp_.dumpEverythingToPNG(path, /*fullRange=*/true);
-                Logger::log("[capture] VDP debug view -> %s", path);
-            }
-        }
-        if (quitRequested_.load(std::memory_order_acquire)) {
-            // Give a cooperative run() — one that polls shouldQuit() — a brief
-            // window to leave its loop and return for an orderly shutdown, while
-            // still pumping events so the VDP can present.
-            for (int i = 0; i < 100 && !cpuDone_.load(std::memory_order_acquire); ++i) {
-                while (SDL_PollEvent(&event)) {
-                }
-                SDL_DelayNS(500'000);
-            }
-            if (!cpuDone_.load(std::memory_order_acquire)) {
-                // run() did not return — e.g. the mechanically-generated SoR main
-                // loop is an unbounded `bra` that never polls shouldQuit(). Force
-                // the process down: returning from main() does not reliably end it
-                // on macOS, where SDL parks the real main thread in its own run
-                // loop to service SDL_RunOnMainThread (the VDP's frame
-                // presentation). _Exit() tears every thread down immediately and
-                // lets the OS reclaim the window.
-                std::_Exit(0);
-            }
+    bool      runAgain = true;
+    while (runAgain) {
+        cpuDone_.store(false, std::memory_order_release);
+        cpuThread_ = SDL_CreateThread(cpuThreadEntry, "CPU", this);
+        if (!cpuThread_) {
+            Logger::log("[MDE] could not create CPU thread: %s", SDL_GetError());
             break;
         }
-        SDL_DelayNS(250'000);
+
+        while (!cpuDone_.load(std::memory_order_acquire)) {
+            while (SDL_PollEvent(&event)) {
+                if (event.type == SDL_EVENT_GAMEPAD_ADDED) {
+                    openOptionHotkeyGamepad(event.gdevice.which);
+                } else if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
+                    closeOptionHotkeyGamepad(event.gdevice.which);
+                } else if (event.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN && !fullscreenActive) {
+                    cursorWasVisible = SDL_CursorVisible();
+                    SDL_HideCursor();
+                    fullscreenActive = true;
+                } else if (event.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN && fullscreenActive) {
+                    if (cursorWasVisible) {
+                        SDL_ShowCursor();
+                    }
+                    fullscreenActive = false;
+                }
+
+                if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && (event.key.mod & SDL_KMOD_ALT) &&
+                    event.key.key != SDLK_LALT && event.key.key != SDLK_RALT) {
+                    handleOptionHotkey(OptionHotkeyCode{
+                        .source      = OptionHotkeyCode::Source::Keyboard,
+                        .keyboardKey = event.key.key,
+                    });
+                } else if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && (SDL_GetModState() & SDL_KMOD_ALT)) {
+                    handleOptionHotkey(OptionHotkeyCode{
+                        .source        = OptionHotkeyCode::Source::Gamepad,
+                        .gamepadButton = static_cast<SDL_GamepadButton>(event.gbutton.button),
+                        .gamepadId     = event.gbutton.which,
+                    });
+                }
+
+                // Window close or CTRL+Q both request a shutdown. CTRL+R performs
+                // a cold restart without replacing the process or TCP connection.
+                if (event.type == SDL_EVENT_QUIT) {
+                    quitRequested_.store(true, std::memory_order_release);
+                    interruptGeneration_.fetch_add(1, std::memory_order_release);
+                    interruptGeneration_.notify_all();
+                } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_Q &&
+                           (event.key.mod & SDL_KMOD_CTRL)) {
+                    quitRequested_.store(true, std::memory_order_release);
+                    interruptGeneration_.fetch_add(1, std::memory_order_release);
+                    interruptGeneration_.notify_all();
+                } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_R &&
+                           (event.key.mod & SDL_KMOD_CTRL)) {
+                    requestRestart();
+                } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_P &&
+                           (event.key.mod & SDL_KMOD_CTRL)) {
+                    // CTRL+P: capture the composited frame to a numbered PNG.
+                    static unsigned shot = 0;
+                    char            path[64];
+                    std::snprintf(path, sizeof path, "screenshot_%03u.png", shot++);
+                    vdp_.dumpFrameBufferToPNG(path, /*fullRange=*/true);
+                    Logger::log("[capture] frame -> %s", path);
+                } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_S &&
+                           (event.key.mod & SDL_KMOD_CTRL)) {
+                    // CTRL+S: capture the full VDP debug view (frame + tile sheets +
+                    // plane nametables + registers) to a numbered PNG.
+                    static unsigned shot = 0;
+                    char            path[64];
+                    std::snprintf(path, sizeof path, "vpd_%03u.png", shot++);
+                    vdp_.dumpEverythingToPNG(path, /*fullRange=*/true);
+                    Logger::log("[capture] VDP debug view -> %s", path);
+                }
+            }
+            if (quitRequested_.load(std::memory_order_acquire)) {
+                // Give a cooperative run() — one that polls shouldQuit() — a brief
+                // window to leave its loop and return for an orderly shutdown, while
+                // still pumping events so the VDP can present.
+                for (int i = 0; i < 100 && !cpuDone_.load(std::memory_order_acquire); ++i) {
+                    while (SDL_PollEvent(&event)) {
+                    }
+                    SDL_DelayNS(500'000);
+                }
+                if (!cpuDone_.load(std::memory_order_acquire)) {
+                    // run() did not return — e.g. the mechanically-generated SoR main
+                    // loop is an unbounded `bra` that never polls shouldQuit(). Force
+                    // the process down: returning from main() does not reliably end it
+                    // on macOS, where SDL parks the real main thread in its own run
+                    // loop to service SDL_RunOnMainThread (the VDP's frame
+                    // presentation). _Exit() tears every thread down immediately and
+                    // lets the OS reclaim the window.
+                    std::_Exit(0);
+                }
+                break;
+            }
+            SDL_DelayNS(250'000);
+        }
+
+        SDL_WaitThread(cpuThread_, nullptr);
+        cpuThread_ = nullptr;
+
+        runAgain = false;
+        if (!quitRequested_.load(std::memory_order_acquire)) {
+            std::lock_guard lock(restartMutex_);
+            if (restartRequested_.exchange(false, std::memory_order_acq_rel)) {
+                restartingGeneration_ = restartRequestedGeneration_;
+                runAgain = true;
+            }
+        }
+        if (runAgain) {
+            powerOff();
+            powerOn(true);
+        }
     }
 
-    // run() returned (on its own, or cooperatively after a quit request): clean up.
-    SDL_WaitThread(cpuThread_, nullptr);
-    cpuThread_ = nullptr;
     if (fullscreenActive && cursorWasVisible) {
         SDL_ShowCursor();
     }
     closeOptionHotkeyGamepads();
     powerOff();
+    bootRunning_.store(false, std::memory_order_release);
+    restartCondition_.notify_all();
+    remoteAccess_.stop();
+}
+
+std::uint64_t MegaDriveEnvironment::requestRestart() {
+    std::uint64_t generation = 0;
+    {
+        std::lock_guard lock(restartMutex_);
+        if (!bootRunning_.load(std::memory_order_acquire) || quitRequested_.load(std::memory_order_acquire))
+            return 0;
+        if (!restartRequested_.load(std::memory_order_acquire)) {
+            restartRequested_.store(true, std::memory_order_release);
+            ++restartRequestedGeneration_;
+        }
+        generation = restartRequestedGeneration_;
+    }
+    interruptGeneration_.fetch_add(1, std::memory_order_release);
+    interruptGeneration_.notify_all();
+    return generation;
+}
+
+bool MegaDriveEnvironment::restart(std::uint32_t timeoutMs) {
+    if (timeoutMs == 0)
+        return false;
+    const std::uint64_t generation = requestRestart();
+    if (generation == 0)
+        return false;
+    std::unique_lock lock(restartMutex_);
+    return restartCondition_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [&] {
+        return restartStartedGeneration_ >= generation || !bootRunning_.load(std::memory_order_acquire);
+    }) && restartStartedGeneration_ >= generation;
+}
+
+void MegaDriveEnvironment::reportCPUStarted() {
+    std::lock_guard lock(restartMutex_);
+    if (restartingGeneration_ != 0) {
+        restartStartedGeneration_ = std::max(restartStartedGeneration_, restartingGeneration_);
+        restartingGeneration_ = 0;
+        restartCondition_.notify_all();
+    }
 }
 
 void MegaDriveEnvironment::openOptionHotkeyGamepads() {
@@ -329,7 +405,12 @@ void MegaDriveEnvironment::reportUnhandledDispatch(m_long addr) {
 
 int MegaDriveEnvironment::cpuThreadEntry(void *data) {
     auto *self = static_cast<MegaDriveEnvironment *>(data);
-    self->run();
+    self->reportCPUStarted();
+    try {
+        self->run();
+    } catch (const RestartSignal &) {
+        // Cooperative restart: boot() joins this thread before resetting any subsystem.
+    }
     self->cpuDone_.store(true, std::memory_order_release);
     return 0;
 }
@@ -348,17 +429,26 @@ void MegaDriveEnvironment::runVDPInterrupts() {
     }
 }
 
-void MegaDriveEnvironment::powerOn() {
+void MegaDriveEnvironment::powerOn(bool isRestart) {
+    if (isRestart)
+        onReset();
+    memory_.resetWorkRAM();
+    controllers_.reset();
+    vdp_.reset();
+    z80_.reset();
     m68kMasterCycles_.store(0, std::memory_order_release);
+    pendingIRQMask_.store(0, std::memory_order_release);
+    paceCounter_ = 0;
+    traceFn_.store(0, std::memory_order_release);
+    traceHistoryPos_ = 0;
+    std::fill(std::begin(traceHistory_), std::end(traceHistory_), 0);
     onPowerOn();
     vdp_.start();
     sound_.start();
     z80_.start();
-    remoteAccess_.start();
 }
 
 void MegaDriveEnvironment::powerOff() {
-    remoteAccess_.stop();
     controllers_.clearRemoteState();
     z80_.stop();
     sound_.stop();

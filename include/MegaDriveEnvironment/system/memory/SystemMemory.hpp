@@ -56,12 +56,16 @@ class SystemMemory {
     /// Re-zeroes ROM and work RAM. Kept for parity with the old initRAM() entry point.
     void initRAM();
 
+    /// Clears only 68000 work RAM, preserving the complete cartridge image.
+    void resetWorkRAM();
+
     /// Loads a cartridge ROM image from @p path into the ROM region
     /// (0x000000-0x3FFFFF). Reads at most ROM_SIZE (4 MiB) bytes; a larger file
     /// is truncated to that limit. On a missing or unreadable file, writes a
     /// clear error to stderr and leaves the ROM region unchanged (it is not a
     /// silent success).
-    void loadROM(const std::string &path);
+    /// @return true when the complete requested image was loaded.
+    bool loadROM(const std::string &path);
 
     /// Patches the in-memory cartridge image. Unlike normal bus writes, which
     /// preserve ROM hardware semantics, these helpers intentionally permit ROM

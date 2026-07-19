@@ -21,6 +21,8 @@ class Z80 {
 
     void start();
     void stop();
+    /// Restores RAM, CPU and bus/reset lines. Call while the Z80 is stopped.
+    void reset();
 
     m_byte *ram() {
         return ram_.data();

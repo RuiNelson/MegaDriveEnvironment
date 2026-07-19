@@ -257,6 +257,9 @@ void VDP::reset() {
     state_.reset();
     framebuffer_.clear();
     SDL_UnlockMutex(mutex_);
+    SDL_LockMutex(irqMutex_);
+    irqQueue_.clear();
+    SDL_UnlockMutex(irqMutex_);
 }
 
 /// Signals render thread to exit, waits for completion, then releases all SDL resources.

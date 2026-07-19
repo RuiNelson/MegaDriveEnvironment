@@ -92,6 +92,11 @@ class MegaDriveClientTests(unittest.TestCase):
             self.assertEqual(payload, pack(">I", 0xFF0100) + b"\x12\x34")
             return ACK, b""
 
+        def restart(command: int, payload: bytes) -> tuple[int, bytes]:
+            self.assertEqual(command, 0x01)
+            self.assertEqual(payload, pack(">I", 3_000))
+            return ACK, b""
+
         def read(command: int, payload: bytes) -> tuple[int, bytes]:
             self.assertEqual(command, 0x20)
             self.assertEqual(payload, pack(">II", 0xFF0100, 2))
@@ -105,8 +110,9 @@ class MegaDriveClientTests(unittest.TestCase):
             )
             return ACK, b""
 
-        with ClientHarness(ping, write, read, buttons) as client:
+        with ClientHarness(ping, restart, write, read, buttons) as client:
             client.ping()
+            client.restart_game(timeout_ms=3_000)
             client.write_value(0xFF0100, 0x1234, width=2)
             self.assertEqual(client.read_value(0xFF0100, width=2), 0x1234)
             client.press_buttons(

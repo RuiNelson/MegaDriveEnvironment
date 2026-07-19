@@ -26,6 +26,7 @@ from megadrive_remote import Buttons, MegaDriveClient, TilemapPlane
 
 with MegaDriveClient("127.0.0.1", 6969) as mega_drive:
     mega_drive.ping()
+    mega_drive.restart_game()
 
     # A+B+Right on player 1, Start on player 2, for exactly three frames.
     mega_drive.press_buttons(
@@ -58,6 +59,7 @@ with MegaDriveClient("127.0.0.1", 6969) as mega_drive:
 `MegaDriveClient` supports:
 
 - `ping()`;
+- `restart_game()`;
 - `press_buttons()` and `release_buttons()`;
 - `read_memory()`, `write_memory()`, `read_value()`, and `write_value()`;
 - `wait_memory_changed()` and `wait_memory_equals()`;

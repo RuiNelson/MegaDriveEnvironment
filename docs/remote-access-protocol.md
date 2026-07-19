@@ -44,6 +44,7 @@ are 32-bit fields but must fit the Mega Drive's 24-bit address space.
 | Command | Name | Request payload | Successful response |
 |---:|---|---|---|
 | `00` | `PING` | empty | empty |
+| `01` | `RESTART_GAME` | timeout-ms:u32 | empty after the new game execution starts |
 | `10` | `PRESS_BUTTONS` | P1 mask:u8, P2 mask:u8, frames:u32, timeout-ms:u32 | empty after buttons are released |
 | `11` | `RELEASE_BUTTONS` | empty | empty |
 | `20` | `READ_MEMORY` | address:u32, length:u32 | raw bytes |
@@ -74,6 +75,14 @@ memory-mapped devices and can therefore have their hardware side effects.
 Writes in `000000-3FFFFF` atomically patch the in-memory cartridge image; the
 ROM file is never modified. A ROM segment dump/patch holds one whole-image lock
 for the complete operation, not one lock per address.
+
+`RESTART_GAME` performs a cold reset of the 68000-side work RAM, CPU state,
+VDP, Z80, sound and emulated controller ports. It preserves the process,
+window, current TCP connection and the complete loaded cartridge image,
+including remote patches. The response is delayed until the replacement CPU
+thread has started. The cartridge `run()` entry point is invoked again;
+`onReset()` runs first with subsystem threads stopped, followed by the usual
+`onPowerOn()` hook.
 
 HSync waits observe every active display line and do not depend on the game's
 HBlank interrupt-enable bit. `WAIT_HSYNC_REACH_LINE` waits for the next

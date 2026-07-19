@@ -27,6 +27,7 @@ HEADER = Struct(">BBBBII")
 
 class Command(IntEnum):
     PING = 0x00
+    RESTART_GAME = 0x01
     PRESS_BUTTONS = 0x10
     RELEASE_BUTTONS = 0x11
     READ_MEMORY = 0x20

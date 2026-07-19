@@ -12,7 +12,9 @@
 
 #include <atomic>
 #include <bit>
+#include <condition_variable>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -111,6 +113,12 @@ class MegaDriveEnvironment {
     /// Powers the system on, runs run() on the CPU thread, and pumps SDL events
     /// on the calling (main) thread until run() returns. Blocks until then.
     void boot();
+
+    /// Requests a cold restart and waits until the new run() invocation has
+    /// started. The process, window, TCP connection and patched cartridge ROM
+    /// remain alive. Returns false if no game is running or the timeout expires.
+    /// Do not call this from the SDL main thread or the emulated CPU thread.
+    bool restart(std::uint32_t timeoutMs = 5000);
 
     /// Low-level interrupt dispatch hook used by recompilation/bring-up paths.
     /// New games should override vSync()/hSync() and should not call this from
@@ -228,11 +236,13 @@ class MegaDriveEnvironment {
     void waitForInterrupt() {
         while (!quitRequested_.load(std::memory_order_acquire) &&
                irqLevel() <= cpuInterruptMask()) {
+            throwIfRestartRequested();
             const std::uint64_t observed = interruptGeneration_.load(std::memory_order_acquire);
             if (irqLevel() > cpuInterruptMask())
                 break;
             interruptGeneration_.wait(observed, std::memory_order_acquire);
         }
+        throwIfRestartRequested();
     }
 
     /// 68000 IPL mask consulted by waitForInterrupt() and debug logs.
@@ -248,12 +258,20 @@ class MegaDriveEnvironment {
     virtual void onPowerOn() {
     }
 
+    /// Called for a restart after the old CPU thread and all subsystem threads
+    /// have stopped, and before the common hardware state is reset. Subclasses
+    /// can clear additional host-side cartridge state here. onPowerOn() follows
+    /// for both the initial boot and every restart.
+    virtual void onReset() {
+    }
+
     /// Per-instruction pacing. Native code would otherwise outrun the VDP render
     /// thread and spin on SDL mutexes. Yield every 64 instructions so other
     /// threads make progress without paying sleep_for() syscall overhead on every
     /// opcode (which is ~100× slower than 68000 timing and made boot/decompression
     /// look frozen). Disabled entirely when fastMode() is set (--fast).
     void pace() {
+        throwIfRestartRequested();
         m68kMasterCycles_.fetch_add(64, std::memory_order_release);
         if (fastMode_.load(std::memory_order_relaxed))
             return;
@@ -290,7 +308,10 @@ class MegaDriveEnvironment {
     /// (e.g. before run()); the reset vector is read from the loaded image by
     /// the cartridge boot code later.
     void loadROM(const std::string &path) {
-        memory_.loadROM(path);
+        if ((!romLoaded_ || loadedROMPath_ != path) && memory_.loadROM(path)) {
+            romLoaded_ = true;
+            loadedROMPath_ = path;
+        }
     }
 
     /// Cartridge entry point, overridden by the game subclass. Runs on the CPU thread.
@@ -313,8 +334,19 @@ class MegaDriveEnvironment {
     }
 
     private:
+    struct RestartSignal {
+    };
+
+    void throwIfRestartRequested() const {
+        if (restartRequested_.load(std::memory_order_acquire))
+            throw RestartSignal{};
+    }
+
+    std::uint64_t requestRestart();
+    void reportCPUStarted();
+
     /// Starts every subsystem's thread.
-    void powerOn();
+    void powerOn(bool isRestart);
 
     /// Stops every subsystem's thread. Idempotent.
     void powerOff();
@@ -341,6 +373,14 @@ class MegaDriveEnvironment {
     SDL_Thread       *cpuThread_ = nullptr;
     std::atomic<bool> cpuDone_{false};
     std::atomic<bool> quitRequested_{false};
+    std::atomic<bool> restartRequested_{false};
+    std::atomic<bool> bootRunning_{false};
+
+    std::mutex              restartMutex_;
+    std::condition_variable restartCondition_;
+    std::uint64_t           restartRequestedGeneration_ = 0;
+    std::uint64_t           restartStartedGeneration_   = 0;
+    std::uint64_t           restartingGeneration_       = 0;
 
     /// Bit L set ⇒ an autovector interrupt of level L is pending. Set by the
     /// VDP render thread (raiseInterrupt), consumed on the run() thread.
@@ -356,6 +396,8 @@ class MegaDriveEnvironment {
     std::atomic<VideoStandard>   videoStandard_{VideoStandard::Hz60};
     std::uint32_t                paceCounter_{0};       ///< CPU thread only
     std::string                  auxAddrFile_;          ///< append unknown dispatch targets here (if set)
+    std::string                  loadedROMPath_;        ///< prevents a restarted run() from replacing patched ROM
+    bool                         romLoaded_ = false;
     std::unordered_set<unsigned> confirmedSpeculative_; ///< guards against duplicate confirmSpeculative logs
     /// Gamepads opened solely to receive Option hotkeys. Gamepads already
     /// opened by Controllers are deliberately not stored or closed here.

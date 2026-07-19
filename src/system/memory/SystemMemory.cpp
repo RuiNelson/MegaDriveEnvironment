@@ -64,17 +64,22 @@ void SystemMemory::initRAM() {
     std::memset(wram_, 0, WORK_RAM_SIZE);
 }
 
-void SystemMemory::loadROM(const std::string &path) {
+void SystemMemory::resetWorkRAM() {
+    WramSpinGuard guard(wramLock_);
+    std::memset(wram_, 0, WORK_RAM_SIZE);
+}
+
+bool SystemMemory::loadROM(const std::string &path) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) {
         std::cerr << std::format("SystemMemory: cannot open ROM file '{}'\n", path);
-        return;
+        return false;
     }
 
     const std::streamoff size = file.tellg();
     if (size < 0) {
         std::cerr << std::format("SystemMemory: cannot determine size of ROM file '{}'\n", path);
-        return;
+        return false;
     }
     file.seekg(0, std::ios::beg);
 
@@ -94,7 +99,9 @@ void SystemMemory::loadROM(const std::string &path) {
     file.read(static_cast<char *>(rom_), toRead);
     if (!file && !file.eof()) {
         std::cerr << std::format("SystemMemory: error reading ROM file '{}'\n", path);
+        return false;
     }
+    return true;
 }
 
 void SystemMemory::patchBytes(m_long address, const void *data, std::size_t count) {

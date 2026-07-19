@@ -137,6 +137,10 @@ class Controllers {
     /// Releases every remotely-held button without changing physical input.
     void clearRemoteState();
 
+    /// Restores emulated port registers and releases remote input while
+    /// preserving physical keyboard/gamepad state and open devices.
+    void reset();
+
     /// @brief Registers an observer for input-state changes.
     ///
     /// The delegate is invoked whenever the state of either player changes.
