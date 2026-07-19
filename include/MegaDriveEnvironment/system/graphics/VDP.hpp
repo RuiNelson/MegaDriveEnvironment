@@ -8,8 +8,13 @@
 #include "VDPTile.hpp"
 #include <SDL3/SDL.h>
 #include <atomic>
+#include <array>
+#include <condition_variable>
+#include <cstdint>
 #include <deque>
+#include <mutex>
 #include <string>
+#include <vector>
 
 class MegaDriveEnvironment;
 
@@ -125,6 +130,49 @@ class VDP {
     /// (see MegaDriveEnvironment::runVDPInterrupts).
     bool popInterrupt(Interrupt &out);
 
+    // ── Remote inspection / synchronization ───────────────────────────────
+
+    struct FramebufferSnapshot {
+        std::uint16_t width = 0;
+        std::uint16_t height = 0;
+        std::uint16_t pitch = 0;
+        std::vector<m_byte> pixels; ///< Packed BGR, one byte (0-7) per channel.
+    };
+
+    struct StateSnapshot {
+        std::array<m_byte, VDPState::REG_COUNT> regs{};
+        std::array<m_byte, VDPState::VRAM_SIZE> vram{};
+        std::array<m_word, VDPState::CRAM_ENTRIES> cram{};
+        std::array<m_word, VDPState::VSRAM_ENTRIES> vsram{};
+        std::array<m_byte, VDPState::SAT_SIZE> sat{};
+        m_word status = 0;
+        m_word hCounter = 0;
+        m_word vCounter = 0;
+        std::uint16_t activeWidth = 0;
+        std::uint16_t activeHeight = 0;
+        std::uint16_t outputHeight = 0;
+        std::uint16_t planeWidthCells = 0;
+        std::uint16_t planeHeightCells = 0;
+        std::uint16_t planeABase = 0;
+        std::uint16_t planeBBase = 0;
+        std::uint16_t windowBase = 0;
+        std::uint16_t windowWidthCells = 0;
+        std::uint16_t satBase = 0;
+    };
+
+    /// Coherent copies taken under the VDP state mutex.
+    FramebufferSnapshot framebufferSnapshot() const;
+    StateSnapshot stateSnapshot() const;
+
+    /// Wait for events occurring strictly after the call begins. Timeouts are
+    /// host milliseconds. HSync events represent every rendered active line,
+    /// independently of whether the emulated HBlank interrupt is enabled.
+    bool waitForVSyncCount(std::uint32_t count, std::uint32_t timeoutMs);
+    bool waitForHSyncCount(std::uint32_t count, std::uint32_t timeoutMs);
+    bool waitForHSyncLine(std::uint16_t line, std::uint32_t timeoutMs);
+    /// Interrupts host-side waits during environment shutdown.
+    void wakeSyncWaiters();
+
     // ── Debug ──────────────────────────────────────────────────────────────
 
     /// Exports current framebuffer to PNG file.
@@ -166,7 +214,19 @@ class VDP {
     /// Mutex protecting state_ from concurrent access.
     SDL_Mutex *mutex_ = nullptr;
     /// Flag controlling render thread loop.
-    bool running_ = false;
+    std::atomic<bool> running_{false};
+
+    /// Event timeline used by remote waits; deliberately separate from the
+    /// emulated interrupt queue because automation observes physical syncs.
+    mutable std::mutex syncEventMutex_;
+    std::condition_variable syncEventCV_;
+    std::uint64_t vSyncGeneration_ = 0;
+    std::uint64_t hSyncGeneration_ = 0;
+    std::uint64_t syncWakeGeneration_ = 0;
+    std::array<std::uint64_t, VDPState::MAX_SCREEN_H> hSyncLineGenerations_{};
+
+    void signalHSync(int line);
+    void signalVSync();
 
     /// Rolling average of the latest 60 complete frame intervals, published
     /// by the render thread and consumed by the SDL main thread.

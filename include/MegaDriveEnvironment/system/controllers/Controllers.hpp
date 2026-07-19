@@ -129,6 +129,14 @@ class Controllers {
     /// @return A copy of the most recently received @c PlayersControlState.
     PlayersControlState getCurrentState() const;
 
+    /// Replaces the host-independent remote overlay for both players. Buttons
+    /// in this state are ORed with keyboard/gamepad input when the emulated
+    /// data ports are read. Intended for deterministic automation tools.
+    void setRemoteState(const PlayersControlState &state);
+
+    /// Releases every remotely-held button without changing physical input.
+    void clearRemoteState();
+
     /// @brief Registers an observer for input-state changes.
     ///
     /// The delegate is invoked whenever the state of either player changes.
@@ -284,6 +292,10 @@ class Controllers {
     /// @return Active-low 8-bit byte suitable for returning to the game loop.
     static m_byte encodeDataPort(const PlayerControlsState &state, bool thHigh);
 
+    /// Returns the logical OR of physical and remote button states.
+    static PlayerControlsState combinedState(const PlayerControlsState &physical,
+                                             const PlayerControlsState &remote);
+
     /// @brief SDL event watch callback — delegates to handleEvent().
     static bool sdlEventFilter(void *userdata, SDL_Event *event);
 
@@ -300,6 +312,8 @@ class Controllers {
     mutable SDL_Mutex  *stateMutex_ = nullptr;
     PlayerControlsState state1_     = {};
     PlayerControlsState state2_     = {};
+    PlayerControlsState remoteState1_ = {};
+    PlayerControlsState remoteState2_ = {};
     /// @}
 
     /// @name Delegate

@@ -30,6 +30,7 @@ option(MEGADRIVE_ENVIRONMENT_SHARED_DEPS
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 find_package(SDL3 REQUIRED)
+find_package(Threads REQUIRED)
 
 include(FetchContent)
 
@@ -149,6 +150,10 @@ target_include_directories(MegaDriveEnvironment PUBLIC
 # SDL appears in public headers. Implementation-only deps stay private for a
 # shared build so consumers do not re-link yaml/png/zlib on every dylib rebuild.
 target_link_libraries(MegaDriveEnvironment PUBLIC SDL3::SDL3)
+target_link_libraries(MegaDriveEnvironment PRIVATE Threads::Threads)
+if(WIN32)
+    target_link_libraries(MegaDriveEnvironment PRIVATE ws2_32)
+endif()
 if(MEGADRIVE_ENVIRONMENT_BUILD_SHARED)
     target_link_libraries(MegaDriveEnvironment PRIVATE
         yaml-cpp::yaml-cpp
@@ -170,5 +175,23 @@ if(BUILD_TESTING AND PROJECT_IS_TOP_LEVEL)
     add_test(
         NAME megadrive_environment_vdp_color_test
         COMMAND megadrive_environment_vdp_color_test
+    )
+
+    add_executable(megadrive_environment_remote_access_foundations_test
+        tests/remote_access_foundations_test.cpp
+    )
+    target_link_libraries(megadrive_environment_remote_access_foundations_test PRIVATE MegaDriveEnvironment)
+    add_test(
+        NAME megadrive_environment_remote_access_foundations_test
+        COMMAND megadrive_environment_remote_access_foundations_test
+    )
+
+    add_executable(megadrive_environment_remote_access_protocol_test
+        tests/remote_access_protocol_test.cpp
+    )
+    target_link_libraries(megadrive_environment_remote_access_protocol_test PRIVATE MegaDriveEnvironment)
+    add_test(
+        NAME megadrive_environment_remote_access_protocol_test
+        COMMAND megadrive_environment_remote_access_protocol_test
     )
 endif()

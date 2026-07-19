@@ -34,8 +34,10 @@ bool auxFileContainsAddress(const std::string &path, unsigned addr) {
 
 MegaDriveEnvironment::MegaDriveEnvironment(VDP::Synchronization sync,
                                            VDP::Scaling scaling,
-                                           VDP::SpriteLimitMode spriteLimitMode)
-    : memory_(this), z80_(this), sound_(this), controllers_(this), vdp_(this, sync, scaling, spriteLimitMode) {
+                                           VDP::SpriteLimitMode spriteLimitMode,
+                                           std::uint16_t remoteAccessPort)
+    : memory_(this), z80_(this), sound_(this), controllers_(this), vdp_(this, sync, scaling, spriteLimitMode),
+      remoteAccess_(this, remoteAccessPort) {
 }
 
 MegaDriveEnvironment::~MegaDriveEnvironment() {
@@ -352,9 +354,12 @@ void MegaDriveEnvironment::powerOn() {
     vdp_.start();
     sound_.start();
     z80_.start();
+    remoteAccess_.start();
 }
 
 void MegaDriveEnvironment::powerOff() {
+    remoteAccess_.stop();
+    controllers_.clearRemoteState();
     z80_.stop();
     sound_.stop();
     vdp_.stop();

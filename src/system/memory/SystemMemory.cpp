@@ -15,6 +15,8 @@
 #include <fstream>
 #include <ios>
 #include <iostream>
+#include <mutex>
+#include <stdexcept>
 #include <string>
 
 #define ROM_SIZE      0x400000
@@ -54,7 +56,11 @@ SystemMemory::~SystemMemory() {
 }
 
 void SystemMemory::initRAM() {
-    std::memset(rom_, 0, ROM_SIZE);
+    {
+        std::unique_lock lock(romMutex_);
+        std::memset(rom_, 0, ROM_SIZE);
+    }
+    WramSpinGuard guard(wramLock_);
     std::memset(wram_, 0, WORK_RAM_SIZE);
 }
 
@@ -84,10 +90,19 @@ void SystemMemory::loadROM(const std::string &path) {
         toRead = static_cast<std::streamsize>(ROM_SIZE);
     }
 
+    std::unique_lock lock(romMutex_);
     file.read(static_cast<char *>(rom_), toRead);
     if (!file && !file.eof()) {
         std::cerr << std::format("SystemMemory: error reading ROM file '{}'\n", path);
     }
+}
+
+void SystemMemory::patchBytes(m_long address, const void *data, std::size_t count) {
+    const m_long a = address & 0x00FFFFFFu;
+    if (a >= ROM_END || count > static_cast<std::size_t>(ROM_END - a))
+        throw std::out_of_range("SystemMemory::patchBytes range is outside cartridge ROM");
+    std::unique_lock lock(romMutex_);
+    std::memcpy(static_cast<char *>(rom_) + a, data, count);
 }
 
 // Mega Drive physical memory map (24-bit address bus):
@@ -368,8 +383,10 @@ void SystemMemory::hwWriteLong(m_long address, m_long value) {
 m_byte SystemMemory::readByte(m_long address) {
     if (isHardware(address))
         return hwReadByte(address);
-    if (isROM(address))
-        return _readByte(address); // ROM is immutable after loadROM(): lock-free
+    if (isROM(address)) {
+        std::shared_lock lock(romMutex_);
+        return _readByte(address);
+    }
     WramSpinGuard guard(wramLock_);
     return _readByte(address);
 }
@@ -377,8 +394,10 @@ m_byte SystemMemory::readByte(m_long address) {
 m_word SystemMemory::readWord(m_long address) {
     if (isHardware(address))
         return hwReadWord(address);
-    if (isROM(address))
-        return _readWord(address); // ROM is immutable after loadROM(): lock-free
+    if (isROM(address)) {
+        std::shared_lock lock(romMutex_);
+        return _readWord(address);
+    }
     WramSpinGuard guard(wramLock_);
     return _readWord(address);
 }
@@ -386,8 +405,10 @@ m_word SystemMemory::readWord(m_long address) {
 m_long SystemMemory::readLong(m_long address) {
     if (isHardware(address))
         return hwReadLong(address);
-    if (isROM(address))
-        return _readLong(address); // ROM is immutable after loadROM(): lock-free
+    if (isROM(address)) {
+        std::shared_lock lock(romMutex_);
+        return _readLong(address);
+    }
     WramSpinGuard guard(wramLock_);
     return _readLong(address);
 }
@@ -461,12 +482,10 @@ void SystemMemory::_copyToBuffer(m_long address, void *ptr, int count) {
 }
 
 void SystemMemory::copyToBuffer(m_long address, void *ptr, int count) {
-    // VDP DMA (and bulk debug reads) use this path. ROM is immutable so a
-    // pure-ROM transfer can skip the WRAM spinlock; anything that may touch
-    // WRAM (or unmapped convertAddress targets) stays serialized with the 68K.
     if (isROM(address)) {
         const m_long a = address & 0x00FFFFFFu;
         if (count >= 0 && static_cast<m_long>(count) <= static_cast<m_long>(ROM_END - a)) {
+            std::shared_lock lock(romMutex_);
             _copyToBuffer(address, ptr, count);
             return;
         }

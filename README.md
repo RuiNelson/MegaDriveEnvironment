@@ -1,5 +1,11 @@
 # MegaDriveEnvironment
 
+Applications also expose an optional single-client binary TCP automation
+service for controller input, system-bus memory, and VDP inspection. It listens
+on port 6969 by default; pass port `0` as the fourth `MegaDriveEnvironment`
+constructor argument to disable it. The wire format is documented in
+[`docs/remote-access-protocol.md`](docs/remote-access-protocol.md).
+
 <p align="center">
   <img src="docs/box.webp" alt="Mega Drive Box" width="280">
 </p>

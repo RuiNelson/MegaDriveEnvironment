@@ -2,7 +2,9 @@
 
 #include "data_types.hpp"
 
+#include <cstddef>
 #include <functional>
+#include <shared_mutex>
 #include <string>
 
 // Darwin never implemented POSIX spinlocks (pthread_spinlock_t). Use the
@@ -30,9 +32,9 @@ class MegaDriveEnvironment;
  * All multi-byte values are read/written in big-endian (Motorola) byte order,
  * matching the native format of the 68000 CPU.
  *
- * Threading: cartridge ROM is immutable after loadROM() and is read lock-free.
- * Work RAM is shared with the VDP (DMA from 68K bus), so WRAM accesses are
- * serialized by a short spin-style lock (pthread_spin_lock where available).
+ * Threading: cartridge ROM may be patched by remote automation after loadROM().
+ * A whole-image shared mutex makes each bulk dump/patch one transaction, so a
+ * reader cannot observe a half-applied patch. WRAM uses its own short spin lock.
  * Memory-mapped hardware is routed outside the lock (each subsystem
  * self-synchronizes; holding the WRAM lock across a VDP call would deadlock
  * when DMA re-enters memory).
@@ -60,6 +62,11 @@ class SystemMemory {
     /// clear error to stderr and leaves the ROM region unchanged (it is not a
     /// silent success).
     void loadROM(const std::string &path);
+
+    /// Patches the in-memory cartridge image. Unlike normal bus writes, which
+    /// preserve ROM hardware semantics, these helpers intentionally permit ROM
+    /// modification for remote testing. The backing ROM file is never changed.
+    void patchBytes(m_long address, const void *data, std::size_t count);
 
     /// Reads a single byte from the given 68K address.
     m_byte readByte(m_long address);
@@ -175,6 +182,7 @@ class SystemMemory {
 
     void *rom_  = nullptr; ///< 0x000000-0x3FFFFF (4 MiB)
     void *wram_ = nullptr; ///< 0xFF0000-0xFFFFFF (64 KiB)
+    mutable std::shared_mutex romMutex_; ///< Whole ROM image / segment transactions.
 
 #if defined(__APPLE__)
     WramLock wramLock_ = OS_UNFAIR_LOCK_INIT;

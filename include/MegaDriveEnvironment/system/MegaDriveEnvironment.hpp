@@ -5,6 +5,7 @@
 #include "Z80.hpp"
 #include "controllers/Controllers.hpp"
 #include "graphics/VDP.hpp"
+#include "remote/RemoteAccess.hpp"
 #include "data_types.hpp"
 
 #include <SDL3/SDL.h>
@@ -96,9 +97,11 @@ class MegaDriveEnvironment {
     };
 
     /// Wires the subsystems together. Does not start any threads (see boot()).
+    /// @p remoteAccessPort defaults to 6969; pass zero to disable TCP access.
     MegaDriveEnvironment(VDP::Synchronization sync,
                          VDP::Scaling scaling,
-                         VDP::SpriteLimitMode spriteLimitMode = VDP::HardwareSpriteLimit);
+                         VDP::SpriteLimitMode spriteLimitMode = VDP::HardwareSpriteLimit,
+                         std::uint16_t remoteAccessPort = 6969);
 
     virtual ~MegaDriveEnvironment();
 
@@ -190,6 +193,9 @@ class MegaDriveEnvironment {
     }
     Sound &sound() {
         return sound_;
+    }
+    RemoteAccess &remoteAccess() {
+        return remoteAccess_;
     }
     uint64_t current68KMasterCycles() const {
         return m68kMasterCycles_.load(std::memory_order_acquire);
@@ -330,6 +336,7 @@ class MegaDriveEnvironment {
     Sound        sound_;
     Controllers  controllers_;
     VDP          vdp_;
+    RemoteAccess remoteAccess_;
 
     SDL_Thread       *cpuThread_ = nullptr;
     std::atomic<bool> cpuDone_{false};

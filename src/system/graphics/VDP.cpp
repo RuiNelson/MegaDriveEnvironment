@@ -6,6 +6,7 @@
 #include "VDP.hpp"
 #include "system/MegaDriveEnvironment.hpp"
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <png.h>
@@ -94,6 +95,7 @@ void VDP::start() {
 /// Stops the render thread, keeping the SDL window/renderer alive for a later start().
 void VDP::stop() {
     running_ = false;
+    wakeSyncWaiters();
     if (thread_) {
         SDL_Event e;
         while (SDL_GetThreadState(thread_) != SDL_THREAD_COMPLETE) {
@@ -103,6 +105,108 @@ void VDP::stop() {
         SDL_WaitThread(thread_, nullptr);
         thread_ = nullptr;
     }
+}
+
+VDP::FramebufferSnapshot VDP::framebufferSnapshot() const {
+    FramebufferSnapshot result;
+    SDL_LockMutex(mutex_);
+    result.width = static_cast<std::uint16_t>(state_.activeWidth());
+    result.height = static_cast<std::uint16_t>(state_.activeOutputHeight());
+    result.pitch = static_cast<std::uint16_t>(result.width * Framebuffer::BPP);
+    result.pixels.resize(static_cast<std::size_t>(result.pitch) * result.height);
+    const auto *source = static_cast<const m_byte *>(framebuffer_.getRawPointer());
+    for (std::uint16_t y = 0; y < result.height; ++y) {
+        std::memcpy(result.pixels.data() + static_cast<std::size_t>(y) * result.pitch,
+                    source + static_cast<std::size_t>(y) * Framebuffer::PITCH,
+                    result.pitch);
+    }
+    SDL_UnlockMutex(mutex_);
+    return result;
+}
+
+VDP::StateSnapshot VDP::stateSnapshot() const {
+    StateSnapshot result;
+    SDL_LockMutex(mutex_);
+    std::copy(std::begin(state_.regs_), std::end(state_.regs_), result.regs.begin());
+    std::copy(std::begin(state_.vram_), std::end(state_.vram_), result.vram.begin());
+    std::copy(std::begin(state_.cram_), std::end(state_.cram_), result.cram.begin());
+    std::copy(std::begin(state_.vsram_), std::end(state_.vsram_), result.vsram.begin());
+    std::copy(std::begin(state_.sat_), std::end(state_.sat_), result.sat.begin());
+    result.status = state_.status_;
+    result.hCounter = state_.hCounter_;
+    result.vCounter = state_.vCounter_;
+    result.activeWidth = static_cast<std::uint16_t>(state_.activeWidth());
+    result.activeHeight = static_cast<std::uint16_t>(state_.activeHeight());
+    result.outputHeight = static_cast<std::uint16_t>(state_.activeOutputHeight());
+    result.planeWidthCells = static_cast<std::uint16_t>(state_.planeWidthCells());
+    result.planeHeightCells = static_cast<std::uint16_t>(state_.planeHeightCells());
+    result.planeABase = static_cast<std::uint16_t>(state_.planeABase());
+    result.planeBBase = static_cast<std::uint16_t>(state_.planeBBase());
+    result.windowBase = static_cast<std::uint16_t>(state_.windowBase());
+    result.windowWidthCells = static_cast<std::uint16_t>(state_.h40Mode() ? 64 : 32);
+    result.satBase = static_cast<std::uint16_t>(state_.satBase());
+    SDL_UnlockMutex(mutex_);
+    return result;
+}
+
+bool VDP::waitForVSyncCount(std::uint32_t count, std::uint32_t timeoutMs) {
+    if (count == 0)
+        return true;
+    std::unique_lock lock(syncEventMutex_);
+    const auto target = vSyncGeneration_ + count;
+    const auto wake = syncWakeGeneration_;
+    return syncEventCV_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [&] {
+        return vSyncGeneration_ >= target || syncWakeGeneration_ != wake || !running_.load(std::memory_order_acquire);
+    }) && vSyncGeneration_ >= target;
+}
+
+bool VDP::waitForHSyncCount(std::uint32_t count, std::uint32_t timeoutMs) {
+    if (count == 0)
+        return true;
+    std::unique_lock lock(syncEventMutex_);
+    const auto target = hSyncGeneration_ + count;
+    const auto wake = syncWakeGeneration_;
+    return syncEventCV_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [&] {
+        return hSyncGeneration_ >= target || syncWakeGeneration_ != wake || !running_.load(std::memory_order_acquire);
+    }) && hSyncGeneration_ >= target;
+}
+
+bool VDP::waitForHSyncLine(std::uint16_t line, std::uint32_t timeoutMs) {
+    if (line >= hSyncLineGenerations_.size())
+        return false;
+    std::unique_lock lock(syncEventMutex_);
+    const auto initial = hSyncLineGenerations_[line];
+    const auto wake = syncWakeGeneration_;
+    return syncEventCV_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [&] {
+        return hSyncLineGenerations_[line] != initial || syncWakeGeneration_ != wake ||
+               !running_.load(std::memory_order_acquire);
+    }) && hSyncLineGenerations_[line] != initial;
+}
+
+void VDP::wakeSyncWaiters() {
+    {
+        std::lock_guard lock(syncEventMutex_);
+        ++syncWakeGeneration_;
+    }
+    syncEventCV_.notify_all();
+}
+
+void VDP::signalHSync(int line) {
+    {
+        std::lock_guard lock(syncEventMutex_);
+        ++hSyncGeneration_;
+        if (line >= 0 && line < static_cast<int>(hSyncLineGenerations_.size()))
+            ++hSyncLineGenerations_[static_cast<std::size_t>(line)];
+    }
+    syncEventCV_.notify_all();
+}
+
+void VDP::signalVSync() {
+    {
+        std::lock_guard lock(syncEventMutex_);
+        ++vSyncGeneration_;
+    }
+    syncEventCV_.notify_all();
 }
 
 // ── Port I/O ─────────────────────────────────────────────────────────────────
@@ -337,6 +441,7 @@ int VDP::renderLoop() {
         // scheduled (raster effects). Mirrors VDPRenderer::renderFrame().
         SDL_LockMutex(mutex_);
         bool displayEnabled = state_.displayEnabled();
+        const int activeLines = state_.activeHeight();
         if (!displayEnabled) {
             framebuffer_.clear();
         }
@@ -356,10 +461,10 @@ int VDP::renderLoop() {
             else
                 state_.status_ &= ~0x0010;
             int hintCountdown = state_.hintReloadValue();
-            const int activeLines = state_.activeHeight();
             for (int line = 0; line < activeLines; ++line) {
                 state_.vCounter_ = static_cast<m_word>(line);
                 renderer_.renderScanline(line);
+                signalHSync(line);
                 --hintCountdown;
                 if (hintCountdown < 0) {
                     hintCountdown = state_.hintReloadValue();
@@ -369,6 +474,10 @@ int VDP::renderLoop() {
                 }
             }
             SDL_UnlockMutex(mutex_);
+        } else {
+            // Sync timing continues while display output is disabled.
+            for (int line = 0; line < activeLines; ++line)
+                signalHSync(line);
         }
 
         SDL_LockMutex(mutex_);
@@ -376,6 +485,7 @@ int VDP::renderLoop() {
         SDL_UnlockMutex(mutex_);
 
         scheduleInterrupt(Interrupt::VSync, 0);
+        signalVSync();
 
         // Keep --debug lightweight: emit diagnostics once per second without
         // doing image encoding or filesystem I/O on the render thread. Debug

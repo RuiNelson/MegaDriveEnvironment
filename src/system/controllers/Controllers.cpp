@@ -85,9 +85,20 @@ Controllers::~Controllers() {
 
 PlayersControlState Controllers::getCurrentState() const {
     SDL_LockMutex(stateMutex_);
-    PlayersControlState snapshot{state1_, state2_};
+    PlayersControlState snapshot{combinedState(state1_, remoteState1_), combinedState(state2_, remoteState2_)};
     SDL_UnlockMutex(stateMutex_);
     return snapshot;
+}
+
+void Controllers::setRemoteState(const PlayersControlState &state) {
+    SDL_LockMutex(stateMutex_);
+    remoteState1_ = state.player1;
+    remoteState2_ = state.player2;
+    SDL_UnlockMutex(stateMutex_);
+}
+
+void Controllers::clearRemoteState() {
+    setRemoteState({});
 }
 
 void Controllers::setDelegate(ControllersDelegate *delegate) {
@@ -111,7 +122,7 @@ void Controllers::writePlayer2ControlPort(m_byte value) {
 m_byte Controllers::readPlayer1DataPort() {
     SDL_LockMutex(stateMutex_);
     const bool   thHigh = (player1Slot_.dataPortOut & 0x40u) != 0;
-    const m_byte result = encodeDataPort(state1_, thHigh);
+    const m_byte result = encodeDataPort(combinedState(state1_, remoteState1_), thHigh);
     SDL_UnlockMutex(stateMutex_);
     return result;
 }
@@ -119,7 +130,7 @@ m_byte Controllers::readPlayer1DataPort() {
 m_byte Controllers::readPlayer2DataPort() {
     SDL_LockMutex(stateMutex_);
     const bool   thHigh = (player2Slot_.dataPortOut & 0x40u) != 0;
-    const m_byte result = encodeDataPort(state2_, thHigh);
+    const m_byte result = encodeDataPort(combinedState(state2_, remoteState2_), thHigh);
     SDL_UnlockMutex(stateMutex_);
     return result;
 }
@@ -490,6 +501,21 @@ void Controllers::setButton(PlayerControlsState &state, MdButton button, bool pr
             state.start = pressed;
             break;
     }
+}
+
+PlayerControlsState Controllers::combinedState(const PlayerControlsState &physical,
+                                               const PlayerControlsState &remote) {
+    return {
+        .connected = physical.connected || remote.connected,
+        .up = physical.up || remote.up,
+        .down = physical.down || remote.down,
+        .left = physical.left || remote.left,
+        .right = physical.right || remote.right,
+        .a = physical.a || remote.a,
+        .b = physical.b || remote.b,
+        .c = physical.c || remote.c,
+        .start = physical.start || remote.start,
+    };
 }
 
 // ─── MD port encoding ─────────────────────────────────────────────────────────
