@@ -6,9 +6,10 @@
 #include "TestVDP.hpp"
 #include <cmath>
 #include <cstdio>
+#include "Logger.hpp"
 
 void VDPTester::testHScrollPerScanline() {
-    printf("\n[TEST 09] per-scanline HScroll\n");
+    Logger::log("\n[TEST 09] per-scanline HScroll\n");
     initVDP();
     clearPlaneA();
     clearPlaneB();
@@ -68,5 +69,5 @@ void VDPTester::testHScrollPerScanline() {
 
     vdp().dumpFrameBufferToPNG("vdp_09_hscroll_scanline.png", true);
     vdp().dumpEverythingToPNG("vdp_09_hscroll_scanline_full.png", true);
-    printf("[VISUAL] vdp_09_hscroll_scanline.png — wavy sine-wave distortion (final frame).\n");
+    Logger::log("[VISUAL] vdp_09_hscroll_scanline.png — wavy sine-wave distortion (final frame).\n");
 }

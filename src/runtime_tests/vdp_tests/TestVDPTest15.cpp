@@ -5,9 +5,10 @@
 
 #include "TestVDP.hpp"
 #include <cstdio>
+#include "Logger.hpp"
 
 void VDPTester::testFullScene() {
-    printf("\n[TEST 15] full scene composite\n");
+    Logger::log("\n[TEST 15] full scene composite\n");
     initVDP();
     clearSAT();
     writeReg(0x0B, 0x00);
@@ -86,6 +87,6 @@ void VDPTester::testFullScene() {
     placeDuck(50, 130, 0);
 
     renderAndDump("vdp_15_scene", true);
-    printf("[VISUAL] vdp_15_scene.png      — full scene: bg + sprites + HUD.\n");
-    printf("[VISUAL] vdp_15_scene_full.png — tile sheet, plane dumps, SAT.\n");
+    Logger::log("[VISUAL] vdp_15_scene.png      — full scene: bg + sprites + HUD.\n");
+    Logger::log("[VISUAL] vdp_15_scene_full.png — tile sheet, plane dumps, SAT.\n");
 }

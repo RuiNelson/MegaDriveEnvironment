@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <png.h>
+#include "Logger.hpp"
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -225,7 +226,7 @@ void testFontPNG() {
     snprintf(filename, sizeof(filename), "%lu.png", static_cast<unsigned long>(time(nullptr)));
 
     writePng(filename, W, H, buf);
-    printf("[testFontPNG] wrote %s (%dx%d)\n", filename, W, H);
+    Logger::log("[testFontPNG] wrote %s (%dx%d)\n", filename, W, H);
 
     free(buf);
 }

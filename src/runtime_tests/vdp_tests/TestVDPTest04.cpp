@@ -5,9 +5,10 @@
 
 #include "TestVDP.hpp"
 #include <cstdio>
+#include "Logger.hpp"
 
 void VDPTester::testVRAMFill() {
-    printf("\n[TEST 04] VRAM fill DMA\n");
+    Logger::log("\n[TEST 04] VRAM fill DMA\n");
     initVDP();
     clearPlaneA();
     clearPlaneB();
@@ -49,6 +50,6 @@ void VDPTester::testVRAMFill() {
     }
 
     renderAndDump("vdp_04_vramfill", true);
-    printf("[VISUAL] vdp_04_vramfill.png     — expect yellow/red checkerboard.\n");
-    printf("[VISUAL] vdp_04_vramfill_full.png— check tile sheet for filled tiles.\n");
+    Logger::log("[VISUAL] vdp_04_vramfill.png     — expect yellow/red checkerboard.\n");
+    Logger::log("[VISUAL] vdp_04_vramfill_full.png— check tile sheet for filled tiles.\n");
 }

@@ -5,9 +5,10 @@
 
 #include "TestVDP.hpp"
 #include <cstdio>
+#include "Logger.hpp"
 
 void VDPTester::testCRAMPalette() {
-    printf("\n[TEST 03] CRAM palette\n");
+    Logger::log("\n[TEST 03] CRAM palette\n");
     initVDP();
     clearPlaneA();
     clearPlaneB();
@@ -120,5 +121,5 @@ void VDPTester::testCRAMPalette() {
     }
 
     renderAndDump("vdp_03_cram", true);
-    printf("[VISUAL] vdp_03_cram.png — expect 4 rows of 16 colour swatches.\n");
+    Logger::log("[VISUAL] vdp_03_cram.png — expect 4 rows of 16 colour swatches.\n");
 }

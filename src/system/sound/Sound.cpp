@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include "Logger.hpp"
 
 namespace {
 
@@ -151,7 +152,7 @@ void Sound::start() {
     startPsgThread();
 
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
-        std::fprintf(stderr, "Sound: could not initialize SDL audio: %s\n", SDL_GetError());
+        Logger::log("Sound: could not initialize SDL audio: %s", SDL_GetError());
         stopPsgThread();
         return;
     }
@@ -164,7 +165,7 @@ void Sound::start() {
 
     stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, audioCallback, this);
     if (!stream_) {
-        std::fprintf(stderr, "Sound: could not open SDL audio stream: %s\n", SDL_GetError());
+        Logger::log("Sound: could not open SDL audio stream: %s", SDL_GetError());
         stopPsgThread();
         return;
     }
@@ -208,7 +209,7 @@ void Sound::startPsgThread() {
     psgThread_ = SDL_CreateThread(psgThreadEntry, "md-psg", this);
     if (!psgThread_) {
         psgThreadRun_.store(false, std::memory_order_release);
-        std::fprintf(stderr, "Sound: could not create PSG thread: %s\n", SDL_GetError());
+        Logger::log("Sound: could not create PSG thread: %s", SDL_GetError());
     }
 }
 

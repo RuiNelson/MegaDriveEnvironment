@@ -5,9 +5,10 @@
 
 #include "TestVDP.hpp"
 #include <cstdio>
+#include "Logger.hpp"
 
 void VDPTester::testPlaneSize64x64() {
-    printf("\n[TEST 14] plane size 64x64\n");
+    Logger::log("\n[TEST 14] plane size 64x64\n");
     initVDP();
     clearSAT();
 
@@ -62,6 +63,6 @@ void VDPTester::testPlaneSize64x64() {
     writeReg(0x10, 0x01);
     writeReg(0x05, 0x68);
 
-    printf("[VISUAL] vdp_14a_plane64_top.png — top-half text visible.\n");
-    printf("[VISUAL] vdp_14b_plane64_bot.png — bottom-half text visible after scroll.\n");
+    Logger::log("[VISUAL] vdp_14a_plane64_top.png — top-half text visible.\n");
+    Logger::log("[VISUAL] vdp_14b_plane64_bot.png — bottom-half text visible after scroll.\n");
 }

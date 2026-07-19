@@ -5,9 +5,10 @@
 
 #include "TestVDP.hpp"
 #include <cstdio>
+#include "Logger.hpp"
 
 void VDPTester::testFontPlaneA() {
-    printf("\n[TEST 05] font on Plane A\n");
+    Logger::log("\n[TEST 05] font on Plane A\n");
     initVDP();
     clearPlaneA();
     clearPlaneB();
@@ -65,5 +66,5 @@ void VDPTester::testFontPlaneA() {
     writeText(VRAM_PLANEA, 2, 10, PLANE_W_CELLS, "abcdefghijklmnopqrstuvwxyz{|}~", 0, false);
 
     renderAndDump("vdp_05_font", true);
-    printf("[VISUAL] vdp_05_font.png — expect text lines on blue background.\n");
+    Logger::log("[VISUAL] vdp_05_font.png — expect text lines on blue background.\n");
 }

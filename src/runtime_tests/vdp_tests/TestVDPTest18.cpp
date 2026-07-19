@@ -14,6 +14,7 @@
 #include "TestVDP.hpp"
 #include <cmath>
 #include <cstdio>
+#include "Logger.hpp"
 
 // ── hSync callback ────────────────────────────────────────────────────────────
 
@@ -32,7 +33,7 @@ void VDPTester::hSync(int line) {
 // ── Test case ─────────────────────────────────────────────────────────────────
 
 void VDPTester::testRasterHSync() {
-    printf("\n[TEST 18] raster HSync — per-scanline wavy HScroll\n");
+    Logger::log("\n[TEST 18] raster HSync — per-scanline wavy HScroll\n");
     initVDP();
     clearPlaneA();
     clearPlaneB();
@@ -100,5 +101,5 @@ void VDPTester::testRasterHSync() {
     }
 
     renderAndDump("vdp_18_raster_hsync");
-    printf("[VISUAL] vdp_18_raster_hsync.png — expect text rows with wavy horizontal scroll.\n");
+    Logger::log("[VISUAL] vdp_18_raster_hsync.png — expect text rows with wavy horizontal scroll.\n");
 }

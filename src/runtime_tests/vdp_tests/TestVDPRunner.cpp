@@ -8,11 +8,12 @@
 
 #include "TestVDP.hpp"
 #include <cstdio>
+#include "Logger.hpp"
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
 void VDPTester::run() {
-    printf("=== VDP Test Suite ===\n");
+    Logger::log("=== VDP Test Suite ===\n");
 
     testRegisters();
     testBackgroundColor();
@@ -33,5 +34,5 @@ void VDPTester::run() {
     testSpriteCollision();
     testRasterHSync();
 
-    printf("\n=== VDP tests complete — check PNG output files. ===\n");
+    Logger::log("\n=== VDP tests complete — check PNG output files. ===\n");
 }

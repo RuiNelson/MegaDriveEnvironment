@@ -5,9 +5,10 @@
 
 #include "TestVDP.hpp"
 #include <cstdio>
+#include "Logger.hpp"
 
 void VDPTester::testSpriteCollision() {
-    printf("\n[TEST 17] sprite collision (two ducks)\n");
+    Logger::log("\n[TEST 17] sprite collision (two ducks)\n");
     initVDP();
     clearPlaneA();
     clearPlaneB();
@@ -88,6 +89,6 @@ void VDPTester::testSpriteCollision() {
 
     vdp().dumpFrameBufferToPNG("vdp_17_collision.png", true);
     vdp().dumpEverythingToPNG("vdp_17_collision_full.png", true);
-    printf("[VISUAL] vdp_17_collision.png      — two ducks collided; message on window plane.\n");
-    printf("[VISUAL] vdp_17_collision_full.png — tile sheet + plane dumps.\n");
+    Logger::log("[VISUAL] vdp_17_collision.png      — two ducks collided; message on window plane.\n");
+    Logger::log("[VISUAL] vdp_17_collision_full.png — tile sheet + plane dumps.\n");
 }

@@ -5,9 +5,10 @@
 
 #include "TestVDP.hpp"
 #include <cstdio>
+#include "Logger.hpp"
 
 void VDPTester::testSprites() {
-    printf("\n[TEST 11] sprites (girl + duck)\n");
+    Logger::log("\n[TEST 11] sprites (girl + duck)\n");
     initVDP();
     clearPlaneA();
     clearPlaneB();
@@ -59,5 +60,5 @@ void VDPTester::testSprites() {
     addDuck(100, 130, 0);
 
     renderAndDump("vdp_11_sprites", true);
-    printf("[VISUAL] vdp_11_sprites.png — two girls and two ducks, transparent bg.\n");
+    Logger::log("[VISUAL] vdp_11_sprites.png — two girls and two ducks, transparent bg.\n");
 }

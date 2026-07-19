@@ -1,6 +1,7 @@
 #include "Z80.hpp"
 
 #include "system/MegaDriveEnvironment.hpp"
+#include "Logger.hpp"
 
 // Keep the vendor core lean: no debug/breakpoint/call-nest machinery.
 #define Z80_DISABLE_DEBUG
@@ -159,10 +160,9 @@ void Z80::runThread() {
             const uint64_t now = SDL_GetTicksNS();
             if (now - traceLastNS >= 1'000'000'000ull) {
                 const uint64_t cycles = cycleEpochMasterCycles_ + executedCoreMasterCycles_;
-                std::fprintf(stderr,
-                             "[z80] tstates/s=%llu stallPolls/s=%llu\n",
-                             static_cast<unsigned long long>((cycles - traceCycles0) / kMasterCyclesPerZ80TState),
-                             static_cast<unsigned long long>(traceStalls));
+                Logger::log("[z80] tstates/s=%llu stallPolls/s=%llu",
+                            static_cast<unsigned long long>((cycles - traceCycles0) / kMasterCyclesPerZ80TState),
+                            static_cast<unsigned long long>(traceStalls));
                 traceCycles0 = cycles;
                 traceStalls  = 0;
                 traceLastNS  = now;

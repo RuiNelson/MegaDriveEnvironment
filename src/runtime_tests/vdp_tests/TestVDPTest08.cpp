@@ -5,9 +5,10 @@
 
 #include "TestVDP.hpp"
 #include <cstdio>
+#include "Logger.hpp"
 
 void VDPTester::testHScrollFullScreen() {
-    printf("\n[TEST 08] full-screen HScroll\n");
+    Logger::log("\n[TEST 08] full-screen HScroll\n");
     initVDP();
     clearPlaneA();
     clearPlaneB();
@@ -58,5 +59,5 @@ void VDPTester::testHScrollFullScreen() {
 
     vdp().dumpFrameBufferToPNG("vdp_08_hscroll_full.png", true);
     vdp().dumpEverythingToPNG("vdp_08_hscroll_full_full.png", true);
-    printf("[VISUAL] vdp_08_hscroll_full.png — stripes scrolling right (final frame).\n");
+    Logger::log("[VISUAL] vdp_08_hscroll_full.png — stripes scrolling right (final frame).\n");
 }

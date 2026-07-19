@@ -5,9 +5,10 @@
 
 #include "TestVDP.hpp"
 #include <cstdio>
+#include "Logger.hpp"
 
 void VDPTester::testPlaneBBackground() {
-    printf("\n[TEST 06] Plane B background\n");
+    Logger::log("\n[TEST 06] Plane B background\n");
     initVDP();
     clearPlaneA();
     clearPlaneB();
@@ -27,5 +28,5 @@ void VDPTester::testPlaneBBackground() {
     }
 
     renderAndDump("vdp_06_planeb", true);
-    printf("[VISUAL] vdp_06_planeb.png — expect the background image on screen.\n");
+    Logger::log("[VISUAL] vdp_06_planeb.png — expect the background image on screen.\n");
 }

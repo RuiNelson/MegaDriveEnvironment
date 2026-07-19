@@ -8,6 +8,7 @@
 
 #include <SDL3/SDL.h>
 #include <cstdio>
+#include "Logger.hpp"
 
 // ── VRAM / layout constants (same convention as TestControllers) ───────────────
 
@@ -364,8 +365,7 @@ bool TestSound::runZ80SelfTest() {
     z80().setBusRequest(false);
 
     bool pass = (result == 0x42);
-    std::fprintf(
-        stderr, "[TestSound] Z80 self-test: wrote $0010=$%02X (expected $42) -> %s\n", result, pass ? "PASS" : "FAIL");
+    Logger::log( "[TestSound] Z80 self-test: wrote $0010=$%02X (expected $42) -> %s\n", result, pass ? "PASS" : "FAIL");
     return pass;
 }
 

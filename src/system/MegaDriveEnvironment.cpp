@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include "Logger.hpp"
 
 namespace {
 
@@ -105,8 +106,7 @@ void MegaDriveEnvironment::boot() {
                 char            path[64];
                 std::snprintf(path, sizeof path, "screenshot_%03u.png", shot++);
                 vdp_.dumpFrameBufferToPNG(path, /*fullRange=*/true);
-                std::fprintf(stderr, "[capture] frame -> %s\n", path);
-                std::fflush(stderr);
+                Logger::log("[capture] frame -> %s", path);
             } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_S && (event.key.mod & SDL_KMOD_CTRL)) {
                 // CTRL+S: capture the full VDP debug view (frame + tile sheets +
                 // plane nametables + registers) to a numbered PNG.
@@ -114,8 +114,7 @@ void MegaDriveEnvironment::boot() {
                 char            path[64];
                 std::snprintf(path, sizeof path, "vpd_%03u.png", shot++);
                 vdp_.dumpEverythingToPNG(path, /*fullRange=*/true);
-                std::fprintf(stderr, "[capture] VDP debug view -> %s\n", path);
-                std::fflush(stderr);
+                Logger::log("[capture] VDP debug view -> %s", path);
             }
         }
         if (quitRequested_.load(std::memory_order_acquire)) {
@@ -214,43 +213,40 @@ void MegaDriveEnvironment::logFrame(unsigned frame, bool displayEnabled) {
     m_byte fa63  = memory_.readByte(0xFFFFFA63u); // fade flag
     m_byte fa05  = memory_.readByte(0xFFFFFA05u); // fade mode flags
 
-    std::fprintf(stderr,
-                 "[MDE] t=%2us frame=%u  IPL=%d  fn=$%06X  mode($FF00)=%04X cnt($FA30)=%02X gate($FB06)=%04X  "
-                 "master[$DD90]=%04X master[$DDA0]=%04X  live[$F410]=%04X  fade($FA61)=%02X f63=%02X f05=%02X\n",
-                 frame / 60,
-                 frame,
-                 cpuInterruptMask(),
-                 traceFn_.load(std::memory_order_relaxed),
-                 mode,
-                 fa30,
-                 fb06,
-                 mst08,
-                 mst18,
-                 liv08,
-                 fa61,
-                 fa63,
-                 fa05);
+    Logger::log("[MDE] t=%2us frame=%u  IPL=%d  fn=$%06X  mode($FF00)=%04X cnt($FA30)=%02X gate($FB06)=%04X  "
+                "master[$DD90]=%04X master[$DDA0]=%04X  live[$F410]=%04X  fade($FA61)=%02X f63=%02X f05=%02X",
+                frame / 60,
+                frame,
+                cpuInterruptMask(),
+                traceFn_.load(std::memory_order_relaxed),
+                mode,
+                fa30,
+                fb06,
+                mst08,
+                mst18,
+                liv08,
+                fa61,
+                fa63,
+                fa05);
 
     const Sound::Diagnostics snd = sound_.diagnostics();
-    std::fprintf(stderr,
-                 "[snd] frames=%llu queued=%llu late=%llu drop=%llu(cont=%llu full=%llu unavailable=%llu) "
-                 "under=%llu over=%llu "
-                 "clip=%llu timers=%llu peakL=%d "
-                 "peakR=%d\n",
-                 static_cast<unsigned long long>(snd.audioFramesRendered),
-                 static_cast<unsigned long long>(snd.queuedEvents),
-                 static_cast<unsigned long long>(snd.lateEvents),
-                 static_cast<unsigned long long>(snd.droppedEvents),
-                 static_cast<unsigned long long>(snd.contentionDrops),
-                 static_cast<unsigned long long>(snd.queueFullDrops),
-                 static_cast<unsigned long long>(snd.unavailableDrops),
-                 static_cast<unsigned long long>(snd.underruns),
-                 static_cast<unsigned long long>(snd.overruns),
-                 static_cast<unsigned long long>(snd.clippedSamples),
-                 static_cast<unsigned long long>(snd.ymTimerExpirations),
-                 snd.peakLeft,
-                 snd.peakRight);
-    std::fflush(stderr);
+    Logger::log("[snd] frames=%llu queued=%llu late=%llu drop=%llu(cont=%llu full=%llu unavailable=%llu) "
+                "under=%llu over=%llu "
+                "clip=%llu timers=%llu peakL=%d "
+                "peakR=%d",
+                static_cast<unsigned long long>(snd.audioFramesRendered),
+                static_cast<unsigned long long>(snd.queuedEvents),
+                static_cast<unsigned long long>(snd.lateEvents),
+                static_cast<unsigned long long>(snd.droppedEvents),
+                static_cast<unsigned long long>(snd.contentionDrops),
+                static_cast<unsigned long long>(snd.queueFullDrops),
+                static_cast<unsigned long long>(snd.unavailableDrops),
+                static_cast<unsigned long long>(snd.underruns),
+                static_cast<unsigned long long>(snd.overruns),
+                static_cast<unsigned long long>(snd.clippedSamples),
+                static_cast<unsigned long long>(snd.ymTimerExpirations),
+                snd.peakLeft,
+                snd.peakRight);
 }
 
 void MegaDriveEnvironment::confirmSpeculative(m_long addr) {

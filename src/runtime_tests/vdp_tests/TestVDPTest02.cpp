@@ -5,9 +5,10 @@
 
 #include "TestVDP.hpp"
 #include <cstdio>
+#include "Logger.hpp"
 
 void VDPTester::testBackgroundColor() {
-    printf("\n[TEST 02] background color\n");
+    Logger::log("\n[TEST 02] background color\n");
     initVDP();
     clearPlaneA();
     clearPlaneB();
@@ -19,5 +20,5 @@ void VDPTester::testBackgroundColor() {
     writeReg(0x07, (0 << 4) | 1); // bg = palette 0, entry 1
 
     renderAndDump("vdp_02_bgcolor", true);
-    printf("[VISUAL] vdp_02_bgcolor.png — expect solid red screen.\n");
+    Logger::log("[VISUAL] vdp_02_bgcolor.png — expect solid red screen.\n");
 }

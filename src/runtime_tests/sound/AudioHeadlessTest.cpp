@@ -13,6 +13,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include "Logger.hpp"
 
 namespace {
 
@@ -96,11 +97,11 @@ void render(Sound &sound, std::vector<int16_t> &samples, int frames) {
 }
 
 void reportCheck(const char *name, bool pass) {
-    std::fprintf(stderr, "[AudioHeadless] %-32s %s\n", name, pass ? "PASS" : "FAIL");
+    Logger::log( "[AudioHeadless] %-32s %s\n", name, pass ? "PASS" : "FAIL");
 }
 
 void reportEnergy(const char *name, StereoEnergy energy) {
-    std::fprintf(stderr,
+    Logger::log(
                  "[AudioHeadless]   %-30s L=%llu R=%llu\n",
                  name,
                  static_cast<unsigned long long>(energy.left),
@@ -319,7 +320,7 @@ bool writeDiagnosticWav(const std::string &path) {
     std::vector<int16_t> samples;
     render(sound, samples, Sound::kSampleRate * 2);
     const bool pass = writeWav(path, samples);
-    std::fprintf(stderr, "[AudioHeadless] WAV %s: %s\n", pass ? "written" : "failed", path.c_str());
+    Logger::log( "[AudioHeadless] WAV %s: %s\n", pass ? "written" : "failed", path.c_str());
     return pass;
 }
 

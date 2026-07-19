@@ -6,9 +6,10 @@
 #include "TestVDP.hpp"
 #include <cmath>
 #include <cstdio>
+#include "Logger.hpp"
 
 void VDPTester::testAnimated() {
-    printf("\n[TEST 16] animated scene (480 frames)\n");
+    Logger::log("\n[TEST 16] animated scene (480 frames)\n");
 
     initVDP();
     clearPlaneA();
@@ -211,6 +212,6 @@ void VDPTester::testAnimated() {
     vdp().dumpFrameBufferToPNG("vdp_16_animated.png", true);
     vdp().dumpEverythingToPNG("vdp_16_animated_full.png", true);
 
-    printf("[VISUAL] vdp_16_animated.png — duck cycles through rainbow colours.\n");
-    printf("[VISUAL] vdp_16_animated_full.png  — tile sheet + plane debug view.\n");
+    Logger::log("[VISUAL] vdp_16_animated.png — duck cycles through rainbow colours.\n");
+    Logger::log("[VISUAL] vdp_16_animated_full.png  — tile sheet + plane debug view.\n");
 }

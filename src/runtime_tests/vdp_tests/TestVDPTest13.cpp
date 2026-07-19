@@ -5,9 +5,10 @@
 
 #include "TestVDP.hpp"
 #include <cstdio>
+#include "Logger.hpp"
 
 void VDPTester::testWindowHUD() {
-    printf("\n[TEST 13] Window plane HUD\n");
+    Logger::log("\n[TEST 13] Window plane HUD\n");
     initVDP();
     clearPlaneA();
     clearPlaneB();
@@ -99,5 +100,5 @@ void VDPTester::testWindowHUD() {
     writeText(VRAM_WINDOW, 1, 27, PLANE_W_CELLS, "WINDOW PLANE  (NON-SCROLLING HUD)", 1, true);
 
     renderAndDump("vdp_13_window", true);
-    printf("[VISUAL] vdp_13_window.png — stripes scroll, HUD rows stay fixed.\n");
+    Logger::log("[VISUAL] vdp_13_window.png — stripes scroll, HUD rows stay fixed.\n");
 }

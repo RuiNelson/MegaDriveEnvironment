@@ -5,9 +5,10 @@
 
 #include "TestVDP.hpp"
 #include <cstdio>
+#include "Logger.hpp"
 
 void VDPTester::testSpriteMasking() {
-    printf("\n[TEST 12] sprite masking\n");
+    Logger::log("\n[TEST 12] sprite masking\n");
     initVDP();
     clearPlaneA();
     clearPlaneB();
@@ -57,5 +58,5 @@ void VDPTester::testSpriteMasking() {
     setSpriteEntry(3, 250, 160, 4, 4, TILE_DUCK_BASE, 1, 0, true, false, false);
 
     renderAndDump("vdp_12_sprmask", true);
-    printf("[VISUAL] vdp_12_sprmask.png — duck0 visible, duck2 masked, duck3 visible.\n");
+    Logger::log("[VISUAL] vdp_12_sprmask.png — duck0 visible, duck2 masked, duck3 visible.\n");
 }

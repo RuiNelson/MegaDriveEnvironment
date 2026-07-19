@@ -5,9 +5,10 @@
 
 #include "TestVDP.hpp"
 #include <cstdio>
+#include "Logger.hpp"
 
 void VDPTester::testTwoPlanes() {
-    printf("\n[TEST 07] two-plane layering\n");
+    Logger::log("\n[TEST 07] two-plane layering\n");
     initVDP();
     clearPlaneA();
     clearSAT();
@@ -49,5 +50,5 @@ void VDPTester::testTwoPlanes() {
     writeText(VRAM_PLANEA, 2, 26, PLANE_W_CELLS, "PLANE A OVER PLANE B", 1, true);
 
     renderAndDump("vdp_07_twoplanes", true);
-    printf("[VISUAL] vdp_07_twoplanes.png — text in front of background image.\n");
+    Logger::log("[VISUAL] vdp_07_twoplanes.png — text in front of background image.\n");
 }
