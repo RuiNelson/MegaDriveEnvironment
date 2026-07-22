@@ -28,6 +28,7 @@ with MegaDriveClient("127.0.0.1", 6969) as mega_drive:
     mega_drive.ping()
     mega_drive.restart_game()
     print(mega_drive.get_game_uptime_ms())
+    print(mega_drive.get_execution_data())
 
     # A+B+Right on player 1, Start on player 2, for exactly three frames.
     mega_drive.press_buttons(
@@ -62,6 +63,7 @@ with MegaDriveClient("127.0.0.1", 6969) as mega_drive:
 - `ping()`;
 - `restart_game()`;
 - `get_game_uptime_ms()`;
+- `get_execution_data()` and `set_execution_data()`;
 - `press_buttons()` and `release_buttons()`;
 - `read_memory()`, `write_memory()`, `read_value()`, and `write_value()`;
 - `wait_memory_changed()` and `wait_memory_equals()`;

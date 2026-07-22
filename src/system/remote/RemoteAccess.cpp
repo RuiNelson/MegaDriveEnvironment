@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <span>
 #include <string>
 #include <thread>
@@ -37,7 +38,8 @@ constexpr std::uint8_t kETX = 0x03;
 constexpr std::uint8_t kACK = 0x06;
 constexpr std::uint8_t kNAK = 0x15;
 constexpr std::uint8_t kProtocolVersion = 1;
-constexpr std::uint32_t kMaximumPayload = 16u * 1024u * 1024u;
+constexpr std::uint32_t kMaximumPayload =
+    static_cast<std::uint32_t>(RemoteAccess::MAX_EXECUTION_DATA_SIZE);
 constexpr std::uint32_t kBusSize = 0x01000000u;
 constexpr std::uint32_t kRomEnd = 0x00400000u;
 
@@ -45,6 +47,8 @@ enum class Command : std::uint8_t {
     Ping = 0x00,
     RestartGame = 0x01,
     GetGameUptime = 0x02,
+    GetExecutionData = 0x03,
+    SetExecutionData = 0x04,
     PressButtons = 0x10,
     ReleaseButtons = 0x11,
     ReadMemory = 0x20,
@@ -238,6 +242,19 @@ class RemoteAccess::Impl {
         return port_;
     }
 
+    std::vector<std::uint8_t> executionData() const {
+        std::lock_guard lock(executionDataMutex_);
+        return executionData_;
+    }
+
+    bool setExecutionData(std::span<const std::uint8_t> data) {
+        if (data.size() > RemoteAccess::MAX_EXECUTION_DATA_SIZE)
+            return false;
+        std::lock_guard lock(executionDataMutex_);
+        executionData_.assign(data.begin(), data.end());
+        return true;
+    }
+
     private:
     void serverLoop() {
 #if defined(_WIN32)
@@ -372,6 +389,14 @@ class RemoteAccess::Impl {
                 appendU64(result.payload, environment_->gameUptimeMilliseconds());
                 return result;
             }
+            case Command::GetExecutionData:
+                return payload.empty()
+                    ? Result{.payload = executionData()}
+                    : Result::failure(Error::MalformedPayload, "GET_EXECUTION_DATA has no payload");
+            case Command::SetExecutionData:
+                return setExecutionData(payload)
+                    ? Result{}
+                    : Result::failure(Error::TooLarge, "execution data exceeds the protocol payload limit");
             case Command::PressButtons:
                 return pressButtons(payload);
             case Command::ReleaseButtons:
@@ -729,6 +754,8 @@ class RemoteAccess::Impl {
     std::thread worker_;
     std::atomic<SocketHandle> listenSocket_{kInvalidSocket};
     std::atomic<SocketHandle> clientSocket_{kInvalidSocket};
+    mutable std::mutex executionDataMutex_;
+    std::vector<std::uint8_t> executionData_;
 #if defined(_WIN32)
     bool winsockReady_ = false;
 #endif
@@ -743,3 +770,5 @@ RemoteAccess::~RemoteAccess() = default;
 void RemoteAccess::start() { impl_->start(); }
 void RemoteAccess::stop() { impl_->stop(); }
 std::uint16_t RemoteAccess::port() const { return impl_->port(); }
+std::vector<std::uint8_t> RemoteAccess::executionData() const { return impl_->executionData(); }
+bool RemoteAccess::setExecutionData(std::span<const std::uint8_t> data) { return impl_->setExecutionData(data); }

@@ -150,6 +150,27 @@ class MegaDriveClientTests(unittest.TestCase):
                 )
             self.assertEqual(caught.exception.message, "memory wait timed out")
 
+    def test_execution_data_get_set_and_clear(self) -> None:
+        initial = b'{"state":"title"}\x00'
+        replacement = b"\x00\xffbinary\x10"
+
+        def get_initial(command: int, payload: bytes) -> tuple[int, bytes]:
+            self.assertEqual((command, payload), (0x03, b""))
+            return ACK, initial
+
+        def set_replacement(command: int, payload: bytes) -> tuple[int, bytes]:
+            self.assertEqual((command, payload), (0x04, replacement))
+            return ACK, b""
+
+        def clear(command: int, payload: bytes) -> tuple[int, bytes]:
+            self.assertEqual((command, payload), (0x04, b""))
+            return ACK, b""
+
+        with ClientHarness(get_initial, set_replacement, clear) as client:
+            self.assertEqual(client.get_execution_data(), initial)
+            client.set_execution_data(bytearray(replacement))
+            client.set_execution_data(b"")
+
     def test_vram_controller_release_and_sync_payloads(self) -> None:
         expected = (
             (0x32, pack(">HI", 0x1200, 3), b"abc"),

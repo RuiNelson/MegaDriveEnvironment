@@ -46,6 +46,8 @@ are 32-bit fields but must fit the Mega Drive's 24-bit address space.
 | `00` | `PING` | empty | empty |
 | `01` | `RESTART_GAME` | timeout-ms:u32 | empty after the new game execution starts |
 | `02` | `GET_GAME_UPTIME` | empty | milliseconds since the last start or cold reset:u64 |
+| `03` | `GET_EXECUTION_DATA` | empty | copy of the current execution-data buffer |
+| `04` | `SET_EXECUTION_DATA` | replacement buffer | empty |
 | `10` | `PRESS_BUTTONS` | P1 mask:u8, P2 mask:u8, frames:u32, timeout-ms:u32 | empty after buttons are released |
 | `11` | `RELEASE_BUTTONS` | empty | empty |
 | `20` | `READ_MEMORY` | address:u32, length:u32 | raw bytes |
@@ -88,6 +90,15 @@ thread has started. The cartridge `run()` entry point is invoked again;
 `GET_GAME_UPTIME` uses the host monotonic clock. Its unsigned 64-bit response
 is the number of whole milliseconds elapsed since the current game run was
 powered on, including after a `RESTART_GAME` or `Ctrl+R` cold reset.
+
+The execution-data buffer is an opaque, game-defined debugging channel. It can
+contain arbitrary bytes such as text, JSON, or a custom binary format.
+`GET_EXECUTION_DATA` returns a consistent copy. `SET_EXECUTION_DATA` atomically
+replaces the complete buffer; an empty payload clears it. The game can access
+the same buffer through `RemoteAccess::executionData()` and
+`RemoteAccess::setExecutionData()`. It persists across cold resets, server
+restarts, and client reconnects until explicitly replaced. Its maximum size is
+the protocol payload limit of 16 MiB.
 
 HSync waits observe every active display line and do not depend on the game's
 HBlank interrupt-enable bit. `WAIT_HSYNC_REACH_LINE` waits for the next

@@ -230,6 +230,16 @@ class MegaDriveClient:
             raise ProtocolError("game uptime response must contain one u64")
         return unpack(">Q", response)[0]
 
+    def get_execution_data(self) -> bytes:
+        """Return a copy of the game-defined debugging buffer."""
+
+        return self._request(Command.GET_EXECUTION_DATA)
+
+    def set_execution_data(self, data: bytes | bytearray | memoryview) -> None:
+        """Replace the game-defined debugging buffer; empty data clears it."""
+
+        self._request(Command.SET_EXECUTION_DATA, bytes(data))
+
     def press_buttons(
         self,
         *,
