@@ -38,6 +38,14 @@ std::uint16_t reservePort() {
     return port;
 }
 
+std::uint64_t readU64(const std::vector<std::uint8_t> &bytes) {
+    assert(bytes.size() == 8);
+    std::uint64_t value = 0;
+    for (const auto byte : bytes)
+        value = (value << 8) | byte;
+    return value;
+}
+
 void appendU32(std::vector<std::uint8_t> &bytes, std::uint32_t value) {
     bytes.push_back(static_cast<std::uint8_t>(value >> 24));
     bytes.push_back(static_cast<std::uint8_t>(value >> 16));
@@ -117,15 +125,19 @@ int main() {
 
     assert(request(socketFd, 0x00, 1, {}).empty());
 
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    const auto uptimeMs = readU64(request(socketFd, 0x02, 2, {}));
+    assert(uptimeMs >= 5 && uptimeMs < 10'000);
+
     std::vector<std::uint8_t> writePayload;
     appendU32(writePayload, 0x000100);
     writePayload.insert(writePayload.end(), {0x12, 0x34, 0x56, 0x78});
-    assert(request(socketFd, 0x21, 2, writePayload).empty());
+    assert(request(socketFd, 0x21, 3, writePayload).empty());
 
     std::vector<std::uint8_t> readPayload;
     appendU32(readPayload, 0x000100);
     appendU32(readPayload, 4);
-    assert(request(socketFd, 0x20, 3, readPayload) == std::vector<std::uint8_t>({0x12, 0x34, 0x56, 0x78}));
+    assert(request(socketFd, 0x20, 4, readPayload) == std::vector<std::uint8_t>({0x12, 0x34, 0x56, 0x78}));
 
     std::vector<std::uint8_t> waitEqualsPayload;
     appendU32(waitEqualsPayload, 0x000100);
@@ -133,21 +145,21 @@ int main() {
     appendU32(waitEqualsPayload, 0x12345678);
     appendU32(waitEqualsPayload, 0xFFFFFFFF);
     appendU32(waitEqualsPayload, 100);
-    assert(request(socketFd, 0x23, 4, waitEqualsPayload) ==
+    assert(request(socketFd, 0x23, 5, waitEqualsPayload) ==
            std::vector<std::uint8_t>({0x12, 0x34, 0x56, 0x78}));
 
-    const auto framebuffer = request(socketFd, 0x30, 5, {});
+    const auto framebuffer = request(socketFd, 0x30, 6, {});
     assert(framebuffer.size() == 8u + 256u * 224u * 3u);
     assert(framebuffer[6] == 1); // packed native BGR
 
-    assert(request(socketFd, 0x31, 6, {}).size() == 66'436);
+    assert(request(socketFd, 0x31, 7, {}).size() == 66'436);
 
     std::vector<std::uint8_t> vramPayload{0x00, 0x00};
     appendU32(vramPayload, 4);
-    assert(request(socketFd, 0x32, 7, vramPayload) == std::vector<std::uint8_t>(4, 0));
-    assert(request(socketFd, 0x33, 8, {}).size() == 4u + 64u * 5u);
-    assert(request(socketFd, 0x34, 9, {}).size() == 4u + 80u * 24u);
-    assert(request(socketFd, 0x35, 10, {0}).size() == 12u + 32u * 32u * 8u);
+    assert(request(socketFd, 0x32, 8, vramPayload) == std::vector<std::uint8_t>(4, 0));
+    assert(request(socketFd, 0x33, 9, {}).size() == 4u + 64u * 5u);
+    assert(request(socketFd, 0x34, 10, {}).size() == 4u + 80u * 24u);
+    assert(request(socketFd, 0x35, 11, {0}).size() == 12u + 32u * 32u * 8u);
 
     close(socketFd);
     environment.remoteAccess().stop();

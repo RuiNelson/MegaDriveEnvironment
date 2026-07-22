@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
@@ -119,6 +120,11 @@ class MegaDriveEnvironment {
     /// remain alive. Returns false if no game is running or the timeout expires.
     /// Do not call this from the SDL main thread or the emulated CPU thread.
     bool restart(std::uint32_t timeoutMs = 5000);
+
+    /// Milliseconds elapsed since the current game run was powered on or last
+    /// cold-reset. Uses the host steady clock and therefore cannot move
+    /// backwards when the wall clock changes.
+    std::uint64_t gameUptimeMilliseconds() const;
 
     /// Low-level interrupt dispatch hook used by recompilation/bring-up paths.
     /// New games should override vSync()/hSync() and should not call this from
@@ -376,11 +382,12 @@ class MegaDriveEnvironment {
     std::atomic<bool> restartRequested_{false};
     std::atomic<bool> bootRunning_{false};
 
-    std::mutex              restartMutex_;
+    mutable std::mutex      restartMutex_;
     std::condition_variable restartCondition_;
     std::uint64_t           restartRequestedGeneration_ = 0;
     std::uint64_t           restartStartedGeneration_   = 0;
     std::uint64_t           restartingGeneration_       = 0;
+    std::chrono::steady_clock::time_point gameStartedAt_{std::chrono::steady_clock::now()};
 
     /// Bit L set ⇒ an autovector interrupt of level L is pending. Set by the
     /// VDP render thread (raiseInterrupt), consumed on the run() thread.

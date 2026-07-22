@@ -44,6 +44,7 @@ constexpr std::uint32_t kRomEnd = 0x00400000u;
 enum class Command : std::uint8_t {
     Ping = 0x00,
     RestartGame = 0x01,
+    GetGameUptime = 0x02,
     PressButtons = 0x10,
     ReleaseButtons = 0x11,
     ReadMemory = 0x20,
@@ -163,6 +164,11 @@ void appendU32(std::vector<std::uint8_t> &out, std::uint32_t value) {
     out.push_back(static_cast<std::uint8_t>(value >> 16));
     out.push_back(static_cast<std::uint8_t>(value >> 8));
     out.push_back(static_cast<std::uint8_t>(value));
+}
+
+void appendU64(std::vector<std::uint8_t> &out, std::uint64_t value) {
+    appendU32(out, static_cast<std::uint32_t>(value >> 32));
+    appendU32(out, static_cast<std::uint32_t>(value));
 }
 
 void appendI16(std::vector<std::uint8_t> &out, std::int16_t value) {
@@ -359,6 +365,13 @@ class RemoteAccess::Impl {
                 return payload.empty() ? Result{} : Result::failure(Error::MalformedPayload, "PING has no payload");
             case Command::RestartGame:
                 return restartGame(payload);
+            case Command::GetGameUptime: {
+                if (!payload.empty())
+                    return Result::failure(Error::MalformedPayload, "GET_GAME_UPTIME has no payload");
+                Result result;
+                appendU64(result.payload, environment_->gameUptimeMilliseconds());
+                return result;
+            }
             case Command::PressButtons:
                 return pressButtons(payload);
             case Command::ReleaseButtons:

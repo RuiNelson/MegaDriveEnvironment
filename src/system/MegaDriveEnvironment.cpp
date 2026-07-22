@@ -220,6 +220,17 @@ bool MegaDriveEnvironment::restart(std::uint32_t timeoutMs) {
     }) && restartStartedGeneration_ >= generation;
 }
 
+std::uint64_t MegaDriveEnvironment::gameUptimeMilliseconds() const {
+    std::chrono::steady_clock::time_point startedAt;
+    {
+        std::lock_guard lock(restartMutex_);
+        startedAt = gameStartedAt_;
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - startedAt);
+    return elapsed.count() > 0 ? static_cast<std::uint64_t>(elapsed.count()) : 0;
+}
+
 void MegaDriveEnvironment::reportCPUStarted() {
     std::lock_guard lock(restartMutex_);
     if (restartingGeneration_ != 0) {
@@ -430,6 +441,10 @@ void MegaDriveEnvironment::runVDPInterrupts() {
 }
 
 void MegaDriveEnvironment::powerOn(bool isRestart) {
+    {
+        std::lock_guard lock(restartMutex_);
+        gameStartedAt_ = std::chrono::steady_clock::now();
+    }
     if (isRestart)
         onReset();
     memory_.resetWorkRAM();

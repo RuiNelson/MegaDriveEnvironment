@@ -222,6 +222,14 @@ class MegaDriveClient:
             operation_timeout_ms=timeout_ms,
         )
 
+    def get_game_uptime_ms(self) -> int:
+        """Return milliseconds elapsed since the game last started or reset."""
+
+        response = self._request(Command.GET_GAME_UPTIME)
+        if len(response) != 8:
+            raise ProtocolError("game uptime response must contain one u64")
+        return unpack(">Q", response)[0]
+
     def press_buttons(
         self,
         *,

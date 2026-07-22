@@ -564,6 +564,7 @@ from megadrive_remote import Buttons, MegaDriveClient
 
 with MegaDriveClient() as mega_drive:
     mega_drive.press_buttons(player1=Buttons.A | Buttons.START, frames=2)
+    print(mega_drive.get_game_uptime_ms())
     frame = mega_drive.read_framebuffer()
 ```
 

@@ -150,7 +150,11 @@ int main() {
 
     std::vector<std::uint8_t> timeout;
     appendU32(timeout, 3'000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto uptimeBeforeRestart = environment.gameUptimeMilliseconds();
     request(socketFd, 0x01, 3, timeout);
+    const auto uptimeAfterRestart = environment.gameUptimeMilliseconds();
+    assert(uptimeAfterRestart < uptimeBeforeRestart);
     request(socketFd, 0x00, 4);
 
     while (environment.runCount.load() < 2)
