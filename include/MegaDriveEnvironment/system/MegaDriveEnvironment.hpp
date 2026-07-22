@@ -145,16 +145,6 @@ class MegaDriveEnvironment {
         return debugLog_.load(std::memory_order_relaxed);
     }
 
-    /// Skip per-instruction pacing entirely (validation / bring-up). The VDP
-    /// still runs on its own thread; use when hunting logic bugs, not for
-    /// timing-accurate play.
-    void setFastMode(bool on) {
-        fastMode_.store(on, std::memory_order_relaxed);
-    }
-    bool fastMode() const {
-        return fastMode_.load(std::memory_order_relaxed);
-    }
-
     /// Console region pins exposed through the hardware version register
     /// ($A10001): bit 7 is language (0=JP, 1=overseas), bit 6 is video
     /// frequency (0=60 Hz, 1=50 Hz). Defaults are both pins low: JP + 60 Hz.
@@ -389,7 +379,6 @@ class MegaDriveEnvironment {
     m_long                       traceHistory_[16]{};
     unsigned                     traceHistoryPos_{0};
     std::atomic<bool>            debugLog_{false};
-    std::atomic<bool>            fastMode_{false};
     std::atomic<LanguagePin>     languagePin_{LanguagePin::Japanese};
     std::atomic<VideoStandard>   videoStandard_{VideoStandard::Hz60};
     std::string                  auxAddrFile_;          ///< append unknown dispatch targets here (if set)

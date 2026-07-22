@@ -101,7 +101,6 @@ classDiagram
         +setLanguagePin(pin)
         +setVideoStandard(standard)
         +setDebugLog(on)
-        +setFastMode(on)
         +memory()
         +vdp()
         +controllers()
@@ -610,11 +609,7 @@ Additional runtime controls:
 
 ```cpp
 game.setDebugLog(true); // once-per-second runtime/audio diagnostics
-game.setFastMode(true); // skip CPU-side pacing for bring-up and validation
 ```
-
-Fast mode is intentionally not timing-accurate. Use it to find logic bugs, not
-to judge play speed, raster effects or audio behaviour.
 
 ## Portability to real hardware
 
