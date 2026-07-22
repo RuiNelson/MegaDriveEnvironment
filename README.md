@@ -107,6 +107,7 @@ classDiagram
         +controllers()
         +z80()
         +sound()
+        +remoteAccess()
     }
 
     class SystemMemory {
@@ -160,11 +161,18 @@ classDiagram
         +diagnostics()
     }
 
+    class RemoteAccess {
+        <<host-only>>
+        +executionData()
+        +setExecutionData(data)
+    }
+
     MegaDriveEnvironment "1" *-- "1" SystemMemory : memory()
     MegaDriveEnvironment "1" *-- "1" VDP : vdp()
     MegaDriveEnvironment "1" *-- "1" Controllers : controllers()
     MegaDriveEnvironment "1" *-- "1" Z80 : z80()
     MegaDriveEnvironment "1" *-- "1" Sound : sound()
+    MegaDriveEnvironment "1" *-- "1" RemoteAccess : remoteAccess()
 
     SystemMemory ..> VDP : mapped VDP ports
     SystemMemory ..> Controllers : mapped joypad ports
@@ -188,6 +196,35 @@ vdp();         // VDP
 controllers(); // Controllers
 z80();         // Z80
 sound();       // Sound
+remoteAccess(); // RemoteAccess (host-only debugging and automation)
+```
+
+`RemoteAccess` owns an opaque execution-data buffer which game code can fill
+with arbitrary debugging bytes (for example text, JSON, or a custom binary
+record). Remote clients can retrieve a consistent copy or replace the complete
+buffer. This is strictly a host-side debugging facility: it is **not** Mega
+Drive hardware, is not mapped into the 68000 or Z80 address spaces, and does
+not exist in a real-hardware build.
+
+Any game code shared with a console target must therefore keep calls to this
+API behind an application-defined compile-time guard. Define the macro only
+for the native `MegaDriveEnvironment` target:
+
+```cpp
+#ifdef ENABLE_MDE_HOST_DEBUG
+std::vector<std::uint8_t> debugData = buildDebugRecord();
+remoteAccess().setExecutionData(debugData);
+#endif
+```
+
+Leaving `ENABLE_MDE_HOST_DEBUG` undefined for ROM/real-hardware builds prevents
+the host-only API from leaking into portable game logic. Reading the buffer
+from game code follows the same rule and returns a snapshot:
+
+```cpp
+#ifdef ENABLE_MDE_HOST_DEBUG
+const auto debugData = remoteAccess().executionData();
+#endif
 ```
 
 The important threading rules are:
