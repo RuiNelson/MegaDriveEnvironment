@@ -207,22 +207,22 @@ Drive hardware, is not mapped into the 68000 or Z80 address spaces, and does
 not exist in a real-hardware build.
 
 Any game code shared with a console target must therefore keep calls to this
-API behind an application-defined compile-time guard. Define the macro only
-for the native `MegaDriveEnvironment` target:
+API behind the PC-target compile-time guard used by
+`MegaDriveEnvironmentSampleGame`:
 
 ```cpp
-#ifdef ENABLE_MDE_HOST_DEBUG
+#ifdef PC
 std::vector<std::uint8_t> debugData = buildDebugRecord();
 remoteAccess().setExecutionData(debugData);
 #endif
 ```
 
-Leaving `ENABLE_MDE_HOST_DEBUG` undefined for ROM/real-hardware builds prevents
-the host-only API from leaking into portable game logic. Reading the buffer
-from game code follows the same rule and returns a snapshot:
+`PC` is defined by the native target and remains undefined for the Mega Drive
+target, preventing the host-only API from leaking into portable game logic.
+Reading the buffer from game code follows the same rule and returns a snapshot:
 
 ```cpp
-#ifdef ENABLE_MDE_HOST_DEBUG
+#ifdef PC
 const auto debugData = remoteAccess().executionData();
 #endif
 ```
