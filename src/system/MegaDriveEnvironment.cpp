@@ -453,7 +453,6 @@ void MegaDriveEnvironment::powerOn(bool isRestart) {
     z80_.reset();
     m68kMasterCycles_.store(0, std::memory_order_release);
     pendingIRQMask_.store(0, std::memory_order_release);
-    paceCounter_ = 0;
     traceFn_.store(0, std::memory_order_release);
     traceHistoryPos_ = 0;
     std::fill(std::begin(traceHistory_), std::end(traceHistory_), 0);

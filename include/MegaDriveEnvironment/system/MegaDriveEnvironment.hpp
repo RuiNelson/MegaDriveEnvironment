@@ -17,7 +17,6 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -271,18 +270,10 @@ class MegaDriveEnvironment {
     virtual void onReset() {
     }
 
-    /// Per-instruction pacing. Native code would otherwise outrun the VDP render
-    /// thread and spin on SDL mutexes. Yield every 64 instructions so other
-    /// threads make progress without paying sleep_for() syscall overhead on every
-    /// opcode (which is ~100× slower than 68000 timing and made boot/decompression
-    /// look frozen). Disabled entirely when fastMode() is set (--fast).
+    /// Per-instruction bookkeeping for cooperative restart and VDP timing.
     void pace() {
         throwIfRestartRequested();
         m68kMasterCycles_.fetch_add(64, std::memory_order_release);
-        if (fastMode_.load(std::memory_order_relaxed))
-            return;
-        if ((++paceCounter_ & 0x3Fu) == 0)
-            std::this_thread::yield();
     }
 
     /// Records the entry address of the function currently executing. Cheap
@@ -401,7 +392,6 @@ class MegaDriveEnvironment {
     std::atomic<bool>            fastMode_{false};
     std::atomic<LanguagePin>     languagePin_{LanguagePin::Japanese};
     std::atomic<VideoStandard>   videoStandard_{VideoStandard::Hz60};
-    std::uint32_t                paceCounter_{0};       ///< CPU thread only
     std::string                  auxAddrFile_;          ///< append unknown dispatch targets here (if set)
     std::string                  loadedROMPath_;        ///< prevents a restarted run() from replacing patched ROM
     bool                         romLoaded_ = false;
