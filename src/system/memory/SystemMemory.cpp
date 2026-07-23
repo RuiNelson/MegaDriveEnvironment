@@ -37,16 +37,16 @@
 SystemMemory::SystemMemory(MegaDriveEnvironment *env) : env_(env) {
     rom_  = malloc(ROM_SIZE);
     wram_ = malloc(WORK_RAM_SIZE);
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && !defined(_WIN32)
     // Process-private POSIX spinlock (Linux/BSD). Darwin has no pthread_spinlock_t;
-    // there we use os_unfair_lock (initialized in-class via OS_UNFAIR_LOCK_INIT).
+    // Apple and Windows locks are initialized in-class.
     pthread_spin_init(&wramLock_, PTHREAD_PROCESS_PRIVATE);
 #endif
     initRAM();
 }
 
 SystemMemory::~SystemMemory() {
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && !defined(_WIN32)
     pthread_spin_destroy(&wramLock_);
 #endif
     free(rom_);

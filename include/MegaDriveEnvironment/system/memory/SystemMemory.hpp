@@ -2,17 +2,18 @@
 
 #include "data_types.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <functional>
 #include <shared_mutex>
 #include <string>
 
-// Darwin never implemented POSIX spinlocks (pthread_spinlock_t). Use the
-// platform's cheap userspace lock: pthread_spin_* on Linux/BSD, os_unfair_lock
-// on Apple (the recommended replacement for short critical sections).
+// Use each platform's cheap userspace lock for short WRAM critical sections:
+// os_unfair_lock on Apple, std::atomic_flag on Windows (which has no pthread),
+// and pthread_spin_* on Linux/BSD.
 #if defined(__APPLE__)
 #include <os/lock.h>
-#else
+#elif !defined(_WIN32)
 #include <pthread.h>
 #endif
 
@@ -126,10 +127,13 @@ class SystemMemory {
     void writeFromBuffer(void *ptr, m_long address, int count);
 
     private:
-    /// Platform WRAM lock: pthread_spinlock_t (POSIX) or os_unfair_lock (Apple).
-    /// Hold sections must stay short: never call VDP/Z80/sound while locked.
+    /// Platform WRAM lock: os_unfair_lock (Apple), std::atomic_flag (Windows),
+    /// or pthread_spinlock_t (Linux/BSD). Hold sections must stay short: never
+    /// call VDP/Z80/sound while locked.
 #if defined(__APPLE__)
     using WramLock = os_unfair_lock;
+#elif defined(_WIN32)
+    using WramLock = std::atomic_flag;
 #else
     using WramLock = pthread_spinlock_t;
 #endif
@@ -138,6 +142,9 @@ class SystemMemory {
         explicit WramSpinGuard(WramLock &lock) noexcept : lock_(lock) {
 #if defined(__APPLE__)
             os_unfair_lock_lock(&lock_);
+#elif defined(_WIN32)
+            while (lock_.test_and_set(std::memory_order_acquire)) {
+            }
 #else
             pthread_spin_lock(&lock_);
 #endif
@@ -145,6 +152,8 @@ class SystemMemory {
         ~WramSpinGuard() {
 #if defined(__APPLE__)
             os_unfair_lock_unlock(&lock_);
+#elif defined(_WIN32)
+            lock_.clear(std::memory_order_release);
 #else
             pthread_spin_unlock(&lock_);
 #endif
@@ -190,6 +199,8 @@ class SystemMemory {
 
 #if defined(__APPLE__)
     WramLock wramLock_ = OS_UNFAIR_LOCK_INIT;
+#elif defined(_WIN32)
+    WramLock wramLock_ = ATOMIC_FLAG_INIT;
 #else
     WramLock wramLock_{};
 #endif
