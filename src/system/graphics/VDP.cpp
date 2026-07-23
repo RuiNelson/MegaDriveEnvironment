@@ -581,11 +581,6 @@ int VDP::renderLoop() {
         SDL_UnlockMutex(mutex_);
 
         if (displayEnabled) {
-            // ponytail: single lock for the full frame instead of per-scanline;
-            // reduces ~448 mutex ops to 1. CPU thread is blocked from VDP writes
-            // during active display, which mirrors real hardware behaviour.
-            // scheduleInterrupt(HSync) is safe under mutex_: it only touches
-            // irqMutex_ + a raiseInterrupt atomic, never mutex_ itself.
             SDL_LockMutex(mutex_);
             state_.status_ &= ~0x0088; // clear VINT/VBlank at the start of active rendering
             if (state_.interlaced() && state_.oddFrame_)
@@ -593,19 +588,27 @@ int VDP::renderLoop() {
             else
                 state_.status_ &= ~0x0010;
             int hintCountdown = state_.hintReloadValue();
+            SDL_UnlockMutex(mutex_);
+
+            // Keep the live VDP lock only for one scanline at a time. The 68000
+            // can access the ports between lines instead of waiting for the
+            // complete active frame, and raster writes remain visible to later
+            // lines just as they are on hardware.
             for (int line = 0; line < activeLines; ++line) {
+                SDL_LockMutex(mutex_);
                 state_.vCounter_ = static_cast<m_word>(line);
                 renderer_.renderScanline(line);
-                signalHSync(line);
                 --hintCountdown;
+                const bool raiseHBlank = hintCountdown < 0 && state_.hintEnabled();
                 if (hintCountdown < 0) {
                     hintCountdown = state_.hintReloadValue();
-                    if (state_.hintEnabled()) {
-                        scheduleInterrupt(Interrupt::HSync, line);
-                    }
                 }
+                SDL_UnlockMutex(mutex_);
+
+                signalHSync(line);
+                if (raiseHBlank)
+                    scheduleInterrupt(Interrupt::HSync, line);
             }
-            SDL_UnlockMutex(mutex_);
         } else {
             // Sync timing continues while display output is disabled.
             for (int line = 0; line < activeLines; ++line)

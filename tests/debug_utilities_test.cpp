@@ -36,7 +36,9 @@ void pushKey(SDL_Keycode key, SDL_Keymod modifiers) {
     event.key.key = key;
     event.key.mod = modifiers;
     event.key.repeat = false;
-    assert(SDL_PushEvent(&event));
+    const bool pushed = SDL_PushEvent(&event);
+    assert(pushed);
+    (void)pushed;
 }
 
 } // namespace

@@ -172,6 +172,31 @@ class Sound {
         bool      timerRegister = false; ///< YM data write hitting $24–$27 (affects polled status)
     };
 
+    static constexpr std::size_t kEventQueueCapacity = 16'384;
+
+    /// Bounded multi-producer/single-consumer queue used only while audio is
+    /// streaming. Producers never enter the audio callback's mutex.
+    class RealtimeEventQueue {
+        public:
+        RealtimeEventQueue();
+
+        bool        tryPush(const TimedEvent &event);
+        void        drainTo(std::vector<TimedEvent> &destination);
+        void        reset();
+        std::size_t approximateSize() const;
+
+        private:
+        struct Slot {
+            std::atomic<std::size_t> sequence{0};
+            TimedEvent               event{};
+        };
+
+        std::unique_ptr<Slot[]> slots_;
+        std::atomic<std::size_t> enqueuePosition_{0};
+        std::size_t              dequeuePosition_ = 0;
+        std::atomic<std::size_t> publishedDequeuePosition_{0};
+    };
+
     static void        audioCallback(void *userdata, SDL_AudioStream *stream, int additionalAmount, int totalAmount);
     static int         psgThreadEntry(void *userdata);
     void               psgThreadMain();
@@ -186,6 +211,8 @@ class Sound {
     void               renderPsgChunk(int frames);
     bool               enqueueYMEvent(TimedEvent event);
     bool               enqueuePSGEvent(TimedEvent event);
+    void               prepareYMEvent(TimedEvent &event);
+    void               preparePSGEvent(TimedEvent &event);
     void               drainQueueUntil(std::vector<TimedEvent> &queue,
                                        uint64_t                 masterCycle,
                                        std::vector<TimedEvent> &out);
@@ -199,7 +226,7 @@ class Sound {
     void               setPSGQueuedCount(size_t n);
 
     // Threading model while streaming:
-    // - Gameplay producers never wait: try-lock once, drop on contention/full.
+    // - Gameplay producers never wait: realtime writes use bounded MPSC queues.
     // - YM2612 chip state + FM render live on the SDL audio callback thread.
     // - PSG chip state + PSG render live on a dedicated "md-psg" worker thread
     //   that fills a SPSC ring; the audio callback only pops and mixes.
@@ -230,7 +257,7 @@ class Sound {
     std::atomic<uint64_t>               lastYMRenderedMasterCycle_{0};
     std::atomic<uint64_t>               lastPSGRenderedMasterCycle_{0};
     uint64_t                            baseTimeNS_      = 0;
-    uint8_t                             queuedYMAddress_ = 0;
+    std::atomic<uint8_t>                queuedYMAddress_{0};
     std::atomic<uint64_t>               lateEventCount_{0};
     std::atomic<uint64_t>               contentionDropCount_{0};
     std::atomic<uint64_t>               queueFullDropCount_{0};
@@ -245,6 +272,8 @@ class Sound {
     std::array<double, 2>               lowpassState_{};
     std::vector<TimedEvent>             pendingYMEvents_;
     std::vector<TimedEvent>             pendingPSGEvents_;
+    RealtimeEventQueue                  realtimeYMEvents_;
+    RealtimeEventQueue                  realtimePSGEvents_;
     std::vector<TimedEvent>             renderEvents_;
     std::vector<TimedEvent>             psgRenderEvents_;
     std::vector<int16_t>                callbackBuffer_;

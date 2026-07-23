@@ -28,7 +28,6 @@ constexpr int      kRingTargetFrames = 1024;
 constexpr int      kPsgRingFrames    = 4096;
 /// PSG worker stays a little ahead of the mixer (~32 ms at 48 kHz).
 constexpr int      kPsgTargetFrames  = 1536;
-constexpr size_t   kMaxPendingEvents = 16'384;
 constexpr int      kFmPreampPercent   = 100;
 constexpr uint32_t kLowpassRange      = 0x9999;
 constexpr double   kDCBlockR          = 0.995;
@@ -95,14 +94,72 @@ int noiseFeedbackBit(int shiftValue, int bitMask) {
 
 } // namespace
 
+Sound::RealtimeEventQueue::RealtimeEventQueue()
+    : slots_(std::make_unique<Slot[]>(kEventQueueCapacity)) {
+    reset();
+}
+
+bool Sound::RealtimeEventQueue::tryPush(const TimedEvent &event) {
+    std::size_t position = enqueuePosition_.load(std::memory_order_relaxed);
+    for (;;) {
+        Slot &slot = slots_[position % kEventQueueCapacity];
+        const std::size_t sequence = slot.sequence.load(std::memory_order_acquire);
+        const auto difference = static_cast<std::intptr_t>(sequence)
+                              - static_cast<std::intptr_t>(position);
+        if (difference == 0) {
+            if (enqueuePosition_.compare_exchange_weak(position,
+                                                       position + 1,
+                                                       std::memory_order_relaxed,
+                                                       std::memory_order_relaxed)) {
+                slot.event = event;
+                slot.sequence.store(position + 1, std::memory_order_release);
+                return true;
+            }
+        } else if (difference < 0) {
+            return false;
+        } else {
+            position = enqueuePosition_.load(std::memory_order_relaxed);
+        }
+    }
+}
+
+void Sound::RealtimeEventQueue::drainTo(std::vector<TimedEvent> &destination) {
+    while (destination.size() < kEventQueueCapacity) {
+        Slot &slot = slots_[dequeuePosition_ % kEventQueueCapacity];
+        const std::size_t sequence = slot.sequence.load(std::memory_order_acquire);
+        const auto difference = static_cast<std::intptr_t>(sequence)
+                              - static_cast<std::intptr_t>(dequeuePosition_ + 1);
+        if (difference != 0)
+            break;
+        destination.push_back(slot.event);
+        slot.sequence.store(dequeuePosition_ + kEventQueueCapacity, std::memory_order_release);
+        ++dequeuePosition_;
+    }
+    publishedDequeuePosition_.store(dequeuePosition_, std::memory_order_release);
+}
+
+void Sound::RealtimeEventQueue::reset() {
+    enqueuePosition_.store(0, std::memory_order_relaxed);
+    dequeuePosition_ = 0;
+    publishedDequeuePosition_.store(0, std::memory_order_relaxed);
+    for (std::size_t index = 0; index < kEventQueueCapacity; ++index)
+        slots_[index].sequence.store(index, std::memory_order_relaxed);
+}
+
+std::size_t Sound::RealtimeEventQueue::approximateSize() const {
+    const std::size_t enqueued = enqueuePosition_.load(std::memory_order_relaxed);
+    const std::size_t dequeued = publishedDequeuePosition_.load(std::memory_order_relaxed);
+    return std::min(enqueued - dequeued, kEventQueueCapacity);
+}
+
 Sound::Sound(MegaDriveEnvironment *env)
     : env_(env), mutex_(SDL_CreateMutex()), psgMutex_(SDL_CreateMutex()), ym_(ymInterface_) {
     baseTimeNS_   = SDL_GetTicksNS();
     fmSampleRate_ = ym_.sample_rate(kYM2612Clock);
-    pendingYMEvents_.reserve(kMaxPendingEvents);
-    pendingPSGEvents_.reserve(kMaxPendingEvents);
-    renderEvents_.reserve(kMaxPendingEvents);
-    psgRenderEvents_.reserve(kMaxPendingEvents);
+    pendingYMEvents_.reserve(kEventQueueCapacity);
+    pendingPSGEvents_.reserve(kEventQueueCapacity);
+    renderEvents_.reserve(kEventQueueCapacity);
+    psgRenderEvents_.reserve(kEventQueueCapacity);
     psgRing_.assign(static_cast<size_t>(kPsgRingFrames) * 2, 0);
     psg_.reset();
 }
@@ -261,17 +318,20 @@ void Sound::renderPsgChunk(int frames) {
     const uint64_t chunkLastCycle =
         static_cast<uint64_t>(psgRenderMasterCycle_ + (step * static_cast<double>(frames - 1)));
 
+    const bool realtime = realtimeMode_.load(std::memory_order_acquire);
     bool locked = false;
-    if (realtimeMode_.load(std::memory_order_acquire))
-        locked = SDL_TryLockMutex(psgMutex_);
-    else {
+    if (realtime) {
+        realtimePSGEvents_.drainTo(pendingPSGEvents_);
+        locked = true;
+    } else {
         SDL_LockMutex(psgMutex_);
         locked = true;
     }
     if (locked) {
         drainQueueUntil(pendingPSGEvents_, chunkLastCycle, psgRenderEvents_);
         setPSGQueuedCount(pendingPSGEvents_.size());
-        SDL_UnlockMutex(psgMutex_);
+        if (!realtime)
+            SDL_UnlockMutex(psgMutex_);
         std::stable_sort(psgRenderEvents_.begin(), psgRenderEvents_.end(), [](const TimedEvent &a, const TimedEvent &b) {
             return a.masterCycle < b.masterCycle;
         });
@@ -349,12 +409,9 @@ void Sound::writeYM2612At(uint64_t masterCycles, int port, m_byte value) {
             unavailableDropCount_.fetch_add(1, std::memory_order_relaxed);
             return;
         }
-        if (!SDL_TryLockMutex(mutex_)) {
-            contentionDropCount_.fetch_add(1, std::memory_order_relaxed);
-            return;
-        }
-        enqueueYMEvent(event);
-        SDL_UnlockMutex(mutex_);
+        prepareYMEvent(event);
+        if (!realtimeYMEvents_.tryPush(event))
+            queueFullDropCount_.fetch_add(1, std::memory_order_relaxed);
         return;
     }
 
@@ -386,12 +443,9 @@ void Sound::writePSGAt(uint64_t masterCycles, m_byte value) {
             unavailableDropCount_.fetch_add(1, std::memory_order_relaxed);
             return;
         }
-        if (!SDL_TryLockMutex(psgMutex_)) {
-            contentionDropCount_.fetch_add(1, std::memory_order_relaxed);
-            return;
-        }
-        enqueuePSGEvent(event);
-        SDL_UnlockMutex(psgMutex_);
+        preparePSGEvent(event);
+        if (!realtimePSGEvents_.tryPush(event))
+            queueFullDropCount_.fetch_add(1, std::memory_order_relaxed);
         return;
     }
 
@@ -461,7 +515,7 @@ void Sound::resetChipState() {
     psg_.resync(static_cast<uint64_t>(psgRenderMasterCycle_));
     lastYMRenderedMasterCycle_.store(0, std::memory_order_relaxed);
     lastPSGRenderedMasterCycle_.store(0, std::memory_order_relaxed);
-    queuedYMAddress_ = 0;
+    queuedYMAddress_.store(0, std::memory_order_relaxed);
     lateEventCount_.store(0, std::memory_order_relaxed);
     contentionDropCount_.store(0, std::memory_order_relaxed);
     queueFullDropCount_.store(0, std::memory_order_relaxed);
@@ -475,6 +529,8 @@ void Sound::resetChipState() {
     lowpassState_.fill(0.0);
     pendingYMEvents_.clear();
     pendingPSGEvents_.clear();
+    realtimeYMEvents_.reset();
+    realtimePSGEvents_.reset();
     renderEvents_.clear();
     psgRenderEvents_.clear();
     ymQueuedEventCount_.store(0, std::memory_order_relaxed);
@@ -623,10 +679,12 @@ void Sound::renderSamples(int16_t *dst, int frames) {
         renderEvents_.clear();
         const uint64_t chunkLastCycle =
             static_cast<uint64_t>(renderMasterCycle_ + (step * static_cast<double>(chunkFrames - 1)));
+        const bool realtime = realtimeMode_.load(std::memory_order_acquire);
         bool queueLocked = false;
-        if (realtimeMode_.load(std::memory_order_acquire))
-            queueLocked = SDL_TryLockMutex(mutex_);
-        else {
+        if (realtime) {
+            realtimeYMEvents_.drainTo(pendingYMEvents_);
+            queueLocked = true;
+        } else {
             SDL_LockMutex(mutex_);
             queueLocked = true;
         }
@@ -635,12 +693,17 @@ void Sound::renderSamples(int16_t *dst, int frames) {
             setYMQueuedCount(pendingYMEvents_.size());
             if (!psgThreaded) {
                 // Headless: also pull PSG events so process order stays unified.
-                SDL_LockMutex(psgMutex_);
+                if (realtime)
+                    realtimePSGEvents_.drainTo(pendingPSGEvents_);
+                else
+                    SDL_LockMutex(psgMutex_);
                 drainQueueUntil(pendingPSGEvents_, chunkLastCycle, renderEvents_);
                 setPSGQueuedCount(pendingPSGEvents_.size());
-                SDL_UnlockMutex(psgMutex_);
+                if (!realtime)
+                    SDL_UnlockMutex(psgMutex_);
             }
-            SDL_UnlockMutex(mutex_);
+            if (!realtime)
+                SDL_UnlockMutex(mutex_);
             std::stable_sort(renderEvents_.begin(), renderEvents_.end(), [](const TimedEvent &a, const TimedEvent &b) {
                 return a.masterCycle < b.masterCycle;
             });
@@ -703,11 +766,18 @@ void Sound::renderSamples(int16_t *dst, int frames) {
 }
 
 bool Sound::enqueueYMEvent(TimedEvent event) {
-    if (pendingYMEvents_.size() >= kMaxPendingEvents) {
+    if (pendingYMEvents_.size() >= kEventQueueCapacity) {
         queueFullDropCount_.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
 
+    prepareYMEvent(event);
+    pendingYMEvents_.push_back(event);
+    setYMQueuedCount(pendingYMEvents_.size());
+    return true;
+}
+
+void Sound::prepareYMEvent(TimedEvent &event) {
     const uint64_t lastRendered = lastYMRenderedMasterCycle_.load(std::memory_order_relaxed);
     if (event.masterCycle < lastRendered) {
         event.masterCycle = lastRendered;
@@ -716,35 +786,38 @@ bool Sound::enqueueYMEvent(TimedEvent event) {
 
     if ((event.port & 1u) == 0) {
         if (event.port == 0)
-            queuedYMAddress_ = event.value;
-    } else if (event.port == 1 && queuedYMAddress_ >= 0x24 && queuedYMAddress_ <= 0x27) {
+            queuedYMAddress_.store(event.value, std::memory_order_relaxed);
+    } else {
+        const uint8_t address = queuedYMAddress_.load(std::memory_order_relaxed);
+        if (event.port != 1 || address < 0x24 || address > 0x27)
+            return;
         // Optimistically clear the timer flags in the published status so
         // a driver that just wrote $27 to reset them doesn't re-read the
         // stale set flags before the renderer applies the write.
         event.timerRegister = true;
         cachedStatus_.fetch_and(static_cast<uint8_t>(~0x03u), std::memory_order_relaxed);
     }
-
-    pendingYMEvents_.push_back(event);
-    setYMQueuedCount(pendingYMEvents_.size());
-    return true;
 }
 
 bool Sound::enqueuePSGEvent(TimedEvent event) {
-    if (pendingPSGEvents_.size() >= kMaxPendingEvents) {
+    if (pendingPSGEvents_.size() >= kEventQueueCapacity) {
         queueFullDropCount_.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
 
+    preparePSGEvent(event);
+    pendingPSGEvents_.push_back(event);
+    setPSGQueuedCount(pendingPSGEvents_.size());
+    return true;
+}
+
+void Sound::preparePSGEvent(TimedEvent &event) {
     const uint64_t lastRendered = lastPSGRenderedMasterCycle_.load(std::memory_order_relaxed);
     if (event.masterCycle < lastRendered) {
         event.masterCycle = lastRendered;
         lateEventCount_.fetch_add(1, std::memory_order_relaxed);
     }
 
-    pendingPSGEvents_.push_back(event);
-    setPSGQueuedCount(pendingPSGEvents_.size());
-    return true;
 }
 
 void Sound::drainQueueUntil(std::vector<TimedEvent> &queue, uint64_t masterCycle, std::vector<TimedEvent> &out) {

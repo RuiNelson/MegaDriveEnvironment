@@ -30,21 +30,13 @@
 
 SystemMemory::SystemMemory(MegaDriveEnvironment *env) : env_(env) {
     rom_  = static_cast<m_byte *>(malloc(ROM_SIZE));
-    wram_ = static_cast<m_byte *>(malloc(WORK_RAM_SIZE));
-#if !defined(__APPLE__) && !defined(_WIN32)
-    // Process-private POSIX spinlock (Linux/BSD). Darwin has no pthread_spinlock_t;
-    // Apple and Windows locks are initialized in-class.
-    pthread_spin_init(&wramLock_, PTHREAD_PROCESS_PRIVATE);
-#endif
+    wram_ = new std::atomic<m_word>[WORK_RAM_WORDS];
     initRAM();
 }
 
 SystemMemory::~SystemMemory() {
-#if !defined(__APPLE__) && !defined(_WIN32)
-    pthread_spin_destroy(&wramLock_);
-#endif
     free(rom_);
-    free(wram_);
+    delete[] wram_;
     rom_  = nullptr;
     wram_ = nullptr;
 }
@@ -54,13 +46,13 @@ void SystemMemory::initRAM() {
         std::unique_lock lock(romMutex_);
         clearROM();
     }
-    WramSpinGuard guard(wramLock_);
-    std::memset(wram_, 0, WORK_RAM_SIZE);
+    for (std::size_t index = 0; index < WORK_RAM_WORDS; ++index)
+        wram_[index].store(0, std::memory_order_relaxed);
 }
 
 void SystemMemory::resetWorkRAM() {
-    WramSpinGuard guard(wramLock_);
-    std::memset(wram_, 0, WORK_RAM_SIZE);
+    for (std::size_t index = 0; index < WORK_RAM_WORDS; ++index)
+        wram_[index].store(0, std::memory_order_relaxed);
 }
 
 bool SystemMemory::loadROM(const std::string &path) {
@@ -332,15 +324,26 @@ void SystemMemory::copyBytes(m_long from, m_long to, int count) {
     if (source >= WORK_RAM_BASE && destination >= WORK_RAM_BASE
         && size <= WORK_RAM_SIZE - (source - WORK_RAM_BASE)
         && size <= WORK_RAM_SIZE - (destination - WORK_RAM_BASE)) {
-        WramSpinGuard guard(wramLock_);
-        std::memmove(wram_ + (destination - WORK_RAM_BASE), wram_ + (source - WORK_RAM_BASE), size);
+        const m_long sourceOffset = source - WORK_RAM_BASE;
+        const m_long destinationOffset = destination - WORK_RAM_BASE;
+        if (destinationOffset > sourceOffset
+            && destinationOffset < sourceOffset + static_cast<m_long>(size)) {
+            for (std::size_t index = size; index-- > 0;)
+                storeWRAMByte(destinationOffset + static_cast<m_long>(index),
+                              loadWRAMByte(sourceOffset + static_cast<m_long>(index)));
+        } else {
+            for (std::size_t index = 0; index < size; ++index)
+                storeWRAMByte(destinationOffset + static_cast<m_long>(index),
+                              loadWRAMByte(sourceOffset + static_cast<m_long>(index)));
+        }
         return;
     }
     if (source < ROM_END && destination >= WORK_RAM_BASE
         && size <= ROM_END - source && size <= WORK_RAM_SIZE - (destination - WORK_RAM_BASE)) {
         std::shared_lock romLock(romMutex_);
-        WramSpinGuard wramGuard(wramLock_);
-        std::memcpy(wram_ + (destination - WORK_RAM_BASE), rom_ + source, size);
+        const m_long destinationOffset = destination - WORK_RAM_BASE;
+        for (std::size_t index = 0; index < size; ++index)
+            storeWRAMByte(destinationOffset + static_cast<m_long>(index), rom_[source + index]);
         return;
     }
 
@@ -368,8 +371,10 @@ void SystemMemory::copyToBuffer(m_long address, void *ptr, int count) {
         return;
     }
     if (normalized >= WORK_RAM_BASE && size <= WORK_RAM_SIZE - (normalized - WORK_RAM_BASE)) {
-        WramSpinGuard guard(wramLock_);
-        std::memcpy(ptr, wram_ + (normalized - WORK_RAM_BASE), size);
+        auto *destination = static_cast<m_byte *>(ptr);
+        const m_long offset = normalized - WORK_RAM_BASE;
+        for (std::size_t index = 0; index < size; ++index)
+            destination[index] = loadWRAMByte(offset + static_cast<m_long>(index));
         return;
     }
 
@@ -385,8 +390,10 @@ void SystemMemory::writeFromBuffer(void *ptr, m_long address, int count) {
     const m_long normalized = address & 0x00FFFFFFu;
     const auto size = static_cast<std::size_t>(count);
     if (normalized >= WORK_RAM_BASE && size <= WORK_RAM_SIZE - (normalized - WORK_RAM_BASE)) {
-        WramSpinGuard guard(wramLock_);
-        std::memcpy(wram_ + (normalized - WORK_RAM_BASE), ptr, size);
+        const auto *source = static_cast<const m_byte *>(ptr);
+        const m_long offset = normalized - WORK_RAM_BASE;
+        for (std::size_t index = 0; index < size; ++index)
+            storeWRAMByte(offset + static_cast<m_long>(index), source[index]);
         return;
     }
 

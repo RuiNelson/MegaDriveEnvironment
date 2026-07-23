@@ -462,6 +462,7 @@ void MegaDriveEnvironment::powerOn(bool isRestart) {
     controllers_.reset();
     vdp_.reset();
     z80_.reset();
+    m68kMasterCyclesLocal_ = 0;
     m68kMasterCycles_.store(0, std::memory_order_release);
     pendingIRQMask_.store(0, std::memory_order_release);
     traceFn_.store(0, std::memory_order_release);

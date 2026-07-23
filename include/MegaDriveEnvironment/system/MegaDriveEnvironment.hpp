@@ -232,7 +232,7 @@ class MegaDriveEnvironment {
         return remoteAccess_;
     }
     uint64_t current68KMasterCycles() const {
-        return m68kMasterCycles_.load(std::memory_order_acquire);
+        return m68kMasterCycles_.load(std::memory_order_relaxed);
     }
 
     /// Marks an interrupt of the given autovector @p level (e.g. 6 = VBlank,
@@ -296,7 +296,8 @@ class MegaDriveEnvironment {
     /// Per-instruction bookkeeping for cooperative restart and VDP timing.
     void pace() {
         throwIfRestartRequested();
-        m68kMasterCycles_.fetch_add(64, std::memory_order_release);
+        m68kMasterCyclesLocal_ += 64;
+        m68kMasterCycles_.store(m68kMasterCyclesLocal_, std::memory_order_relaxed);
     }
 
     /// Records the entry address of the function currently executing. Cheap
@@ -414,6 +415,10 @@ class MegaDriveEnvironment {
     std::atomic<std::uint32_t>   pendingIRQMask_{0};
     std::atomic<std::uint64_t>   interruptGeneration_{0};
     std::atomic<m_long>          traceFn_{0}; ///< entry of the running recompiled fn
+    /// CPU-thread-owned accumulator. Publishing with a relaxed store keeps VDP
+    /// status reads current without paying for an atomic read-modify-write on
+    /// every recompiled 68000 instruction.
+    uint64_t                     m68kMasterCyclesLocal_{0};
     std::atomic<uint64_t>        m68kMasterCycles_{0};
     m_long                       traceHistory_[16]{};
     unsigned                     traceHistoryPos_{0};

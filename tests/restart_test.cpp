@@ -102,7 +102,9 @@ protected:
     if (invocation == 2) {
       const bool wramCleared = memory().readByte(0xFF0100) == 0;
       const bool romPreserved = memory().readLong(0x000100) == 0x12345678;
-      secondRunObservedResetState.store(wramCleared && romPreserved);
+      const bool masterCyclesCleared = current68KMasterCycles() == 0;
+      secondRunObservedResetState.store(wramCleared && romPreserved &&
+                                        masterCyclesCleared);
       while (!finish.load())
         pace();
       return;

@@ -96,10 +96,32 @@ void testConcurrentRomPublication() {
     writer.join();
 }
 
+void testConcurrentWorkRamBusWords() {
+    SystemMemory memory;
+    constexpr m_word first = 0x1122u;
+    constexpr m_word second = 0xAABBu;
+    memory.writeWord(0x00FF4000u, first);
+
+    std::atomic<bool> finished = false;
+    std::thread writer([&] {
+        for (int iteration = 0; iteration < 100'000; ++iteration)
+            memory.writeWord(0x00FF4000u, (iteration & 1) != 0 ? first : second);
+        finished.store(true, std::memory_order_release);
+    });
+
+    do {
+        const m_word value = memory.readWord(0x00FF4000u);
+        assert(value == first || value == second);
+    } while (!finished.load(std::memory_order_acquire));
+
+    writer.join();
+}
+
 } // namespace
 
 int main() {
     testAddressingAndEndianAccess();
     testBulkTransfers();
     testConcurrentRomPublication();
+    testConcurrentWorkRamBusWords();
 }

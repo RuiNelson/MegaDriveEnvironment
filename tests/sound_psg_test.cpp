@@ -1,11 +1,14 @@
 #include "system/sound/Sound.hpp"
 
 #include <array>
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <string_view>
+#include <thread>
+#include <vector>
 
 struct SoundPSGTestAccess {
     static void reset(Sound &sound) {
@@ -47,6 +50,38 @@ struct SoundPSGTestAccess {
 
     static uint64_t overruns(const Sound &sound) {
         return sound.psgOverrunCount_.load(std::memory_order_relaxed);
+    }
+
+    static bool exerciseRealtimeQueue(Sound &sound) {
+        constexpr std::size_t eventsPerProducer = 4'000;
+        sound.realtimeYMEvents_.reset();
+
+        const auto produce = [&](std::size_t producer) {
+            for (std::size_t index = 0; index < eventsPerProducer; ++index) {
+                Sound::TimedEvent event{};
+                event.masterCycle = producer * eventsPerProducer + index;
+                while (!sound.realtimeYMEvents_.tryPush(event))
+                    std::this_thread::yield();
+            }
+        };
+
+        std::thread first(produce, 0);
+        std::thread second(produce, 1);
+        first.join();
+        second.join();
+
+        std::vector<Sound::TimedEvent> observed;
+        sound.realtimeYMEvents_.drainTo(observed);
+        if (observed.size() != eventsPerProducer * 2 ||
+            sound.realtimeYMEvents_.approximateSize() != 0)
+            return false;
+
+        std::ranges::sort(observed, {}, &Sound::TimedEvent::masterCycle);
+        for (std::size_t index = 0; index < observed.size(); ++index) {
+            if (observed[index].masterCycle != index)
+                return false;
+        }
+        return true;
     }
 };
 
@@ -152,6 +187,10 @@ int main(int argc, char **argv) {
         SoundPSGTestAccess::ringWriteFrame(sound) != 0 ||
         SoundPSGTestAccess::overruns(sound) != 160) {
         std::fputs("PSG chunk did not clamp correctly at the ring boundary\n", stderr);
+        return EXIT_FAILURE;
+    }
+    if (!SoundPSGTestAccess::exerciseRealtimeQueue(sound)) {
+        std::fputs("realtime audio queue lost or duplicated producer events\n", stderr);
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;
