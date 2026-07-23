@@ -88,6 +88,8 @@ void VDP::start() {
     if (thread_) {
         return;
     }
+    debugFrame_ = 0;
+    nextDebugLogNs_ = SDL_GetTicksNS() + 1'000'000'000ull;
     running_ = true;
     thread_  = SDL_CreateThread(renderThreadEntry, "VDP", this);
 }
@@ -437,8 +439,10 @@ int VDP::renderLoop() {
     uint64_t nextFrameDeadline = SDL_GetTicksNS();
 
     while (running_) {
-        const uint64_t frameTimeNs = (env_ != nullptr && env_->isPal50Hz()) ? 20'000'000ull : 16'666'667ull;
-        uint64_t       frameStart  = SDL_GetTicksNS();
+        const std::uint64_t frameFrequencyHz = env_ != nullptr ? env_->vdpInternalFrequencyHz() : 60u;
+        const std::uint64_t frameTimeNs =
+            std::max<std::uint64_t>(1u, (1'000'000'000ull + frameFrequencyHz / 2u) / frameFrequencyHz);
+        uint64_t frameStart = SDL_GetTicksNS();
 
         // Render the frame one scanline at a time so a per-line interrupt can be
         // scheduled (raster effects). Mirrors VDPRenderer::renderFrame().
@@ -494,10 +498,11 @@ int VDP::renderLoop() {
         // doing image encoding or filesystem I/O on the render thread. Debug
         // PNGs remain available explicitly through the screenshot hotkeys.
         if (env_ != nullptr && env_->debugLog()) {
-            static unsigned debugFrame = 0;
-            ++debugFrame;
-            if (debugFrame % 60 == 0) {
-                env_->logFrame(debugFrame, displayEnabled);
+            ++debugFrame_;
+            const std::uint64_t now = SDL_GetTicksNS();
+            if (now >= nextDebugLogNs_) {
+                env_->logFrame(debugFrame_, displayEnabled);
+                nextDebugLogNs_ = now + 1'000'000'000ull;
             }
         }
 

@@ -107,6 +107,16 @@ std::vector<std::uint8_t> request(int socketFd,
 int main() {
     const auto port = reservePort();
     TestEnvironment environment(port);
+    assert(environment.vdpInternalFrequencyHz() == 60);
+    environment.setVideoStandard(MegaDriveEnvironment::VideoStandard::Hz50);
+    assert(environment.vdpInternalFrequencyHz() == 50);
+    environment.setVDPTurboMultiplier(2);
+    assert(environment.vdpInternalFrequencyHz() == 120);
+    environment.setVDPTurboMultiplier(10);
+    assert(environment.vdpInternalFrequencyHz() == 600);
+    environment.setVDPTurboMultiplier(0);
+    assert(environment.vdpInternalFrequencyHz() == 50);
+    environment.setVideoStandard(MegaDriveEnvironment::VideoStandard::Hz60);
     environment.remoteAccess().start();
 
     const int socketFd = socket(AF_INET, SOCK_STREAM, 0);
@@ -174,6 +184,21 @@ int main() {
 
     close(socketFd);
     environment.remoteAccess().stop();
+
+    environment.setVDPTurboMultiplier(0);
+    environment.vdp().start();
+    const auto normalStart = std::chrono::steady_clock::now();
+    assert(environment.vdp().waitForVSyncCount(12, 1'000));
+    const auto normalDuration = std::chrono::steady_clock::now() - normalStart;
+
+    environment.setVDPTurboMultiplier(10);
+    assert(environment.vdp().waitForVSyncCount(1, 1'000)); // let the new deadline take effect
+    const auto turboStart = std::chrono::steady_clock::now();
+    assert(environment.vdp().waitForVSyncCount(12, 1'000));
+    const auto turboDuration = std::chrono::steady_clock::now() - turboStart;
+    environment.vdp().stop();
+
+    assert(turboDuration * 2 < normalDuration);
 }
 #else
 int main() {}

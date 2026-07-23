@@ -136,8 +136,8 @@ class MegaDriveEnvironment {
         return quitRequested_.load(std::memory_order_acquire);
     }
 
-    /// Enables once-per-second debug logging (called by the VDP every 60 frames
-    /// via logFrame()). Off by default; turned on with the `--debug` CLI flag.
+    /// Enables once-per-second debug logging from the VDP render thread.
+    /// Off by default; turned on with the `--debug` CLI flag.
     void setDebugLog(bool on) {
         debugLog_.store(on, std::memory_order_relaxed);
     }
@@ -162,6 +162,18 @@ class MegaDriveEnvironment {
     }
     bool isPal50Hz() const {
         return videoStandard() == VideoStandard::Hz50;
+    }
+    /// Sets the host-only VDP turbo multiplier. Zero disables turbo and uses
+    /// the selected region's normal 50/60 Hz rate; N > 0 forces 60 * N Hz.
+    void setVDPTurboMultiplier(std::uint32_t multiplier) {
+        vdpTurboMultiplier_.store(multiplier, std::memory_order_relaxed);
+    }
+    std::uint32_t vdpTurboMultiplier() const {
+        return vdpTurboMultiplier_.load(std::memory_order_relaxed);
+    }
+    std::uint64_t vdpInternalFrequencyHz() const {
+        const std::uint32_t multiplier = vdpTurboMultiplier();
+        return multiplier == 0 ? (isPal50Hz() ? 50u : 60u) : 60ull * multiplier;
     }
     m_byte hardwareVersionRegister() const;
 
@@ -381,6 +393,7 @@ class MegaDriveEnvironment {
     std::atomic<bool>            debugLog_{false};
     std::atomic<LanguagePin>     languagePin_{LanguagePin::Japanese};
     std::atomic<VideoStandard>   videoStandard_{VideoStandard::Hz60};
+    std::atomic<std::uint32_t>   vdpTurboMultiplier_{0};
     std::string                  auxAddrFile_;          ///< append unknown dispatch targets here (if set)
     std::string                  loadedROMPath_;        ///< prevents a restarted run() from replacing patched ROM
     bool                         romLoaded_ = false;

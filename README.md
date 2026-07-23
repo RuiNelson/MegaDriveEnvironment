@@ -100,6 +100,7 @@ classDiagram
         +shouldQuit()
         +setLanguagePin(pin)
         +setVideoStandard(standard)
+        +setVDPTurboMultiplier(multiplier)
         +setDebugLog(on)
         +memory()
         +vdp()
@@ -451,6 +452,21 @@ Select region pins before `boot()` when needed:
 game.setLanguagePin(MegaDriveEnvironment::LanguagePin::Overseas);
 game.setVideoStandard(MegaDriveEnvironment::VideoStandard::Hz50);
 ```
+
+Host builds can accelerate `VDP::InternalTimer` with a turbo multiplier. Zero
+(the default) preserves the selected region's normal rate; a positive `N`
+forces the internal frequency to `60 × N` Hz without changing the emulated
+region pin. For example, this runs at 600 Hz:
+
+```cpp
+game.setVDPTurboMultiplier(10);
+```
+
+Turbo affects only `VDP::InternalTimer`; display-VSync modes continue to follow
+the monitor. It is a host execution aid, not Mega Drive hardware, so shared
+game code must keep the call inside `#ifdef PC`. The configured frequency is a
+target; rendering and host performance can cap the rate reached by large
+multipliers.
 
 ### Scaling modes
 

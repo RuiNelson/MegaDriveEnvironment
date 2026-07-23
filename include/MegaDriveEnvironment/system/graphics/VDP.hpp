@@ -55,7 +55,7 @@ class VDP {
     public:
     /// Render synchronization mode for framerate control.
     enum Synchronization : int {
-        InternalTimer = 0, ///< Use internal 60/50 Hz timer from the environment region pins
+        InternalTimer = 0, ///< Use the environment's internal timer (regional rate or host turbo override)
         VSync         = 1, ///< Sync to monitor refresh rate (1:1)
         VSync2        = 2, ///< Hold frame for 2 monitor refreshes (half speed)
         VSync3        = 3, ///< Hold frame for 3 monitor refreshes (third speed)
@@ -233,6 +233,9 @@ class VDP {
     std::atomic<uint64_t> averageFrameTimeNs_{0};
     /// Last average shown in the title; only accessed on the SDL main thread.
     uint64_t displayedFrameTimeNs_ = 0;
+    /// Debug cadence uses host time so turbo does not multiply log volume.
+    unsigned debugFrame_ = 0;
+    std::uint64_t nextDebugLogNs_ = 0;
 
     /// Selected synchronization mode.
     Synchronization syncMode_;
