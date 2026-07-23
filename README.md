@@ -1,7 +1,7 @@
 # MegaDriveEnvironment
 
 <p align="center">
-  <img src="docs/box.webp" alt="Mega Drive Box" width="280">
+  <img src="docs/box.webp" alt="Mega Drive Box" width="380">
 </p>
 
 Develop Sega Mega Drive / Genesis software as a normal C++23 application on
