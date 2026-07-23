@@ -14,6 +14,7 @@
 #include "TestVDP.hpp"
 #include <cmath>
 #include <cstdio>
+#include <numbers>
 #include "Logger.hpp"
 
 // ── hSync callback ────────────────────────────────────────────────────────────
@@ -75,7 +76,7 @@ void VDPTester::testRasterHSync() {
     // Compute initial sine wave into hSyncScrollA_[].
     constexpr float kAmplitude  = 20.0f;
     constexpr float kWaves      = 2.0f; // 2 full waves across 224 lines
-    constexpr float k2Pi        = 2.0f * static_cast<float>(M_PI);
+    constexpr float k2Pi        = 2.0f * std::numbers::pi_v<float>;
     auto            computeWave = [&](float phase) {
         for (int y = 0; y < VDPState::SCREEN_H; ++y) {
             float angle      = phase + kWaves * k2Pi * y / VDPState::SCREEN_H;
