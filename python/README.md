@@ -38,6 +38,17 @@ with MegaDriveClient("127.0.0.1", 6969) as mega_drive:
         frames=3,
     )
 
+    # Atomic training step: freeze at a frame boundary, apply input for four
+    # of twelve frames, and receive the exact final 64 KiB work-RAM snapshot.
+    mega_drive.set_lockstep(True)
+    step = mega_drive.step_input(
+        player1=Buttons.B | Buttons.RIGHT,
+        held_frames=4,
+        total_frames=12,
+    )
+    print(step.frame, len(step.work_ram))
+    mega_drive.set_lockstep(False)
+
     score = mega_drive.read_value(0xFF0100, width=4)
     mega_drive.write_value(0xFF0100, score + 1000, width=4)
 
@@ -67,6 +78,7 @@ with MegaDriveClient("127.0.0.1", 6969) as mega_drive:
 - `get_game_uptime_frames()`;
 - `get_execution_data()` and `set_execution_data()`;
 - `press_buttons()` and `release_buttons()`;
+- `set_lockstep()` and `step_input()`;
 - `read_memory()`, `write_memory()`, `read_value()`, and `write_value()`;
 - `wait_memory_changed()` and `wait_memory_equals()`;
 - `read_framebuffer()` and `read_vdp_state()`;
@@ -81,6 +93,12 @@ The client is safe to share between Python threads, but requests are serialized
 because the server permits one in-flight command. A single connection cannot
 send a second command to satisfy a wait already in progress; the running game
 or another in-process producer must cause the awaited change.
+
+`set_lockstep(True)` is intended for training and deterministic automation. It
+returns only when execution has stopped at a complete-frame boundary.
+`step_input()` then advances an exact number of frames and returns a
+`StepResult(frame, work_ram)` in one response. Always disable lockstep before
+returning control to a human; disconnect and cold restart also disable it.
 
 ## Errors
 

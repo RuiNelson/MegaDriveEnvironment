@@ -438,6 +438,7 @@ void MegaDriveEnvironment::runVDPInterrupts() {
                 break;
         }
     }
+    vdp_.remoteLockstepCPUCheckpoint();
 }
 
 void MegaDriveEnvironment::powerOn(bool isRestart) {

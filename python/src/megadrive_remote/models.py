@@ -21,6 +21,20 @@ class Buttons(IntFlag):
     START = 1 << 7
 
 
+@dataclass(frozen=True)
+class StepResult:
+    """Final frame index and coherent 64 KiB work-RAM observation."""
+
+    frame: int
+    work_ram: bytes
+
+    def __post_init__(self) -> None:
+        if self.frame < 0:
+            raise ValueError("frame must not be negative")
+        if len(self.work_ram) != 65_536:
+            raise ValueError("work_ram must contain exactly 65536 bytes")
+
+
 class TilemapPlane(IntEnum):
     """VDP nametable selected by :meth:`MegaDriveClient.read_tilemap`."""
 

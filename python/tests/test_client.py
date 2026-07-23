@@ -11,6 +11,7 @@ from megadrive_remote import (
     MegaDriveClient,
     ProtocolError,
     RemoteTimeoutError,
+    StepResult,
     TilemapPlane,
 )
 
@@ -199,6 +200,55 @@ class MegaDriveClientTests(unittest.TestCase):
             client.wait_vsync(2, timeout_ms=700)
             client.wait_hsync_count(5, timeout_ms=800)
             client.wait_hsync_reach_line(120, timeout_ms=900)
+
+    def test_lockstep_control_and_atomic_step(self) -> None:
+        work_ram = bytes(index & 0xFF for index in range(65_536))
+
+        def enable(command: int, payload: bytes) -> tuple[int, bytes]:
+            self.assertEqual((command, payload), (0x12, pack(">B3xI", True, 2_000)))
+            return ACK, b""
+
+        def step(command: int, payload: bytes) -> tuple[int, bytes]:
+            self.assertEqual(
+                (command, payload),
+                (
+                    0x13,
+                    pack(
+                        ">BB2xIII",
+                        Buttons.A | Buttons.RIGHT,
+                        Buttons.START,
+                        4,
+                        12,
+                        3_000,
+                    ),
+                ),
+            )
+            return ACK, pack(">Q", 123_456) + work_ram
+
+        def disable(command: int, payload: bytes) -> tuple[int, bytes]:
+            self.assertEqual((command, payload), (0x12, pack(">B3xI", False, 2_000)))
+            return ACK, b""
+
+        with ClientHarness(enable, step, disable) as client:
+            client.set_lockstep(True, timeout_ms=2_000)
+            result = client.step_input(
+                player1=Buttons.A | Buttons.RIGHT,
+                player2=Buttons.START,
+                held_frames=4,
+                total_frames=12,
+                timeout_ms=3_000,
+            )
+            self.assertEqual(result, StepResult(frame=123_456, work_ram=work_ram))
+            client.set_lockstep(False, timeout_ms=2_000)
+
+    def test_lockstep_step_validation(self) -> None:
+        with ClientHarness() as client:
+            with self.assertRaises(ValueError):
+                client.step_input(held_frames=-1, total_frames=12)
+            with self.assertRaises(ValueError):
+                client.step_input(held_frames=13, total_frames=12)
+            with self.assertRaises(TypeError):
+                client.set_lockstep(1)  # type: ignore[arg-type]
 
     def test_framebuffer_and_vdp_decoders(self) -> None:
         framebuffer_payload = pack(">HHHBB", 2, 1, 6, 1, 0) + bytes((1, 2, 3, 4, 5, 6))

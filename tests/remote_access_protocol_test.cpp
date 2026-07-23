@@ -46,6 +46,14 @@ std::uint64_t readU64(const std::vector<std::uint8_t> &bytes) {
     return value;
 }
 
+std::uint64_t readU64Prefix(const std::vector<std::uint8_t> &bytes) {
+    assert(bytes.size() >= 8);
+    std::uint64_t value = 0;
+    for (std::size_t index = 0; index < 8; ++index)
+        value = (value << 8) | bytes[index];
+    return value;
+}
+
 void appendU32(std::vector<std::uint8_t> &bytes, std::uint32_t value) {
     bytes.push_back(static_cast<std::uint8_t>(value >> 24));
     bytes.push_back(static_cast<std::uint8_t>(value >> 16));
@@ -182,6 +190,31 @@ int main() {
     assert(request(socketFd, 0x33, 13, {}).size() == 4u + 64u * 5u);
     assert(request(socketFd, 0x34, 14, {}).size() == 4u + 80u * 24u);
     assert(request(socketFd, 0x35, 15, {0}).size() == 12u + 32u * 32u * 8u);
+
+    environment.vdp().start();
+    std::vector<std::uint8_t> lockstepPayload{1, 0, 0, 0};
+    appendU32(lockstepPayload, 1'000);
+    assert(request(socketFd, 0x12, 16, lockstepPayload).empty());
+    const auto pausedAt = environment.gameUptimeFrames();
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    assert(environment.gameUptimeFrames() == pausedAt);
+
+    environment.memory().writeByte(0x00FF1234u, 0xA5);
+    std::vector<std::uint8_t> stepPayload{0x18, 0x80, 0, 0};
+    appendU32(stepPayload, 2);
+    appendU32(stepPayload, 3);
+    appendU32(stepPayload, 1'000);
+    const auto step = request(socketFd, 0x13, 17, stepPayload);
+    assert(step.size() == 8u + 65'536u);
+    assert(readU64Prefix(step) == pausedAt + 3);
+    assert(step[8u + 0x1234u] == 0xA5);
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    assert(environment.gameUptimeFrames() == pausedAt + 3);
+
+    lockstepPayload[0] = 0;
+    assert(request(socketFd, 0x12, 18, lockstepPayload).empty());
+    assert(environment.vdp().waitForVSyncCount(2, 1'000));
+    environment.vdp().stop();
 
     close(socketFd);
     environment.remoteAccess().stop();

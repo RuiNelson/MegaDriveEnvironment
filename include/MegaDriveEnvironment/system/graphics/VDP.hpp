@@ -173,6 +173,20 @@ class VDP {
     /// Interrupts host-side waits during environment shutdown.
     void wakeSyncWaiters();
 
+    /// Enables or disables the remote-training frame gate. Enabling completes
+    /// only after the renderer and active CPU thread are both stopped at a
+    /// complete-frame boundary. Disabling always releases both threads.
+    bool setRemoteLockstep(bool enabled, std::uint32_t timeoutMs);
+    bool remoteLockstepEnabled() const;
+
+    /// While remote lockstep is enabled, permits exactly one complete VSync
+    /// frame and waits until the renderer and CPU are quiescent again.
+    bool advanceRemoteLockstepFrame(std::uint32_t timeoutMs);
+
+    /// CPU-side half of the remote lockstep barrier. Environment run loops
+    /// call this only at safe points after completing pending VDP work.
+    void remoteLockstepCPUCheckpoint();
+
     // ── Debug ──────────────────────────────────────────────────────────────
 
     /// Exports current framebuffer to PNG file.
@@ -227,6 +241,15 @@ class VDP {
 
     void signalHSync(int line);
     void signalVSync();
+    bool remoteLockstepRenderCheckpoint();
+
+    mutable std::mutex remoteLockstepMutex_;
+    std::condition_variable remoteLockstepCV_;
+    std::atomic<bool> remoteLockstepRequested_{false};
+    bool remoteLockstepEngaged_ = false;
+    bool remoteLockstepRendererPaused_ = false;
+    bool remoteLockstepCPUPaused_ = false;
+    std::uint64_t remoteLockstepAllowedFrame_ = 0;
 
     /// Rolling average of the latest 60 complete frame intervals, published
     /// by the render thread and consumed by the SDL main thread.

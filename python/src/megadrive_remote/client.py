@@ -30,7 +30,16 @@ from .exceptions import (
     RemoteTimeoutError,
     ServerError,
 )
-from .models import Buttons, Framebuffer, PaletteEntry, Sprite, Tilemap, TilemapPlane, VDPState
+from .models import (
+    Buttons,
+    Framebuffer,
+    PaletteEntry,
+    Sprite,
+    StepResult,
+    Tilemap,
+    TilemapPlane,
+    VDPState,
+)
 
 ClientT = TypeVar("ClientT", bound="MegaDriveClient")
 
@@ -269,6 +278,68 @@ class MegaDriveClient:
 
     def release_buttons(self) -> None:
         self._request(Command.RELEASE_BUTTONS)
+
+    def set_lockstep(self, enabled: bool, *, timeout_ms: int = 5_000) -> None:
+        """Freeze or release execution at complete-frame boundaries.
+
+        Enabling returns only after the renderer and game CPU are quiescent.
+        Disabling releases both immediately. A cold restart also disables
+        lockstep.
+        """
+
+        if not isinstance(enabled, bool):
+            raise TypeError("enabled must be a bool")
+        timeout_ms = self._positive(timeout_ms, "timeout_ms")
+        self._request(
+            Command.SET_LOCKSTEP,
+            pack(">B3xI", enabled, timeout_ms),
+            operation_timeout_ms=timeout_ms,
+        )
+
+    def step_input(
+        self,
+        *,
+        player1: Buttons | int = Buttons.NONE,
+        player2: Buttons | int = Buttons.NONE,
+        held_frames: int,
+        total_frames: int,
+        timeout_ms: int | None = None,
+    ) -> StepResult:
+        """Advance exactly ``total_frames`` while applying input first.
+
+        Both controller masks are active for the first ``held_frames`` and
+        released for the remaining frames. Lockstep must already be enabled.
+        The single response contains the final frame counter and a coherent
+        copy of all 64 KiB of 68000 work RAM.
+        """
+
+        if not 0 <= int(player1) <= 0xFF or not 0 <= int(player2) <= 0xFF:
+            raise ValueError("button masks must fit one byte")
+        if not isinstance(held_frames, int) or held_frames < 0:
+            raise ValueError("held_frames must be a non-negative integer")
+        total_frames = self._positive(total_frames, "total_frames")
+        if held_frames > total_frames:
+            raise ValueError("held_frames must not exceed total_frames")
+        if timeout_ms is None:
+            timeout_ms = max(1_000, total_frames * 50 + 1_000)
+        timeout_ms = self._positive(timeout_ms, "timeout_ms")
+        response = self._request(
+            Command.STEP_INPUT,
+            pack(
+                ">BB2xIII",
+                int(player1),
+                int(player2),
+                held_frames,
+                total_frames,
+                timeout_ms,
+            ),
+            operation_timeout_ms=timeout_ms,
+        )
+        if len(response) != 8 + 65_536:
+            raise ProtocolError(
+                "lockstep step response must contain a u64 frame and 65536 RAM bytes"
+            )
+        return StepResult(frame=unpack(">Q", response[:8])[0], work_ram=response[8:])
 
     def read_memory(self, address: int, length: int) -> bytes:
         address = self._address(address)

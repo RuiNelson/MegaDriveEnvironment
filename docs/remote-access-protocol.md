@@ -51,6 +51,8 @@ are 32-bit fields but must fit the Mega Drive's 24-bit address space.
 | `05` | `GET_GAME_UPTIME_FRAMES` | empty | complete VSync frames since the last start or cold reset:u64 |
 | `10` | `PRESS_BUTTONS` | P1 mask:u8, P2 mask:u8, frames:u32, timeout-ms:u32 | empty after buttons are released |
 | `11` | `RELEASE_BUTTONS` | empty | empty |
+| `12` | `SET_LOCKSTEP` | enabled:u8, reserved:3, timeout-ms:u32 | empty at a complete-frame boundary |
+| `13` | `STEP_INPUT` | P1 mask:u8, P2 mask:u8, reserved:2, held-frames:u32, total-frames:u32, timeout-ms:u32 | final frame:u64, complete 64 KiB work RAM |
 | `20` | `READ_MEMORY` | address:u32, length:u32 | raw bytes |
 | `21` | `WRITE_MEMORY` | address:u32, raw bytes | empty |
 | `22` | `WAIT_MEMORY_CHANGED` | address:u32, width:u8, reserved:3, timeout-ms:u32 | observed value:u32 |
@@ -70,6 +72,22 @@ and 7 Start. Remote buttons are ORed with physical input. `PRESS_BUTTONS`
 waits for the next VSync, applies both masks, holds them for exactly `frames`
 complete frame intervals, releases them, and only then replies. Timeout or
 disconnect also releases them.
+
+`SET_LOCKSTEP(1)` stops execution at a complete-frame boundary. The response
+is delayed until the renderer is waiting before the next frame and the active
+game CPU has finished the preceding VBlank work. No further frame begins until
+`STEP_INPUT` grants it or `SET_LOCKSTEP(0)` releases normal execution.
+Disconnect, server shutdown, VDP shutdown, and `RESTART_GAME` disable lockstep
+and release remotely held buttons.
+
+`STEP_INPUT` is available only while lockstep is enabled. It advances exactly
+`total-frames`, keeping both masks active during the first `held-frames` and
+clearing them for the rest. `total-frames` and the timeout must be non-zero;
+`held-frames` may be zero but cannot exceed `total-frames`. Execution is
+quiescent again before the response is assembled. Its first eight bytes are
+the final `GET_GAME_UPTIME_FRAMES` value, followed by one coherent byte-for-byte
+snapshot of addresses `FF0000-FFFFFF`. The snapshot and frame counter therefore
+come from the same stopped boundary, without a separate memory request.
 
 Memory wait widths are `1`, `2`, or `4`, must be naturally aligned, and use
 68000 big-endian values. `WAIT_MEMORY_CHANGED` captures its initial value when

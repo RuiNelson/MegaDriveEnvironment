@@ -251,6 +251,8 @@ class MegaDriveEnvironment {
         while (!quitRequested_.load(std::memory_order_acquire) &&
                irqLevel() <= cpuInterruptMask()) {
             throwIfRestartRequested();
+            vdp_.remoteLockstepCPUCheckpoint();
+            throwIfRestartRequested();
             const std::uint64_t observed = interruptGeneration_.load(std::memory_order_acquire);
             if (irqLevel() > cpuInterruptMask())
                 break;

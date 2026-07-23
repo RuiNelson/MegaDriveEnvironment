@@ -52,6 +52,8 @@ enum class Command : std::uint8_t {
     GetGameUptimeFrames = 0x05,
     PressButtons = 0x10,
     ReleaseButtons = 0x11,
+    SetLockstep = 0x12,
+    StepInput = 0x13,
     ReadMemory = 0x20,
     WriteMemory = 0x21,
     WaitMemoryChanged = 0x22,
@@ -227,6 +229,7 @@ class RemoteAccess::Impl {
 
     void stop() {
         running_.store(false, std::memory_order_release);
+        environment_->vdp().setRemoteLockstep(false, 1);
         environment_->vdp().wakeSyncWaiters();
         const SocketHandle client = clientSocket_.exchange(kInvalidSocket, std::memory_order_acq_rel);
         shutdownSocket(client);
@@ -305,6 +308,7 @@ class RemoteAccess::Impl {
             clientSocket_.store(client, std::memory_order_release);
             handleClient(client);
             environment_->controllers().clearRemoteState();
+            environment_->vdp().setRemoteLockstep(false, 1);
             if (clientSocket_.exchange(kInvalidSocket, std::memory_order_acq_rel) == client)
                 closeSocket(client);
         }
@@ -412,6 +416,10 @@ class RemoteAccess::Impl {
                     return Result::failure(Error::MalformedPayload, "RELEASE_BUTTONS has no payload");
                 environment_->controllers().clearRemoteState();
                 return {};
+            case Command::SetLockstep:
+                return setLockstep(payload);
+            case Command::StepInput:
+                return stepInput(payload);
             case Command::ReadMemory:
                 return readMemory(payload);
             case Command::WriteMemory:
@@ -448,6 +456,7 @@ class RemoteAccess::Impl {
         const std::uint32_t timeoutMs = readU32(payload, 0);
         if (timeoutMs == 0)
             return Result::failure(Error::InvalidArgument, "timeout must be non-zero");
+        environment_->vdp().setRemoteLockstep(false, 1);
         return environment_->restart(timeoutMs)
             ? Result{}
             : Result::failure(Error::Timeout, "game restart timed out or the environment stopped");
@@ -476,6 +485,74 @@ class RemoteAccess::Impl {
                 return Result::failure(Error::Timeout, "timed out while holding buttons");
         }
         return {};
+    }
+
+    Result setLockstep(std::span<const std::uint8_t> payload) {
+        if (payload.size() != 8 || payload[1] != 0 || payload[2] != 0 || payload[3] != 0)
+            return Result::failure(
+                Error::MalformedPayload,
+                "SET_LOCKSTEP requires enabled:u8, reserved:3, timeout:u32");
+        if (payload[0] > 1)
+            return Result::failure(Error::InvalidArgument, "lockstep enabled flag must be zero or one");
+        const std::uint32_t timeoutMs = readU32(payload, 4);
+        if (timeoutMs == 0)
+            return Result::failure(Error::InvalidArgument, "timeout must be non-zero");
+        environment_->controllers().clearRemoteState();
+        return environment_->vdp().setRemoteLockstep(payload[0] != 0, timeoutMs)
+            ? Result{}
+            : Result::failure(
+                  payload[0] != 0 ? Error::Timeout : Error::Unavailable,
+                  payload[0] != 0 ? "timed out entering lockstep at a frame boundary"
+                                  : "could not disable lockstep");
+    }
+
+    Result stepInput(std::span<const std::uint8_t> payload) {
+        if (payload.size() != 16 || payload[2] != 0 || payload[3] != 0)
+            return Result::failure(
+                Error::MalformedPayload,
+                "STEP_INPUT requires P1:u8, P2:u8, reserved:2, held-frames:u32, "
+                "total-frames:u32, timeout:u32");
+        const std::uint32_t heldFrames = readU32(payload, 4);
+        const std::uint32_t totalFrames = readU32(payload, 8);
+        const std::uint32_t timeoutMs = readU32(payload, 12);
+        if (totalFrames == 0 || heldFrames > totalFrames || timeoutMs == 0)
+            return Result::failure(
+                Error::InvalidArgument,
+                "total frames and timeout must be non-zero and held frames must not exceed total frames");
+        if (!environment_->vdp().remoteLockstepEnabled())
+            return Result::failure(Error::Unavailable, "STEP_INPUT requires enabled lockstep");
+
+        struct ReleaseGuard {
+            Controllers &controllers;
+            ~ReleaseGuard() { controllers.clearRemoteState(); }
+        } guard{environment_->controllers()};
+
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+        const PlayersControlState pressed{decodeButtons(payload[0]), decodeButtons(payload[1])};
+        environment_->controllers().setRemoteState(heldFrames == 0 ? PlayersControlState{} : pressed);
+        for (std::uint32_t frame = 0; frame < totalFrames; ++frame) {
+            if (frame == heldFrames)
+                environment_->controllers().clearRemoteState();
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline)
+                return Result::failure(Error::Timeout, "timed out during lockstep step");
+            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+            const auto slice = static_cast<std::uint32_t>(
+                std::clamp<std::int64_t>(remaining, 1, std::numeric_limits<std::uint32_t>::max()));
+            if (!environment_->vdp().advanceRemoteLockstepFrame(slice))
+                return Result::failure(Error::Timeout, "timed out during lockstep step");
+        }
+
+        environment_->controllers().clearRemoteState();
+        Result result;
+        appendU64(result.payload, environment_->gameUptimeFrames());
+        constexpr std::uint32_t kWorkRamBase = 0x00FF0000u;
+        constexpr std::size_t kWorkRamSize = 64u * 1024u;
+        const auto offset = result.payload.size();
+        result.payload.resize(offset + kWorkRamSize);
+        environment_->memory().copyToBuffer(
+            kWorkRamBase, result.payload.data() + offset, static_cast<int>(kWorkRamSize));
+        return result;
     }
 
     bool waitVSyncUntil(std::chrono::steady_clock::time_point deadline) {

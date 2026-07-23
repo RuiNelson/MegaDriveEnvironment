@@ -14,6 +14,7 @@ from .models import (
     Framebuffer,
     PaletteEntry,
     Sprite,
+    StepResult,
     Tilemap,
     TilemapEntry,
     TilemapPlane,
@@ -32,10 +33,11 @@ __all__ = [
     "RemoteTimeoutError",
     "ServerError",
     "Sprite",
+    "StepResult",
     "Tilemap",
     "TilemapEntry",
     "TilemapPlane",
     "VDPState",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

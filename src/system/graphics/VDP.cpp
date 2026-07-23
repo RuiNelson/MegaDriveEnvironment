@@ -97,6 +97,7 @@ void VDP::start() {
 /// Stops the render thread, keeping the SDL window/renderer alive for a later start().
 void VDP::stop() {
     running_ = false;
+    setRemoteLockstep(false, 1);
     wakeSyncWaiters();
     if (thread_) {
         SDL_Event e;
@@ -191,6 +192,123 @@ void VDP::wakeSyncWaiters() {
         ++syncWakeGeneration_;
     }
     syncEventCV_.notify_all();
+}
+
+bool VDP::setRemoteLockstep(bool enabled, std::uint32_t timeoutMs) {
+    if (!enabled) {
+        {
+            std::lock_guard lock(remoteLockstepMutex_);
+            remoteLockstepRequested_ = false;
+            remoteLockstepEngaged_ = false;
+            remoteLockstepRendererPaused_ = false;
+            remoteLockstepCPUPaused_ = false;
+        }
+        remoteLockstepCV_.notify_all();
+        if (env_ != nullptr) {
+            env_->interruptGeneration_.fetch_add(1, std::memory_order_release);
+            env_->interruptGeneration_.notify_all();
+        }
+        return true;
+    }
+    if (timeoutMs == 0 || !running_.load(std::memory_order_acquire) || env_ == nullptr)
+        return false;
+
+    {
+        std::lock_guard lock(remoteLockstepMutex_);
+        remoteLockstepAllowedFrame_ = env_->gameUptimeFrames();
+        remoteLockstepRequested_ = true;
+    }
+    remoteLockstepCV_.notify_all();
+    env_->interruptGeneration_.fetch_add(1, std::memory_order_release);
+    env_->interruptGeneration_.notify_all();
+
+    std::unique_lock lock(remoteLockstepMutex_);
+    const bool ready = remoteLockstepCV_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [&] {
+        const bool cpuActive = env_->bootRunning_.load(std::memory_order_acquire) &&
+                               !env_->cpuDone_.load(std::memory_order_acquire);
+        return !running_.load(std::memory_order_acquire) ||
+               (remoteLockstepRequested_ && remoteLockstepEngaged_ &&
+                remoteLockstepRendererPaused_ && (!cpuActive || remoteLockstepCPUPaused_));
+    }) && running_.load(std::memory_order_acquire) && remoteLockstepRequested_ &&
+           remoteLockstepEngaged_ && remoteLockstepRendererPaused_;
+    lock.unlock();
+    if (!ready)
+        setRemoteLockstep(false, 1);
+    return ready;
+}
+
+bool VDP::remoteLockstepEnabled() const {
+    std::lock_guard lock(remoteLockstepMutex_);
+    return remoteLockstepRequested_ && remoteLockstepEngaged_;
+}
+
+bool VDP::advanceRemoteLockstepFrame(std::uint32_t timeoutMs) {
+    if (timeoutMs == 0 || env_ == nullptr)
+        return false;
+
+    std::unique_lock lock(remoteLockstepMutex_);
+    const bool cpuActive = env_->bootRunning_.load(std::memory_order_acquire) &&
+                           !env_->cpuDone_.load(std::memory_order_acquire);
+    if (!running_.load(std::memory_order_acquire) || !remoteLockstepRequested_ ||
+        !remoteLockstepEngaged_ || !remoteLockstepRendererPaused_ ||
+        (cpuActive && !remoteLockstepCPUPaused_))
+        return false;
+
+    const std::uint64_t target = env_->gameUptimeFrames() + 1;
+    remoteLockstepAllowedFrame_ = target;
+    remoteLockstepRendererPaused_ = false;
+    remoteLockstepCPUPaused_ = false;
+    lock.unlock();
+    remoteLockstepCV_.notify_all();
+    env_->interruptGeneration_.fetch_add(1, std::memory_order_release);
+    env_->interruptGeneration_.notify_all();
+    lock.lock();
+
+    return remoteLockstepCV_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [&] {
+        const bool activeCPU = env_->bootRunning_.load(std::memory_order_acquire) &&
+                               !env_->cpuDone_.load(std::memory_order_acquire);
+        return !running_.load(std::memory_order_acquire) || !remoteLockstepRequested_ ||
+               (env_->gameUptimeFrames() >= target && remoteLockstepRendererPaused_ &&
+                (!activeCPU || remoteLockstepCPUPaused_));
+    }) && running_.load(std::memory_order_acquire) && remoteLockstepRequested_ &&
+           env_->gameUptimeFrames() == target && remoteLockstepRendererPaused_;
+}
+
+void VDP::remoteLockstepCPUCheckpoint() {
+    if (!remoteLockstepRequested_)
+        return;
+    std::unique_lock lock(remoteLockstepMutex_);
+    if (!remoteLockstepRequested_)
+        return;
+    remoteLockstepCPUPaused_ = true;
+    remoteLockstepCV_.notify_all();
+    remoteLockstepCV_.wait(lock, [&] {
+        return !remoteLockstepRequested_ || !running_.load(std::memory_order_acquire) ||
+               env_ == nullptr || env_->shouldQuit() ||
+               env_->restartRequested_.load(std::memory_order_acquire) ||
+               env_->gameUptimeFrames() < remoteLockstepAllowedFrame_;
+    });
+    remoteLockstepCPUPaused_ = false;
+    remoteLockstepCV_.notify_all();
+}
+
+bool VDP::remoteLockstepRenderCheckpoint() {
+    std::unique_lock lock(remoteLockstepMutex_);
+    if (!remoteLockstepRequested_)
+        return running_.load(std::memory_order_acquire);
+
+    remoteLockstepEngaged_ = true;
+    remoteLockstepRendererPaused_ = true;
+    remoteLockstepCV_.notify_all();
+    remoteLockstepCV_.wait(lock, [&] {
+        return !remoteLockstepRequested_ || !running_.load(std::memory_order_acquire) ||
+               env_ == nullptr || env_->shouldQuit() ||
+               env_->restartRequested_.load(std::memory_order_acquire) ||
+               env_->gameUptimeFrames() < remoteLockstepAllowedFrame_;
+    });
+    remoteLockstepRendererPaused_ = false;
+    remoteLockstepCV_.notify_all();
+    return running_.load(std::memory_order_acquire);
 }
 
 void VDP::signalHSync(int line) {
@@ -441,6 +559,8 @@ int VDP::renderLoop() {
     uint64_t nextFrameDeadline = SDL_GetTicksNS();
 
     while (running_) {
+        if (!remoteLockstepRenderCheckpoint())
+            break;
         const std::uint64_t frameFrequencyHz = env_ != nullptr ? env_->vdpInternalFrequencyHz() : 60u;
         const std::uint64_t frameTimeNs =
             std::max<std::uint64_t>(1u, (1'000'000'000ull + frameFrequencyHz / 2u) / frameFrequencyHz);
