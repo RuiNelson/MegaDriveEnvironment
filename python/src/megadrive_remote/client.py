@@ -230,6 +230,14 @@ class MegaDriveClient:
             raise ProtocolError("game uptime response must contain one u64")
         return unpack(">Q", response)[0]
 
+    def get_game_uptime_frames(self) -> int:
+        """Return complete VSync frames elapsed since the game last started or reset."""
+
+        response = self._request(Command.GET_GAME_UPTIME_FRAMES)
+        if len(response) != 8:
+            raise ProtocolError("game frame uptime response must contain one u64")
+        return unpack(">Q", response)[0]
+
     def get_execution_data(self) -> bytes:
         """Return a copy of the game-defined debugging buffer."""
 

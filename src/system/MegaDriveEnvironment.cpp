@@ -445,6 +445,7 @@ void MegaDriveEnvironment::powerOn(bool isRestart) {
         std::lock_guard lock(restartMutex_);
         gameStartedAt_ = std::chrono::steady_clock::now();
     }
+    gameUptimeFrames_.store(0, std::memory_order_release);
     if (isRestart)
         onReset();
     memory_.resetWorkRAM();

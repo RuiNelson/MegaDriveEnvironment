@@ -153,10 +153,15 @@ int main() {
     const std::vector<std::uint8_t> executionData{'d', 'e', 'b', 'u', 'g', 0x00};
     assert(environment.remoteAccess().setExecutionData(executionData));
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    assert(environment.vdp().waitForVSyncCount(10, 1'000));
     const auto uptimeBeforeRestart = environment.gameUptimeMilliseconds();
+    const auto framesBeforeRestart = environment.gameUptimeFrames();
+    assert(framesBeforeRestart >= 10);
     request(socketFd, 0x01, 3, timeout);
     const auto uptimeAfterRestart = environment.gameUptimeMilliseconds();
+    const auto framesAfterRestart = environment.gameUptimeFrames();
     assert(uptimeAfterRestart < uptimeBeforeRestart);
+    assert(framesAfterRestart < framesBeforeRestart);
     assert(environment.remoteAccess().executionData() == executionData);
     request(socketFd, 0x00, 4);
 

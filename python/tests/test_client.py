@@ -101,6 +101,10 @@ class MegaDriveClientTests(unittest.TestCase):
             self.assertEqual((command, payload), (0x02, b""))
             return ACK, pack(">Q", 0xFEDCBA9876543210)
 
+        def uptime_frames(command: int, payload: bytes) -> tuple[int, bytes]:
+            self.assertEqual((command, payload), (0x05, b""))
+            return ACK, pack(">Q", 0x0123456789ABCDEF)
+
         def read(command: int, payload: bytes) -> tuple[int, bytes]:
             self.assertEqual(command, 0x20)
             self.assertEqual(payload, pack(">II", 0xFF0100, 2))
@@ -114,10 +118,11 @@ class MegaDriveClientTests(unittest.TestCase):
             )
             return ACK, b""
 
-        with ClientHarness(ping, restart, uptime, write, read, buttons) as client:
+        with ClientHarness(ping, restart, uptime, uptime_frames, write, read, buttons) as client:
             client.ping()
             client.restart_game(timeout_ms=3_000)
             self.assertEqual(client.get_game_uptime_ms(), 0xFEDCBA9876543210)
+            self.assertEqual(client.get_game_uptime_frames(), 0x0123456789ABCDEF)
             client.write_value(0xFF0100, 0x1234, width=2)
             self.assertEqual(client.read_value(0xFF0100, width=2), 0x1234)
             client.press_buttons(
@@ -273,6 +278,15 @@ class MegaDriveClientTests(unittest.TestCase):
         with ClientHarness(malformed) as client:
             with self.assertRaisesRegex(ProtocolError, "one u64"):
                 client.get_game_uptime_ms()
+
+    def test_rejects_malformed_frame_uptime_response(self) -> None:
+        def malformed(command: int, payload: bytes) -> tuple[int, bytes]:
+            self.assertEqual((command, payload), (0x05, b""))
+            return ACK, b"\x00" * 9
+
+        with ClientHarness(malformed) as client:
+            with self.assertRaisesRegex(ProtocolError, "one u64"):
+                client.get_game_uptime_frames()
 
 
 if __name__ == "__main__":

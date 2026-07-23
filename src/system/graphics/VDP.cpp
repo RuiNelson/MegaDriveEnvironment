@@ -208,6 +208,8 @@ void VDP::signalVSync() {
         std::lock_guard lock(syncEventMutex_);
         ++vSyncGeneration_;
     }
+    if (env_ != nullptr)
+        env_->recordVSync();
     syncEventCV_.notify_all();
 }
 

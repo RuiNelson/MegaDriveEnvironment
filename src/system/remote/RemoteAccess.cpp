@@ -49,6 +49,7 @@ enum class Command : std::uint8_t {
     GetGameUptime = 0x02,
     GetExecutionData = 0x03,
     SetExecutionData = 0x04,
+    GetGameUptimeFrames = 0x05,
     PressButtons = 0x10,
     ReleaseButtons = 0x11,
     ReadMemory = 0x20,
@@ -397,6 +398,13 @@ class RemoteAccess::Impl {
                 return setExecutionData(payload)
                     ? Result{}
                     : Result::failure(Error::TooLarge, "execution data exceeds the protocol payload limit");
+            case Command::GetGameUptimeFrames: {
+                if (!payload.empty())
+                    return Result::failure(Error::MalformedPayload, "GET_GAME_UPTIME_FRAMES has no payload");
+                Result result;
+                appendU64(result.payload, environment_->gameUptimeFrames());
+                return result;
+            }
             case Command::PressButtons:
                 return pressButtons(payload);
             case Command::ReleaseButtons:

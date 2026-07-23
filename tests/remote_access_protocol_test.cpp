@@ -138,6 +138,7 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
     const auto uptimeMs = readU64(request(socketFd, 0x02, 2, {}));
     assert(uptimeMs >= 5 && uptimeMs < 10'000);
+    assert(readU64(request(socketFd, 0x05, 100, {})) == environment.gameUptimeFrames());
 
     const std::vector<std::uint8_t> initialExecutionData{'J', 'S', 'O', 'N', 0x00};
     assert(environment.remoteAccess().setExecutionData(initialExecutionData));
