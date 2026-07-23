@@ -173,6 +173,13 @@ if(BUILD_TESTING AND PROJECT_IS_TOP_LEVEL)
         COMMAND megadrive_environment_vdp_color_test
     )
 
+    add_executable(megadrive_environment_vdp_renderer_test tests/vdp_renderer_test.cpp)
+    target_link_libraries(megadrive_environment_vdp_renderer_test PRIVATE MegaDriveEnvironment)
+    add_test(
+        NAME megadrive_environment_vdp_renderer_test
+        COMMAND megadrive_environment_vdp_renderer_test
+    )
+
     add_executable(megadrive_environment_remote_access_foundations_test
         tests/remote_access_foundations_test.cpp
     )

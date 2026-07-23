@@ -4,6 +4,7 @@
  */
 
 #include "Framebuffer.hpp"
+#include <algorithm>
 
 /// Initializes framebuffer and clears to black.
 Framebuffer::Framebuffer() {
@@ -60,8 +61,30 @@ Framebuffer Framebuffer::convertTo8BitsPerPixel() const {
     return result;
 }
 
-/// Uploads 3-bit-expanded pixel data into an existing SDL_Texture (no alloc).
-void Framebuffer::uploadToTexture(SDL_Texture *tex) const {
-    Framebuffer expanded = convertTo8BitsPerPixel();
-    SDL_UpdateTexture(tex, nullptr, expanded.getRawPointer(), PITCH);
+/// Uploads native pixels after expanding 3-bit channels directly into the locked streaming texture.
+/// Only the active image is converted: progressive H40 output is 320×224 rather than the framebuffer's
+/// interlace-capable 320×480 allocation. This also avoids constructing and clearing a 450 KiB temporary.
+void Framebuffer::uploadToTexture(SDL_Texture *tex, int width, int height) const {
+    if (tex == nullptr)
+        return;
+
+    width  = std::clamp(width, 0, WIDTH);
+    height = std::clamp(height, 0, HEIGHT);
+    if (width == 0 || height == 0)
+        return;
+
+    void *texturePixels = nullptr;
+    int   texturePitch  = 0;
+    if (!SDL_LockTexture(tex, nullptr, &texturePixels, &texturePitch))
+        return;
+
+    static constexpr m_byte lut[8] = {0, 36, 73, 109, 146, 182, 219, 255};
+    auto *destination = static_cast<m_byte *>(texturePixels);
+    for (int y = 0; y < height; ++y) {
+        const m_byte *sourceRow = pixels_ + y * PITCH;
+        m_byte       *targetRow = destination + y * texturePitch;
+        for (int byte = 0; byte < width * BPP; ++byte)
+            targetRow[byte] = lut[sourceRow[byte] & 0x07];
+    }
+    SDL_UnlockTexture(tex);
 }

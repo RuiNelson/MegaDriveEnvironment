@@ -500,7 +500,9 @@ void VDP::presentToScreen() {
     if (!texture_)
         return;
     updateWindowTitle();
-    framebuffer_.uploadToTexture(texture_);
+    const int framebufferW = state_.activeWidth();
+    const int framebufferH = state_.activeOutputHeight();
+    framebuffer_.uploadToTexture(texture_, framebufferW, framebufferH);
 
     m_byte bgR, bgG, bgB;
     tile_.cramToRGB_FullRange(static_cast<m_byte>(state_.bgColorPalette()),
@@ -516,8 +518,6 @@ void VDP::presentToScreen() {
     if (!SDL_GetRenderOutputSize(sdlRenderer_, &outputW, &outputH) || outputW <= 0 || outputH <= 0)
         return;
 
-    const int framebufferW = state_.activeWidth();
-    const int framebufferH = state_.activeOutputHeight();
     const float scale = std::min(static_cast<float>(outputW) / static_cast<float>(framebufferW),
                                  static_cast<float>(outputH) / static_cast<float>(framebufferH));
     const float viewportW = static_cast<float>(framebufferW) * scale;
@@ -587,7 +587,6 @@ int VDP::renderLoop() {
             // scheduleInterrupt(HSync) is safe under mutex_: it only touches
             // irqMutex_ + a raiseInterrupt atomic, never mutex_ itself.
             SDL_LockMutex(mutex_);
-            framebuffer_.clear();
             state_.status_ &= ~0x0088; // clear VINT/VBlank at the start of active rendering
             if (state_.interlaced() && state_.oddFrame_)
                 state_.status_ |= 0x0010;

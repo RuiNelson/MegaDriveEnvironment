@@ -47,8 +47,8 @@ class Framebuffer {
     /// Returns new framebuffer with 3-bit values expanded to 8-bit (0→0, 7→255) via lookup table.
     Framebuffer convertTo8BitsPerPixel() const;
 
-    /// Uploads framebuffer pixels (3-bit expanded to 8-bit) into an existing SDL_Texture via SDL_UpdateTexture.
-    void uploadToTexture(SDL_Texture *tex) const;
+    /// Expands and uploads the requested active area directly into a streaming SDL texture.
+    void uploadToTexture(SDL_Texture *tex, int width = WIDTH, int height = HEIGHT) const;
 
     private:
     /// Pixel data array: [Y * WIDTH + X] * BPP gives BGR triple.

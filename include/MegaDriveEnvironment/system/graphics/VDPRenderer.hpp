@@ -65,6 +65,26 @@ class VDPRenderer {
         PixelResult planeBPx, PixelResult planeAPx, PixelResult spritePx, m_byte bgR, m_byte bgG, m_byte bgB) const;
 
     private:
+    /// Builds one scrolling plane for a scanline, caching each nametable entry and decoded tile row.
+    void buildPlaneLine(PixelResult *destination,
+                        int          planeBase,
+                        int          hscroll,
+                        int          baseVscroll,
+                        int          vsramOffset,
+                        bool         twoCellVscroll,
+                        int          line,
+                        int          activeWidth,
+                        int          planeWidthCells,
+                        int          planeHeightCells,
+                        bool         interlace2) const;
+
+    /// Replaces the active portion of Plane A with pixels from the window plane.
+    void overlayWindowLine(PixelResult *destination,
+                           int          line,
+                           int          xStart,
+                           int          xEnd,
+                           bool         interlace2) const;
+
     /// Evaluates the whole sprite layer for one scanline into spriteLine_. Walks the SAT link chain a single
     /// time (instead of re-scanning all 80 sprites per pixel), applying masking, the per-line limit / SOVR,
     /// and sprite-sprite collision (SCOL). The topmost (first in chain order) opaque sprite wins each pixel.
@@ -79,4 +99,9 @@ class VDPRenderer {
     /// Sprite layer for the scanline currently being rendered, filled by buildSpriteLine() and read by the
     /// per-pixel composite loop. Transparent (opaque=false) where no sprite covers the pixel.
     PixelResult spriteLine_[VDPState::SCREEN_W];
+
+    /// Scrolling planes for the current scanline. Building them in tile-row runs avoids repeating nametable
+    /// decoding, division/modulo, and cross-translation-unit accessor calls for every output pixel.
+    PixelResult planeALine_[VDPState::SCREEN_W];
+    PixelResult planeBLine_[VDPState::SCREEN_W];
 };
