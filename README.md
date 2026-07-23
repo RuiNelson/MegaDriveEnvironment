@@ -428,6 +428,10 @@ contains a more detailed discussion of stack, pools and decompression buffers.
 
 ## VDP and frame timing
 
+<p>
+  <img src="docs/pixelart.webp" height="300">
+</p>
+
 The VDP can be reached through the memory map or directly through `vdp()`. Use
 mapped access when sharing the code with a Mega Drive build; use the direct API
 for environment-specific tools and diagnostics.
@@ -460,6 +464,10 @@ reporting overflow state. `VDP::QuasiUnlimitedSprites` is useful for debugging
 sprite tables without hiding entries behind the per-line limit.
 
 ## Controllers and configuration
+
+<p>
+  <img src="docs/ninja.webp" height="300">
+</p>
 
 `Controllers` loads `controls.yaml` once during construction. If the file is
 missing or malformed, Player 1 uses the defaults below and Player 2 is disabled.
@@ -499,6 +507,10 @@ captures are stored relative to that directory. Gamepad bindings persist by
 GUID and are resolved to the current SDL session when the environment starts.
 
 ## Sound and Z80
+
+<p>
+  <img src="docs/sax.webp" height="300">
+</p>
 
 The mapped sound path mirrors the console architecture:
 
