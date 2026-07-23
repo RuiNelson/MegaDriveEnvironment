@@ -295,7 +295,7 @@ void PlayerConfigScreen::render(UIRenderer &ui) {
 
         // Right-side status label
         const char *status = m_config.connected ? "ON" : "OFF";
-        SDL_Color   sCol   = m_config.connected ? (SDL_Color){90, 210, 90, 255} : CC_COL_TEXT_GRAY;
+        SDL_Color   sCol   = m_config.connected ? SDL_Color{90, 210, 90, 255} : CC_COL_TEXT_GRAY;
         int         sw     = ui.textWidth(status);
         ui.drawText(rowX + rowW - ipad - sw, y + ty_off, status, sCol);
     }
