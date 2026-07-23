@@ -81,6 +81,10 @@ VDP::~VDP() {
     shutdown();
 }
 
+bool VDP::setFullscreen(bool fullscreen) {
+    return window_ && SDL_SetWindowFullscreen(window_, fullscreen);
+}
+
 // ── Threading ──────────────────────────────────────────────────────────────
 
 /// Spawns the render thread. No-op if it is already running.

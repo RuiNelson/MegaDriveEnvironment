@@ -60,13 +60,19 @@ void MegaDriveEnvironment::boot() {
     bootRunning_.store(true, std::memory_order_release);
     remoteAccess_.start();
     powerOn(false);
-    openOptionHotkeyGamepads();
 
     // Pump SDL events on the main thread so the VDP can present frames
     // (SDL_RunOnMainThread) and so window-close requests are observed.
     SDL_Event event;
     bool      fullscreenActive = false;
     bool      cursorWasVisible = true;
+    if (startFullscreen_ && vdp_.setFullscreen(true)) {
+        cursorWasVisible = SDL_CursorVisible();
+        SDL_HideCursor();
+        fullscreenActive = true;
+    }
+    if (debugUtilities_)
+        openOptionHotkeyGamepads();
     bool      runAgain = true;
     while (runAgain) {
         cpuDone_.store(false, std::memory_order_release);
@@ -78,9 +84,9 @@ void MegaDriveEnvironment::boot() {
 
         while (!cpuDone_.load(std::memory_order_acquire)) {
             while (SDL_PollEvent(&event)) {
-                if (event.type == SDL_EVENT_GAMEPAD_ADDED) {
+                if (debugUtilities_ && event.type == SDL_EVENT_GAMEPAD_ADDED) {
                     openOptionHotkeyGamepad(event.gdevice.which);
-                } else if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
+                } else if (debugUtilities_ && event.type == SDL_EVENT_GAMEPAD_REMOVED) {
                     closeOptionHotkeyGamepad(event.gdevice.which);
                 } else if (event.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN && !fullscreenActive) {
                     cursorWasVisible = SDL_CursorVisible();
@@ -93,13 +99,15 @@ void MegaDriveEnvironment::boot() {
                     fullscreenActive = false;
                 }
 
-                if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && (event.key.mod & SDL_KMOD_ALT) &&
+                if (debugUtilities_ && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+                    (event.key.mod & SDL_KMOD_ALT) &&
                     event.key.key != SDLK_LALT && event.key.key != SDLK_RALT) {
                     handleOptionHotkey(OptionHotkeyCode{
                         .source      = OptionHotkeyCode::Source::Keyboard,
                         .keyboardKey = event.key.key,
                     });
-                } else if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && (SDL_GetModState() & SDL_KMOD_ALT)) {
+                } else if (debugUtilities_ && event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
+                           (SDL_GetModState() & SDL_KMOD_ALT)) {
                     handleOptionHotkey(OptionHotkeyCode{
                         .source        = OptionHotkeyCode::Source::Gamepad,
                         .gamepadButton = static_cast<SDL_GamepadButton>(event.gbutton.button),
@@ -118,10 +126,11 @@ void MegaDriveEnvironment::boot() {
                     quitRequested_.store(true, std::memory_order_release);
                     interruptGeneration_.fetch_add(1, std::memory_order_release);
                     interruptGeneration_.notify_all();
-                } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_R &&
+                } else if (debugUtilities_ && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+                           event.key.key == SDLK_R &&
                            (event.key.mod & SDL_KMOD_CTRL)) {
                     requestRestart();
-                } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_P &&
+                } else if (debugUtilities_ && event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_P &&
                            (event.key.mod & SDL_KMOD_CTRL)) {
                     // CTRL+P: capture the composited frame to a numbered PNG.
                     static unsigned shot = 0;
@@ -129,7 +138,7 @@ void MegaDriveEnvironment::boot() {
                     std::snprintf(path, sizeof path, "screenshot_%03u.png", shot++);
                     vdp_.dumpFrameBufferToPNG(path, /*fullRange=*/true);
                     Logger::log("[capture] frame -> %s", path);
-                } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_S &&
+                } else if (debugUtilities_ && event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_S &&
                            (event.key.mod & SDL_KMOD_CTRL)) {
                     // CTRL+S: capture the full VDP debug view (frame + tile sheets +
                     // plane nametables + registers) to a numbered PNG.

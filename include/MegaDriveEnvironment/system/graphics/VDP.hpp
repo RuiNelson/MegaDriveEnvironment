@@ -195,6 +195,10 @@ class VDP {
     /// Exports framebuffer + tile sheets + plane nametables to PNG.
     void dumpEverythingToPNG(std::string path, bool fullRange);
 
+    /// Switches the host window between windowed and desktop fullscreen modes.
+    /// Returns false if the SDL window is unavailable or SDL rejects the change.
+    bool setFullscreen(bool fullscreen);
+
     // ── Lifecycle ──────────────────────────────────────────────────────────
 
     /// Resets all VDP state to initial values and clears framebuffer.

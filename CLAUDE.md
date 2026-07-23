@@ -28,7 +28,6 @@ Before changing code:
 | `include/MegaDriveEnvironment/` | Public C++ headers exposed to consumers |
 | `src/system/` | Root runtime, memory, graphics, controllers, sound, Z80, and remote access |
 | `src/config/` | Controls configuration UI and persistence |
-| `src/runtime_tests/` | Host diagnostic modes used by consumer executables |
 | `src/util/` | Logging, images, fonts, and other runtime utilities |
 | `tests/` | C++ integration and protocol tests |
 | `python/` | Installable `megadrive_remote` client and Python tests |

@@ -137,10 +137,6 @@ target_include_directories(MegaDriveEnvironment PUBLIC
     ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/system/z80/suzukiplan
     ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/config
     ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/config/controls
-    ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/runtime_tests
-    ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/runtime_tests/controllers
-    ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/runtime_tests/sound
-    ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/runtime_tests/vdp_tests
     ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/util
     ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/util/font
     ${MEGADRIVE_ENVIRONMENT_INCLUDE_DIR}/util/image
@@ -202,6 +198,15 @@ if(BUILD_TESTING AND PROJECT_IS_TOP_LEVEL)
     add_test(
         NAME megadrive_environment_restart_test
         COMMAND megadrive_environment_restart_test
+    )
+
+    add_executable(megadrive_environment_debug_utilities_test
+        tests/debug_utilities_test.cpp
+    )
+    target_link_libraries(megadrive_environment_debug_utilities_test PRIVATE MegaDriveEnvironment)
+    add_test(
+        NAME megadrive_environment_debug_utilities_test
+        COMMAND megadrive_environment_debug_utilities_test
     )
 
     find_package(Python3 3.9 COMPONENTS Interpreter QUIET)

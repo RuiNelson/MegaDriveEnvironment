@@ -148,6 +148,18 @@ class MegaDriveEnvironment {
     void setDebugLog(bool on) {
         debugLog_.store(on, std::memory_order_relaxed);
     }
+
+    /// Enables host-only restart, capture and Alt/Option hotkeys. These
+    /// utilities are enabled by default for compatibility with existing hosts.
+    /// Call before boot().
+    void setDebugUtilities(bool enabled) {
+        debugUtilities_ = enabled;
+    }
+
+    /// Requests desktop fullscreen when boot() starts. Call before boot().
+    void setStartFullscreen(bool enabled) {
+        startFullscreen_ = enabled;
+    }
     bool debugLog() const {
         return debugLog_.load(std::memory_order_relaxed);
     }
@@ -409,6 +421,8 @@ class MegaDriveEnvironment {
     std::atomic<LanguagePin>     languagePin_{LanguagePin::Japanese};
     std::atomic<VideoStandard>   videoStandard_{VideoStandard::Hz60};
     std::atomic<std::uint32_t>   vdpTurboMultiplier_{0};
+    bool                         debugUtilities_ = true;
+    bool                         startFullscreen_ = false;
     std::string                  auxAddrFile_;          ///< append unknown dispatch targets here (if set)
     std::string                  loadedROMPath_;        ///< prevents a restarted run() from replacing patched ROM
     bool                         romLoaded_ = false;
