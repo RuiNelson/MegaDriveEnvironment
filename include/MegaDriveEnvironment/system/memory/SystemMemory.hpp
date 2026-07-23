@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <shared_mutex>
 #include <string>
@@ -34,8 +35,9 @@ class MegaDriveEnvironment;
  * matching the native format of the 68000 CPU.
  *
  * Threading: cartridge ROM may be patched by remote automation after loadROM().
- * A whole-image shared mutex makes each bulk dump/patch one transaction, so a
- * reader cannot observe a half-applied patch. WRAM uses its own short spin lock.
+ * Normal ROM reads are lock-free atomic loads; a publication sequence keeps
+ * multi-byte reads within one patch generation. Bulk ROM dumps/patches also use
+ * a whole-image shared mutex. WRAM uses its own short spin lock.
  * Memory-mapped hardware is routed outside the lock (each subsystem
  * self-synchronizes; holding the WRAM lock across a VDP call would deadlock
  * when DMA re-enters memory).
@@ -74,22 +76,88 @@ class SystemMemory {
     void patchBytes(m_long address, const void *data, std::size_t count);
 
     /// Reads a single byte from the given 68K address.
-    m_byte readByte(m_long address);
+    inline m_byte readByte(m_long address) {
+        const m_long normalized = address & ADDRESS_MASK;
+        if (normalized >= WORK_RAM_BASE) [[likely]] {
+            WramSpinGuard guard(wramLock_);
+            return wram_[normalized & WORK_RAM_MASK];
+        }
+        if (normalized < ROM_SIZE) [[likely]]
+            return loadROMByte(normalized);
+        return hwReadByte(normalized);
+    }
 
     /// Reads a 16-bit word (big-endian) from the given 68K address.
-    m_word readWord(m_long address);
+    inline m_word readWord(m_long address) {
+        const m_long normalized = address & ADDRESS_MASK;
+        if (normalized >= WORK_RAM_BASE) [[likely]] {
+            WramSpinGuard guard(wramLock_);
+            const m_byte *data = wram_ + (normalized & WORK_RAM_MASK);
+            return static_cast<m_word>((static_cast<m_word>(data[0]) << 8) | data[1]);
+        }
+        if (normalized < ROM_SIZE) [[likely]]
+            return loadROMWord(normalized);
+        return hwReadWord(normalized);
+    }
 
     /// Reads a 32-bit long word (big-endian) from the given 68K address.
-    m_long readLong(m_long address);
+    inline m_long readLong(m_long address) {
+        const m_long normalized = address & ADDRESS_MASK;
+        if (normalized >= WORK_RAM_BASE) [[likely]] {
+            WramSpinGuard guard(wramLock_);
+            const m_byte *data = wram_ + (normalized & WORK_RAM_MASK);
+            return (static_cast<m_long>(data[0]) << 24) | (static_cast<m_long>(data[1]) << 16)
+                 | (static_cast<m_long>(data[2]) << 8) | static_cast<m_long>(data[3]);
+        }
+        if (normalized < ROM_SIZE) [[likely]]
+            return loadROMLong(normalized);
+        return hwReadLong(normalized);
+    }
 
     /// Writes a single byte to the given 68K address.
-    void writeByte(m_long address, m_byte value);
+    inline void writeByte(m_long address, m_byte value) {
+        const m_long normalized = address & ADDRESS_MASK;
+        if (normalized >= WORK_RAM_BASE) [[likely]] {
+            WramSpinGuard guard(wramLock_);
+            wram_[normalized & WORK_RAM_MASK] = value;
+            return;
+        }
+        if (normalized < ROM_SIZE) [[likely]]
+            return;
+        hwWriteByte(normalized, value);
+    }
 
     /// Writes a 16-bit word (big-endian) to the given 68K address.
-    void writeWord(m_long address, m_word value);
+    inline void writeWord(m_long address, m_word value) {
+        const m_long normalized = address & ADDRESS_MASK;
+        if (normalized >= WORK_RAM_BASE) [[likely]] {
+            WramSpinGuard guard(wramLock_);
+            m_byte *data = wram_ + (normalized & WORK_RAM_MASK);
+            data[0] = static_cast<m_byte>(value >> 8);
+            data[1] = static_cast<m_byte>(value);
+            return;
+        }
+        if (normalized < ROM_SIZE) [[likely]]
+            return;
+        hwWriteWord(normalized, value);
+    }
 
     /// Writes a 32-bit long word (big-endian) to the given 68K address.
-    void writeLong(m_long address, m_long value);
+    inline void writeLong(m_long address, m_long value) {
+        const m_long normalized = address & ADDRESS_MASK;
+        if (normalized >= WORK_RAM_BASE) [[likely]] {
+            WramSpinGuard guard(wramLock_);
+            m_byte *data = wram_ + (normalized & WORK_RAM_MASK);
+            data[0] = static_cast<m_byte>(value >> 24);
+            data[1] = static_cast<m_byte>(value >> 16);
+            data[2] = static_cast<m_byte>(value >> 8);
+            data[3] = static_cast<m_byte>(value);
+            return;
+        }
+        if (normalized < ROM_SIZE) [[likely]]
+            return;
+        hwWriteLong(normalized, value);
+    }
 
     /// Waits until a byte equals @p desiredValue. While it differs, invokes
     /// @p waitForProgress, which may block and must allow the producer of the
@@ -127,6 +195,14 @@ class SystemMemory {
     void writeFromBuffer(void *ptr, m_long address, int count);
 
     private:
+    static_assert(std::atomic_ref<m_byte>::is_always_lock_free,
+                  "SystemMemory requires lock-free byte atomics for ROM reads");
+
+    static constexpr m_long ADDRESS_MASK  = 0x00FFFFFFu;
+    static constexpr m_long ROM_SIZE      = 0x00400000u;
+    static constexpr m_long WORK_RAM_BASE = 0x00FF0000u;
+    static constexpr m_long WORK_RAM_MASK = 0x0000FFFFu;
+
     /// Platform WRAM lock: os_unfair_lock (Apple), std::atomic_flag (Windows),
     /// or pthread_spinlock_t (Linux/BSD). Hold sections must stay short: never
     /// call VDP/Z80/sound while locked.
@@ -165,25 +241,48 @@ class SystemMemory {
         WramLock &lock_;
     };
 
-    /// Maps a 68K address to a host pointer (handles 32-bit sign-extended mirrors).
-    char *convertAddress(m_long address);
-
-    // ── Unlocked primitives (caller holds wramLock_ when touching WRAM) ─────
-    m_byte _readByte(m_long address);
-    m_word _readWord(m_long address);
-    m_long _readLong(m_long address);
-    void   _writeByte(m_long address, m_byte value);
-    void   _writeWord(m_long address, m_word value);
-    void   _writeLong(m_long address, m_long value);
-    void   _copyByte(m_long from, m_long to);
-    void   _copyToBuffer(m_long address, void *ptr, int count);
-    void   _writeFromBuffer(void *ptr, m_long address, int count);
+    /// Lock-free ROM reads. Byte storage is accessed through atomic_ref so a
+    /// rare remote patch cannot race the emulated CPU. Word/long reads use the
+    /// sequence counter to reject a value spanning two patch generations.
+    inline m_byte loadROMByte(m_long offset) {
+        return std::atomic_ref<m_byte>(rom_[offset]).load(std::memory_order_relaxed);
+    }
+    inline std::uint32_t beginROMRead() {
+        for (;;) {
+            const std::uint32_t sequence = romSequence_.load(std::memory_order_acquire);
+            if ((sequence & 1u) == 0)
+                return sequence;
+            romSequence_.wait(sequence, std::memory_order_acquire);
+        }
+    }
+    inline m_word loadROMWord(m_long offset) {
+        for (;;) {
+            const std::uint32_t sequence = beginROMRead();
+            const m_word value = static_cast<m_word>(
+                (static_cast<m_word>(loadROMByte(offset)) << 8) | loadROMByte(offset + 1));
+            std::atomic_thread_fence(std::memory_order_acquire);
+            if (romSequence_.load(std::memory_order_relaxed) == sequence)
+                return value;
+        }
+    }
+    inline m_long loadROMLong(m_long offset) {
+        for (;;) {
+            const std::uint32_t sequence = beginROMRead();
+            const m_long value = (static_cast<m_long>(loadROMByte(offset)) << 24)
+                               | (static_cast<m_long>(loadROMByte(offset + 1)) << 16)
+                               | (static_cast<m_long>(loadROMByte(offset + 2)) << 8)
+                               | static_cast<m_long>(loadROMByte(offset + 3));
+            std::atomic_thread_fence(std::memory_order_acquire);
+            if (romSequence_.load(std::memory_order_relaxed) == sequence)
+                return value;
+        }
+    }
+    void publishROMBytes(std::size_t offset, const m_byte *data, std::size_t count);
+    void clearROM();
 
     // ── Memory-mapped hardware (VDP / I/O / Z80 / TMSS) ──────────────────────
     // Routed outside wramLock_ (each subsystem self-locks; the VDP's DMA reads
     // back through this memory, so holding the WRAM lock here would deadlock).
-    static bool isHardware(m_long address);
-    static bool isROM(m_long address);
     m_byte      hwReadByte(m_long address);
     m_word      hwReadWord(m_long address);
     m_long      hwReadLong(m_long address);
@@ -193,9 +292,10 @@ class SystemMemory {
 
     MegaDriveEnvironment *env_ = nullptr; ///< For memory-mapped hardware routing.
 
-    void *rom_  = nullptr; ///< 0x000000-0x3FFFFF (4 MiB)
-    void *wram_ = nullptr; ///< 0xFF0000-0xFFFFFF (64 KiB)
-    mutable std::shared_mutex romMutex_; ///< Whole ROM image / segment transactions.
+    m_byte *rom_  = nullptr; ///< 0x000000-0x3FFFFF (4 MiB)
+    m_byte *wram_ = nullptr; ///< 0xFF0000-0xFFFFFF (64 KiB)
+    mutable std::shared_mutex romMutex_; ///< Serializes ROM publications and bulk snapshots.
+    std::atomic<std::uint32_t> romSequence_{0}; ///< Odd while a ROM image patch is being published.
 
 #if defined(__APPLE__)
     WramLock wramLock_ = OS_UNFAIR_LOCK_INIT;

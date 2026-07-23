@@ -7,10 +7,8 @@
 
 #include "system/MegaDriveEnvironment.hpp"
 
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <exception>
 #include <format>
 #include <fstream>
 #include <ios>
@@ -18,25 +16,21 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
-#define ROM_SIZE      0x400000
-#define Z80_RAM_SIZE  0x2000
-#define WORK_RAM_SIZE 0x10000
+#define ROM_SIZE      0x400000u
+#define WORK_RAM_SIZE 0x10000u
 
-#define ROM_BASE      0x000000u
-#define ROM_END       (ROM_BASE + ROM_SIZE)
-#define Z80_BASE      0xA00000u
-#define Z80_END       (Z80_BASE + Z80_RAM_SIZE)
+#define ROM_END       ROM_SIZE
 #define WORK_RAM_BASE 0xFF0000u
-#define WORK_RAM_END  (WORK_RAM_BASE + WORK_RAM_SIZE)
 
 // Control RAM is on the `Controllers` instance, VDP RAM is on the `VDP`
 // instance, and Z80 RAM is on the `Z80` instance — all reached through the
 // owning MegaDriveEnvironment.
 
 SystemMemory::SystemMemory(MegaDriveEnvironment *env) : env_(env) {
-    rom_  = malloc(ROM_SIZE);
-    wram_ = malloc(WORK_RAM_SIZE);
+    rom_  = static_cast<m_byte *>(malloc(ROM_SIZE));
+    wram_ = static_cast<m_byte *>(malloc(WORK_RAM_SIZE));
 #if !defined(__APPLE__) && !defined(_WIN32)
     // Process-private POSIX spinlock (Linux/BSD). Darwin has no pthread_spinlock_t;
     // Apple and Windows locks are initialized in-class.
@@ -58,7 +52,7 @@ SystemMemory::~SystemMemory() {
 void SystemMemory::initRAM() {
     {
         std::unique_lock lock(romMutex_);
-        std::memset(rom_, 0, ROM_SIZE);
+        clearROM();
     }
     WramSpinGuard guard(wramLock_);
     std::memset(wram_, 0, WORK_RAM_SIZE);
@@ -95,12 +89,15 @@ bool SystemMemory::loadROM(const std::string &path) {
         toRead = static_cast<std::streamsize>(ROM_SIZE);
     }
 
-    std::unique_lock lock(romMutex_);
-    file.read(static_cast<char *>(rom_), toRead);
+    std::vector<m_byte> image(static_cast<std::size_t>(toRead));
+    file.read(reinterpret_cast<char *>(image.data()), toRead);
     if (!file && !file.eof()) {
         std::cerr << std::format("SystemMemory: error reading ROM file '{}'\n", path);
         return false;
     }
+
+    std::unique_lock lock(romMutex_);
+    publishROMBytes(0, image.data(), image.size());
     return true;
 }
 
@@ -109,81 +106,23 @@ void SystemMemory::patchBytes(m_long address, const void *data, std::size_t coun
     if (a >= ROM_END || count > static_cast<std::size_t>(ROM_END - a))
         throw std::out_of_range("SystemMemory::patchBytes range is outside cartridge ROM");
     std::unique_lock lock(romMutex_);
-    std::memcpy(static_cast<char *>(rom_) + a, data, count);
+    publishROMBytes(a, static_cast<const m_byte *>(data), count);
 }
 
-// Mega Drive physical memory map (24-bit address bus):
-//   0x000000 – 0x3FFFFF  →  Cartridge ROM       (4 MiB)
-//   0xA00000 – 0xA01FFF  →  Z80 RAM             (8 KiB)
-//   0xFF0000 – 0xFFFFFF  →  68000 Work RAM       (64 KiB)
-//
-// The 68000 has 32-bit address registers but only a 24-bit bus, so every
-// address is normalized to 24 bits before dispatch. This makes the high
-// sign-extended mirrors fold correctly (e.g. FFFF8000 → FF8000, FFFF0000 →
-// FF0000 lands in work RAM) and lets register-derived addresses with stray
-// high bits map without each caller having to mask first.
-char *SystemMemory::convertAddress(m_long address) {
-    constexpr m_long ADDRESS_MASK_24 = 0x00FFFFFFu;
-
-    address &= ADDRESS_MASK_24;
-
-    if (address >= ROM_BASE && address < ROM_END) {
-        auto offset = address - ROM_BASE;
-        return static_cast<char *>(rom_) + offset;
-    }
-    if (address >= Z80_BASE && address < Z80_END) {
-        // Unreachable via the public read*/write* API: isHardware() (below)
-        // catches this range first and routes it through hwReadByte/hwWriteByte
-        // to the Z80 subsystem's RAM. Only the unlocked copy*() helpers (currently
-        // unused anywhere in the codebase) could reach here, bypassing that routing.
-    }
-    if (address >= WORK_RAM_BASE && address < WORK_RAM_END) {
-        auto offset = address - WORK_RAM_BASE;
-        return static_cast<char *>(wram_) + offset;
-    }
-
-    std::cerr << std::format("SystemMemory: unmapped address 0x{:06X}\n", address);
-    std::terminate();
+void SystemMemory::publishROMBytes(std::size_t offset, const m_byte *data, std::size_t count) {
+    romSequence_.fetch_add(1, std::memory_order_acq_rel);
+    for (std::size_t index = 0; index < count; ++index)
+        std::atomic_ref<m_byte>(rom_[offset + index]).store(data[index], std::memory_order_relaxed);
+    romSequence_.fetch_add(1, std::memory_order_release);
+    romSequence_.notify_all();
 }
 
-m_byte SystemMemory::_readByte(m_long address) {
-    auto *ptr = convertAddress(address);
-    return static_cast<m_byte>(ptr[0]);
-}
-
-m_word SystemMemory::_readWord(m_long address) {
-    auto *ptr = convertAddress(address);
-    return static_cast<m_word>(static_cast<unsigned char>(ptr[0])) * 0x100 +
-           static_cast<m_word>(static_cast<unsigned char>(ptr[1]));
-}
-
-m_long SystemMemory::_readLong(m_long address) {
-    auto *ptr = convertAddress(address);
-    return static_cast<m_long>(static_cast<unsigned char>(ptr[0])) * 0x1000000 +
-           static_cast<m_long>(static_cast<unsigned char>(ptr[1])) * 0x10000 +
-           static_cast<m_long>(static_cast<unsigned char>(ptr[2])) * 0x100 +
-           static_cast<m_long>(static_cast<unsigned char>(ptr[3]));
-}
-
-void SystemMemory::_writeByte(m_long address, m_byte value) {
-    auto *ptr = convertAddress(address);
-    ptr[0]    = static_cast<char>(value);
-}
-
-void SystemMemory::_writeWord(m_long address, m_word value) {
-    auto *ptr = convertAddress(address);
-    ptr[0]    = static_cast<char>((value / 0x100) & 0xFF);
-    ptr[1]    = static_cast<char>(value & 0xFF);
-}
-
-void SystemMemory::_writeLong(m_long address, m_long value) {
-    const m_long a = address & 0x00FFFFFFu;
-
-    auto *ptr = convertAddress(address);
-    ptr[0]    = static_cast<char>((value / 0x1000000) & 0xFF);
-    ptr[1]    = static_cast<char>((value / 0x10000) & 0xFF);
-    ptr[2]    = static_cast<char>((value / 0x100) & 0xFF);
-    ptr[3]    = static_cast<char>(value & 0xFF);
+void SystemMemory::clearROM() {
+    romSequence_.fetch_add(1, std::memory_order_acq_rel);
+    for (std::size_t index = 0; index < ROM_SIZE; ++index)
+        std::atomic_ref<m_byte>(rom_[index]).store(0, std::memory_order_relaxed);
+    romSequence_.fetch_add(1, std::memory_order_release);
+    romSequence_.notify_all();
 }
 
 m_byte SystemMemory::waitForByteValue(m_long address,
@@ -219,17 +158,8 @@ m_word SystemMemory::waitForWordBits(m_long address,
 // subsystem; the remaining areas (Z80, TMSS, PSG, control) are safe stubs —
 // reads return 0, writes are ignored — enough to let the recompiled boot run.
 
-bool SystemMemory::isHardware(m_long address) {
-    address &= 0x00FFFFFFu;
-    return address >= 0x400000u && address < WORK_RAM_BASE;
-}
-
-bool SystemMemory::isROM(m_long address) {
-    return (address & 0x00FFFFFFu) < ROM_END;
-}
-
 m_byte SystemMemory::hwReadByte(m_long address) {
-    m_long a = address & 0x00FFFFFFu;
+    m_long a = address;
     if (env_ == nullptr)
         return 0;
     if (a >= 0xA00000u && a < 0xA02000u) {
@@ -262,7 +192,7 @@ m_byte SystemMemory::hwReadByte(m_long address) {
 }
 
 m_word SystemMemory::hwReadWord(m_long address) {
-    m_long a = address & 0x00FFFFFFu;
+    m_long a = address;
     if (env_ == nullptr)
         return 0;
     if (a >= 0xA00000u && a < 0xA02000u) {
@@ -297,7 +227,7 @@ m_long SystemMemory::hwReadLong(m_long address) {
 }
 
 void SystemMemory::hwWriteByte(m_long address, m_byte value) {
-    m_long a = address & 0x00FFFFFFu;
+    m_long a = address;
     if (env_ == nullptr)
         return;
     if (a >= 0xA00000u && a < 0xA02000u) {
@@ -346,7 +276,7 @@ void SystemMemory::hwWriteByte(m_long address, m_byte value) {
 }
 
 void SystemMemory::hwWriteWord(m_long address, m_word value) {
-    m_long a = address & 0x00FFFFFFu;
+    m_long a = address;
     if (env_ == nullptr)
         return;
     if (a >= 0xA00000u && a < 0xA02000u) {
@@ -387,127 +317,80 @@ void SystemMemory::hwWriteLong(m_long address, m_long value) {
     hwWriteWord(address + 2, static_cast<m_word>(value & 0xFFFFu));
 }
 
-m_byte SystemMemory::readByte(m_long address) {
-    if (isHardware(address))
-        return hwReadByte(address);
-    if (isROM(address)) {
-        std::shared_lock lock(romMutex_);
-        return _readByte(address);
-    }
-    WramSpinGuard guard(wramLock_);
-    return _readByte(address);
-}
-
-m_word SystemMemory::readWord(m_long address) {
-    if (isHardware(address))
-        return hwReadWord(address);
-    if (isROM(address)) {
-        std::shared_lock lock(romMutex_);
-        return _readWord(address);
-    }
-    WramSpinGuard guard(wramLock_);
-    return _readWord(address);
-}
-
-m_long SystemMemory::readLong(m_long address) {
-    if (isHardware(address))
-        return hwReadLong(address);
-    if (isROM(address)) {
-        std::shared_lock lock(romMutex_);
-        return _readLong(address);
-    }
-    WramSpinGuard guard(wramLock_);
-    return _readLong(address);
-}
-
-void SystemMemory::writeByte(m_long address, m_byte value) {
-    if (isHardware(address)) {
-        hwWriteByte(address, value);
-        return;
-    }
-    if (isROM(address))
-        return; // cartridge ROM is read-only — writes are ignored on hardware
-    WramSpinGuard guard(wramLock_);
-    _writeByte(address, value);
-}
-
-void SystemMemory::writeWord(m_long address, m_word value) {
-    if (isHardware(address)) {
-        hwWriteWord(address, value);
-        return;
-    }
-    if (isROM(address))
-        return;
-    WramSpinGuard guard(wramLock_);
-    _writeWord(address, value);
-}
-
-void SystemMemory::writeLong(m_long address, m_long value) {
-    if (isHardware(address)) {
-        hwWriteLong(address, value);
-        return;
-    }
-    if (isROM(address))
-        return;
-    WramSpinGuard guard(wramLock_);
-    _writeLong(address, value);
-}
-
-void SystemMemory::_copyByte(m_long from, m_long to) {
-    auto val = _readByte(from);
-    _writeByte(to, val);
-}
-
 void SystemMemory::copyByte(m_long from, m_long to) {
-    WramSpinGuard guard(wramLock_);
-    _copyByte(from, to);
+    writeByte(to, readByte(from));
 }
 
 void SystemMemory::copyBytes(m_long from, m_long to, int count) {
-    WramSpinGuard guard(wramLock_);
-    for (int i = 0; i < count; i++) {
-        _copyByte(from + i, to + i);
+    if (count <= 0)
+        return;
+
+    const m_long source = from & 0x00FFFFFFu;
+    const m_long destination = to & 0x00FFFFFFu;
+    const auto size = static_cast<std::size_t>(count);
+
+    if (source >= WORK_RAM_BASE && destination >= WORK_RAM_BASE
+        && size <= WORK_RAM_SIZE - (source - WORK_RAM_BASE)
+        && size <= WORK_RAM_SIZE - (destination - WORK_RAM_BASE)) {
+        WramSpinGuard guard(wramLock_);
+        std::memmove(wram_ + (destination - WORK_RAM_BASE), wram_ + (source - WORK_RAM_BASE), size);
+        return;
     }
+    if (source < ROM_END && destination >= WORK_RAM_BASE
+        && size <= ROM_END - source && size <= WORK_RAM_SIZE - (destination - WORK_RAM_BASE)) {
+        std::shared_lock romLock(romMutex_);
+        WramSpinGuard wramGuard(wramLock_);
+        std::memcpy(wram_ + (destination - WORK_RAM_BASE), rom_ + source, size);
+        return;
+    }
+
+    for (int index = 0; index < count; ++index)
+        writeByte(to + static_cast<m_long>(index), readByte(from + static_cast<m_long>(index)));
 }
 
 void SystemMemory::copyWord(m_long from, m_long to) {
-    WramSpinGuard guard(wramLock_);
-    auto val = _readWord(from);
-    _writeWord(to, val);
+    writeWord(to, readWord(from));
 }
 
 void SystemMemory::copyLong(m_long from, m_long to) {
-    WramSpinGuard guard(wramLock_);
-    auto val = _readLong(from);
-    _writeLong(to, val);
-}
-
-void SystemMemory::_copyToBuffer(m_long address, void *ptr, int count) {
-    auto *src  = convertAddress(address);
-    auto *dest = static_cast<char *>(ptr);
-    std::memcpy(dest, src, count);
+    writeLong(to, readLong(from));
 }
 
 void SystemMemory::copyToBuffer(m_long address, void *ptr, int count) {
-    if (isROM(address)) {
-        const m_long a = address & 0x00FFFFFFu;
-        if (count >= 0 && static_cast<m_long>(count) <= static_cast<m_long>(ROM_END - a)) {
-            std::shared_lock lock(romMutex_);
-            _copyToBuffer(address, ptr, count);
-            return;
-        }
-    }
-    WramSpinGuard guard(wramLock_);
-    _copyToBuffer(address, ptr, count);
-}
+    if (count <= 0)
+        return;
 
-void SystemMemory::_writeFromBuffer(void *ptr, m_long address, int count) {
-    auto *src  = static_cast<char *>(ptr);
-    auto *dest = convertAddress(address);
-    std::memcpy(dest, src, count);
+    const m_long normalized = address & 0x00FFFFFFu;
+    const auto size = static_cast<std::size_t>(count);
+    if (normalized < ROM_END && size <= ROM_END - normalized) {
+        std::shared_lock lock(romMutex_);
+        std::memcpy(ptr, rom_ + normalized, size);
+        return;
+    }
+    if (normalized >= WORK_RAM_BASE && size <= WORK_RAM_SIZE - (normalized - WORK_RAM_BASE)) {
+        WramSpinGuard guard(wramLock_);
+        std::memcpy(ptr, wram_ + (normalized - WORK_RAM_BASE), size);
+        return;
+    }
+
+    auto *destination = static_cast<m_byte *>(ptr);
+    for (int index = 0; index < count; ++index)
+        destination[index] = readByte(address + static_cast<m_long>(index));
 }
 
 void SystemMemory::writeFromBuffer(void *ptr, m_long address, int count) {
-    WramSpinGuard guard(wramLock_);
-    _writeFromBuffer(ptr, address, count);
+    if (count <= 0)
+        return;
+
+    const m_long normalized = address & 0x00FFFFFFu;
+    const auto size = static_cast<std::size_t>(count);
+    if (normalized >= WORK_RAM_BASE && size <= WORK_RAM_SIZE - (normalized - WORK_RAM_BASE)) {
+        WramSpinGuard guard(wramLock_);
+        std::memcpy(wram_ + (normalized - WORK_RAM_BASE), ptr, size);
+        return;
+    }
+
+    const auto *source = static_cast<const m_byte *>(ptr);
+    for (int index = 0; index < count; ++index)
+        writeByte(address + static_cast<m_long>(index), source[index]);
 }
