@@ -140,6 +140,8 @@ consumer after this repository's tests pass.
 ## Cross-repository delivery
 
 When this repository is checked out as a submodule, a completed change may
-also require the parent meta-repository to record a new gitlink. Do not commit
-or publish either repository unless explicitly requested. Report the tests run
+also require the parent meta-repository to record a new gitlink. After
+validation, commit and push this repository to `main` automatically unless the
+user explicitly asks not to publish, then update the parent gitlink. Preserve
+unrelated work and never force-push or rewrite history. Report the tests run
 here and any consumer build used for validation.
