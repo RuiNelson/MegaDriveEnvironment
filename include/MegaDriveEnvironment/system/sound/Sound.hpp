@@ -16,6 +16,8 @@
 class MegaDriveEnvironment;
 
 class Sound {
+    friend struct SoundPSGTestAccess;
+
     public:
     static constexpr int kSampleRate = 48000;
 
@@ -128,15 +130,13 @@ class Sound {
         }
 
         private:
-        void               processToneEdge(int channel);
-        void               processNoiseEdge();
-        void               processEdgesAt(uint64_t edgeTime);
         void               updateToneFreq(int channel, int period);
         void               updateNoiseFreq();
         void               setChannelVolume(int channel, int attenuation);
         void               recomputeChannelOut(int channel);
         std::array<int, 2> mixedLevel() const;
-        uint64_t           nextEdgeTime() const;
+        uint64_t           integrateTone(int channel, uint64_t masterCycle);
+        uint64_t           integrateNoise(uint64_t masterCycle);
 
         uint64_t time_ = 0; ///< last committed master-cycle time
 
@@ -184,8 +184,6 @@ class Sound {
     void               popRingFrames(int16_t *dst, int frames);
     void               renderSamples(int16_t *dst, int frames);
     void               renderPsgChunk(int frames);
-    bool               pushPsgFrame(int left, int right);
-    bool               popPsgFrame(int &left, int &right);
     bool               enqueueYMEvent(TimedEvent event);
     bool               enqueuePSGEvent(TimedEvent event);
     void               drainQueueUntil(std::vector<TimedEvent> &queue,

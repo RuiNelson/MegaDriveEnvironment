@@ -1,6 +1,7 @@
 #include "Sound.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -89,11 +90,7 @@ int psgVolume(uint8_t attenuation) {
 // White-noise XOR of the tapped bits (mask selects which LFSR bits feed back).
 // For the integrated ASIC, mask is 0x9 → bits 0 and 3.
 int noiseFeedbackBit(int shiftValue, int bitMask) {
-    const int masked = shiftValue & bitMask;
-    int       parity = 0;
-    for (int bit = masked; bit != 0; bit >>= 1)
-        parity ^= (bit & 1);
-    return parity;
+    return std::popcount(static_cast<unsigned>(shiftValue & bitMask)) & 1;
 }
 
 } // namespace
@@ -244,6 +241,12 @@ void Sound::renderPsgChunk(int frames) {
     if (frames <= 0)
         return;
 
+    const size_t capacity = static_cast<size_t>(kPsgRingFrames);
+    const size_t buffered = psgRingBuffered_.load(std::memory_order_acquire);
+    const int writable =
+        std::min(frames, static_cast<int>(capacity - std::min(buffered, capacity)));
+    size_t writeFrame = psgRingWriteFrame_;
+
     const double target = static_cast<double>(masterCyclesNow()) - kEventLatencyCycles;
     double       error  = psgRenderMasterCycle_ - target;
     if (std::abs(error) > kSnapCycles) {
@@ -281,39 +284,24 @@ void Sound::renderPsgChunk(int frames) {
             applyPSGEvent(psgRenderEvents_[nextEvent++]);
 
         const auto sample = psg_.renderUntil(masterCycle);
-        if (!pushPsgFrame(sample[0], sample[1]))
-            psgOverrunCount_.fetch_add(1, std::memory_order_relaxed);
+        if (i < writable) {
+            psgRing_[writeFrame * 2 + 0] = sample[0];
+            psgRing_[writeFrame * 2 + 1] = sample[1];
+            if (++writeFrame == capacity)
+                writeFrame = 0;
+        }
 
         lastPSGRenderedMasterCycle_.store(masterCycle, std::memory_order_relaxed);
         psgRenderMasterCycle_ += step;
     }
-}
 
-bool Sound::pushPsgFrame(int left, int right) {
-    const size_t capacity = static_cast<size_t>(kPsgRingFrames);
-    if (psgRingBuffered_.load(std::memory_order_relaxed) >= capacity)
-        return false;
-    if (psgRing_.size() < capacity * 2)
-        psgRing_.assign(capacity * 2, 0);
-
-    psgRing_[psgRingWriteFrame_ * 2 + 0] = left;
-    psgRing_[psgRingWriteFrame_ * 2 + 1] = right;
-    psgRingWriteFrame_                   = (psgRingWriteFrame_ + 1) % capacity;
-    psgRingBuffered_.fetch_add(1, std::memory_order_release);
+    if (writable > 0) {
+        psgRingWriteFrame_ = writeFrame;
+        psgRingBuffered_.fetch_add(static_cast<size_t>(writable), std::memory_order_release);
+    }
+    if (writable < frames)
+        psgOverrunCount_.fetch_add(static_cast<uint64_t>(frames - writable), std::memory_order_relaxed);
     psgRingBufferedSnapshot_.store(psgRingBuffered_.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    return true;
-}
-
-bool Sound::popPsgFrame(int &left, int &right) {
-    if (psgRingBuffered_.load(std::memory_order_acquire) == 0)
-        return false;
-    const size_t capacity                = static_cast<size_t>(kPsgRingFrames);
-    left                                 = psgRing_[psgRingReadFrame_ * 2 + 0];
-    right                                = psgRing_[psgRingReadFrame_ * 2 + 1];
-    psgRingReadFrame_                    = (psgRingReadFrame_ + 1) % capacity;
-    psgRingBuffered_.fetch_sub(1, std::memory_order_release);
-    psgRingBufferedSnapshot_.store(psgRingBuffered_.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    return true;
 }
 
 m_byte Sound::readYM2612(int port) {
@@ -604,6 +592,14 @@ void Sound::renderSamples(int16_t *dst, int frames) {
 
     for (int base = 0; base < frames; base += kRenderChunkFrames) {
         const int chunkFrames = std::min(kRenderChunkFrames, frames - base);
+        const size_t psgCapacity = static_cast<size_t>(kPsgRingFrames);
+        const size_t psgAvailable =
+            psgThreaded
+                ? std::min(static_cast<size_t>(chunkFrames),
+                           psgRingBuffered_.load(std::memory_order_acquire))
+                : 0;
+        size_t psgReadFrame = psgRingReadFrame_;
+
         // Keep the FM render clock kEventLatencyCycles behind the producers'
         // wall clock: snap on gross drift (startup, host stalls), otherwise
         // trim the per-sample step so the pitch shift stays inaudible.
@@ -666,9 +662,11 @@ void Sound::renderSamples(int16_t *dst, int frames) {
 
             std::array<int, 2> psg{0, 0};
             if (psgThreaded) {
-                if (!popPsgFrame(psg[0], psg[1])) {
-                    psgUnderrunCount_.fetch_add(1, std::memory_order_relaxed);
-                    // Hold last level implicitly as silence on underrun.
+                if (static_cast<size_t>(i) < psgAvailable) {
+                    psg[0] = psgRing_[psgReadFrame * 2 + 0];
+                    psg[1] = psgRing_[psgReadFrame * 2 + 1];
+                    if (++psgReadFrame == psgCapacity)
+                        psgReadFrame = 0;
                 }
             } else {
                 psg = psg_.renderUntil(masterCycle);
@@ -682,6 +680,20 @@ void Sound::renderSamples(int16_t *dst, int frames) {
             lastYMRenderedMasterCycle_.store(masterCycle, std::memory_order_relaxed);
             renderMasterCycle_ += step;
         }
+
+        if (psgThreaded) {
+            psgRingReadFrame_ = psgReadFrame;
+            if (psgAvailable > 0)
+                psgRingBuffered_.fetch_sub(psgAvailable, std::memory_order_release);
+            if (psgAvailable < static_cast<size_t>(chunkFrames))
+                psgUnderrunCount_.fetch_add(
+                    static_cast<uint64_t>(chunkFrames) - psgAvailable,
+                    std::memory_order_relaxed);
+            psgRingBufferedSnapshot_.store(
+                psgRingBuffered_.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+        }
+
         cachedStatus_.store(ym_.read(0), std::memory_order_relaxed);
         audioFramesRendered_.fetch_add(static_cast<uint64_t>(chunkFrames), std::memory_order_relaxed);
         if (FILE *tap = sndTapFile())
@@ -1024,42 +1036,98 @@ std::array<int, 2> Sound::PSG::mixedLevel() const {
     return {left, right};
 }
 
-uint64_t Sound::PSG::nextEdgeTime() const {
-    uint64_t next = nextEdge_[0];
-    for (int ch = 1; ch < 4; ++ch)
-        next = std::min(next, nextEdge_[ch]);
-    return next;
-}
+uint64_t Sound::PSG::integrateTone(int channel, uint64_t masterCycle) {
+    const uint64_t start  = time_;
+    const uint64_t period = static_cast<uint64_t>(freqInc_[channel]);
+    uint64_t       edge   = nextEdge_[channel];
+    int            state  = polarity_[channel];
 
-void Sound::PSG::processToneEdge(int channel) {
-    polarity_[channel] = -polarity_[channel];
-    nextEdge_[channel] += static_cast<uint64_t>(std::max(freqInc_[channel], 1));
-}
-
-void Sound::PSG::processNoiseEdge() {
-    polarity_[3] = -polarity_[3];
-    // LFSR advances only on the rising edge of the noise clock.
-    if (polarity_[3] > 0) {
-        const int shiftOutput = noiseShift_ & 0x01;
-        if (regs_[6] & 0x04) {
-            // White noise: XOR feedback network.
-            const int feedback = noiseFeedbackBit(noiseShift_, noiseBitMask_);
-            noiseShift_        = (noiseShift_ >> 1) | (feedback << noiseShiftWidth_);
-        } else {
-            // Periodic noise: recycle current output bit.
-            noiseShift_ = (noiseShift_ >> 1) | (shiftOutput << noiseShiftWidth_);
+    // Muted channels still advance phase, but need no area calculation.
+    if ((chanOutL_[channel] | chanOutR_[channel]) == 0) {
+        if (edge < masterCycle) {
+            const uint64_t flips = ((masterCycle - edge - 1) / period) + 1;
+            if (flips & 1u)
+                state = -state;
+            edge += flips * period;
         }
+        polarity_[channel] = state;
+        nextEdge_[channel] = edge;
+        return 0;
     }
-    nextEdge_[3] += static_cast<uint64_t>(std::max(freqInc_[3], 1));
+
+    // An edge exactly at the start belongs to this interval. Usually there is
+    // at most one, but the quotient also catches up after a host time jump.
+    if (edge <= start) {
+        const uint64_t flips = ((start - edge) / period) + 1;
+        if (flips & 1u)
+            state = -state;
+        edge += flips * period;
+    }
+
+    uint64_t highCycles = 0;
+    const uint64_t firstSpanEnd = std::min(edge, masterCycle);
+    if (state > 0)
+        highCycles = firstSpanEnd - start;
+
+    if (edge < masterCycle) {
+        // The first edge flips `state`; subsequent constant-width spans
+        // alternate. Count complete spans arithmetically instead of visiting
+        // every tone edge (up to ~14 per output sample at period 0).
+        const uint64_t remaining = masterCycle - edge;
+        const int      afterEdge = -state;
+        const uint64_t fullSpans = remaining / period;
+        const uint64_t remainder = remaining % period;
+        const uint64_t highSpans =
+            afterEdge > 0 ? ((fullSpans + 1) / 2) : (fullSpans / 2);
+        highCycles += highSpans * period;
+
+        const int remainderState = (fullSpans & 1u) ? -afterEdge : afterEdge;
+        if (remainderState > 0)
+            highCycles += remainder;
+
+        const uint64_t flips = ((remaining - 1) / period) + 1;
+        if (flips & 1u)
+            state = -state;
+        edge += flips * period;
+    }
+
+    polarity_[channel] = state;
+    nextEdge_[channel] = edge;
+    return highCycles;
 }
 
-void Sound::PSG::processEdgesAt(uint64_t edgeTime) {
-    for (int ch = 0; ch < 3; ++ch) {
-        if (nextEdge_[ch] == edgeTime)
-            processToneEdge(ch);
+uint64_t Sound::PSG::integrateNoise(uint64_t masterCycle) {
+    uint64_t       cursor     = time_;
+    uint64_t       highCycles = 0;
+    uint64_t       edge       = nextEdge_[3];
+    const uint64_t period     = static_cast<uint64_t>(freqInc_[3]);
+    int            state      = polarity_[3];
+    int            shift      = noiseShift_;
+    const bool     white      = (regs_[6] & 0x04) != 0;
+
+    while (edge < masterCycle) {
+        if ((shift & 1) && edge > cursor)
+            highCycles += edge - cursor;
+        cursor = std::max(cursor, edge);
+
+        state = -state;
+        // The LFSR advances only on the rising edge of the noise clock.
+        if (state > 0) {
+            const int output = shift & 1;
+            const int feedback =
+                white ? noiseFeedbackBit(shift, noiseBitMask_) : output;
+            shift = (shift >> 1) | (feedback << noiseShiftWidth_);
+        }
+        edge += period;
     }
-    if (nextEdge_[3] == edgeTime)
-        processNoiseEdge();
+
+    if ((shift & 1) && masterCycle > cursor)
+        highCycles += masterCycle - cursor;
+
+    polarity_[3] = state;
+    noiseShift_  = shift;
+    nextEdge_[3] = edge;
+    return highCycles;
 }
 
 void Sound::PSG::write(m_byte value) {
@@ -1113,33 +1181,21 @@ std::array<int, 2> Sound::PSG::renderUntil(uint64_t masterCycle) {
     int64_t        accL  = 0;
     int64_t        accR  = 0;
 
-    while (time_ < masterCycle) {
-        const uint64_t edge = nextEdgeTime();
-        const uint64_t next = std::min(edge, masterCycle);
-
-        if (next > time_) {
-            const auto     level = mixedLevel();
-            const int64_t  dur   = static_cast<int64_t>(next - time_);
-            accL += static_cast<int64_t>(level[0]) * dur;
-            accR += static_cast<int64_t>(level[1]) * dur;
-            time_ = next;
-        }
-
-        if (time_ >= masterCycle)
-            break;
-
-        // One or more generators flip at `time_`.
-        processEdgesAt(time_);
-
-        // If freqInc collapsed somehow, force progress to avoid a stuck loop.
-        if (nextEdgeTime() <= time_) {
-            for (int ch = 0; ch < 4; ++ch) {
-                if (nextEdge_[ch] <= time_)
-                    nextEdge_[ch] = time_ + 1;
-            }
-        }
+    for (int channel = 0; channel < 3; ++channel) {
+        const uint64_t highCycles = integrateTone(channel, masterCycle);
+        accL += static_cast<int64_t>(chanOutL_[channel]) *
+                static_cast<int64_t>(highCycles);
+        accR += static_cast<int64_t>(chanOutR_[channel]) *
+                static_cast<int64_t>(highCycles);
     }
 
+    const uint64_t noiseHighCycles = integrateNoise(masterCycle);
+    accL += static_cast<int64_t>(chanOutL_[3]) *
+            static_cast<int64_t>(noiseHighCycles);
+    accR += static_cast<int64_t>(chanOutR_[3]) *
+            static_cast<int64_t>(noiseHighCycles);
+
+    time_ = masterCycle;
     const int64_t span = static_cast<int64_t>(masterCycle - start);
     return {
         static_cast<int>(accL / span),
