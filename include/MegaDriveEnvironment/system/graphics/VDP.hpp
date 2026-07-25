@@ -37,8 +37,8 @@ class MegaDriveEnvironment;
  *   ┌─────────▼────────────────────────────────────────────────┐
  *   │  Render thread                                           │
  *   │  renderLoop() → VDPRenderer → present to SDL window     │
- *   │  Calls environment->hSync(line) per scanline and         │
- *   │  environment->vSync() after each frame                   │
+ *   │  Queues ticketed HSync/VSync callbacks for the CPU       │
+ *   │  thread and waits for their completion                   │
  *   └─────────────────────────────────────────────────────────┘
  *
  * Sub-components (all private, owned):
@@ -125,13 +125,12 @@ class VDP {
         };
         Type type;
         int  line; ///< Scanline index for HSync; 0 for VSync.
-        /// Non-zero while the renderer awaits completion of this HBlank callback.
+        /// Non-zero while the renderer awaits completion of this callback.
         std::uint64_t dispatchTicket = 0;
     };
 
-    /// Pops the oldest scheduled interrupt into @p out. Returns false when none
-    /// are pending. Thread-safe; intended to be drained from the program thread
-    /// (see MegaDriveEnvironment::runVDPInterrupts).
+    /// Pops the oldest scheduled callback into @p out. Returns false when none
+    /// are pending. The environment drains this automatically on the CPU thread.
     bool popInterrupt(Interrupt &out);
 
     /// Drops every queued callback and releases any scanline synchronization
@@ -293,15 +292,15 @@ class VDP {
     /// Appends an interrupt to irqQueue_ (drops the oldest if at capacity).
     void scheduleInterrupt(Interrupt::Type type, int line);
 
-    /// Releases a renderer waiting for this completed cooperative callback.
+    /// Releases the renderer after the CPU thread completes this callback.
     void acknowledgeInterrupt(const Interrupt &interrupt);
-    /// Releases the current HBlank ticket after a recompiled IRQ4 handler starts.
+    /// Releases the current ticket after a recompiled IRQ4/IRQ6 handler starts.
     void acknowledgeInterruptLevel(int level);
 
-    std::mutex cooperativeHSyncMutex_;
-    std::condition_variable cooperativeHSyncCV_;
-    std::uint64_t nextCooperativeHSyncTicket_ = 0;
-    std::uint64_t completedCooperativeHSyncTicket_ = 0;
+    std::mutex interruptDispatchMutex_;
+    std::condition_variable interruptDispatchCV_;
+    std::uint64_t nextInterruptDispatchTicket_ = 0;
+    std::uint64_t completedInterruptDispatchTicket_ = 0;
 
     // ── Thread ─────────────────────────────────────────────────────────────
 

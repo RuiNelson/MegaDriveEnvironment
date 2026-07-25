@@ -101,7 +101,7 @@ void VDP::start() {
 /// Stops the render thread, keeping the SDL window/renderer alive for a later start().
 void VDP::stop() {
     running_ = false;
-    cooperativeHSyncCV_.notify_all();
+    interruptDispatchCV_.notify_all();
     setRemoteLockstep(false, 1);
     wakeSyncWaiters();
     if (thread_) {
@@ -388,10 +388,10 @@ void VDP::reset() {
     irqQueue_.clear();
     SDL_UnlockMutex(irqMutex_);
     {
-        std::lock_guard lock(cooperativeHSyncMutex_);
-        completedCooperativeHSyncTicket_ = nextCooperativeHSyncTicket_;
+        std::lock_guard lock(interruptDispatchMutex_);
+        completedInterruptDispatchTicket_ = nextInterruptDispatchTicket_;
     }
-    cooperativeHSyncCV_.notify_all();
+    interruptDispatchCV_.notify_all();
 }
 
 /// Signals render thread to exit, waits for completion, then releases all SDL resources.
@@ -423,18 +423,28 @@ void VDP::shutdown() {
 
 /// Appends an interrupt to the queue, dropping the oldest entries past IRQ_QUEUE_MAX.
 void VDP::scheduleInterrupt(Interrupt::Type type, int line) {
-    std::uint64_t dispatchTicket = 0;
-    if (type == Interrupt::HSync) {
-        std::lock_guard lock(cooperativeHSyncMutex_);
-        dispatchTicket = ++nextCooperativeHSyncTicket_;
+    bool callbackEnabled = true;
+    if (type == Interrupt::VSync) {
+        SDL_LockMutex(mutex_);
+        callbackEnabled = state_.vblankIRQEnabled();
+        SDL_UnlockMutex(mutex_);
     }
 
-    SDL_LockMutex(irqMutex_);
-    if (irqQueue_.size() >= IRQ_QUEUE_MAX) {
-        irqQueue_.pop_front();
+    std::uint64_t dispatchTicket = 0;
+    if (callbackEnabled) {
+        std::lock_guard lock(interruptDispatchMutex_);
+        dispatchTicket = ++nextInterruptDispatchTicket_;
+
+        SDL_LockMutex(irqMutex_);
+        if (irqQueue_.size() >= IRQ_QUEUE_MAX) {
+            irqQueue_.pop_front();
+        }
+        irqQueue_.push_back(Interrupt{type, line, dispatchTicket});
+        SDL_UnlockMutex(irqMutex_);
+        if (env_) {
+            env_->notifyVDPCallbackScheduled();
+        }
     }
-    irqQueue_.push_back(Interrupt{type, line, dispatchTicket});
-    SDL_UnlockMutex(irqMutex_);
 
     // Also raise the lock-free pending-interrupt flag consulted by recompiled
     // code before each instruction (the queue above drives the cooperative
@@ -446,10 +456,7 @@ void VDP::scheduleInterrupt(Interrupt::Type type, int line) {
     // HBlank is already gated by the caller (hintEnabled()).
     if (env_) {
         if (type == Interrupt::VSync) {
-            SDL_LockMutex(mutex_);
-            bool vintOn = state_.vblankIRQEnabled();
-            SDL_UnlockMutex(mutex_);
-            if (vintOn) {
+            if (callbackEnabled) {
                 env_->z80().pulseVBlankIRQ();
                 env_->raiseInterrupt(6);
             }
@@ -459,9 +466,9 @@ void VDP::scheduleInterrupt(Interrupt::Type type, int line) {
     }
 
     if (dispatchTicket != 0) {
-        std::unique_lock lock(cooperativeHSyncMutex_);
-        cooperativeHSyncCV_.wait(lock, [&] {
-            return completedCooperativeHSyncTicket_ >= dispatchTicket ||
+        std::unique_lock lock(interruptDispatchMutex_);
+        interruptDispatchCV_.wait(lock, [&] {
+            return completedInterruptDispatchTicket_ >= dispatchTicket ||
                    !running_.load(std::memory_order_acquire);
         });
     }
@@ -491,22 +498,22 @@ void VDP::acknowledgeInterrupt(const Interrupt &interrupt) {
         return;
     }
     {
-        std::lock_guard lock(cooperativeHSyncMutex_);
-        completedCooperativeHSyncTicket_ =
-            std::max(completedCooperativeHSyncTicket_, interrupt.dispatchTicket);
+        std::lock_guard lock(interruptDispatchMutex_);
+        completedInterruptDispatchTicket_ =
+            std::max(completedInterruptDispatchTicket_, interrupt.dispatchTicket);
     }
-    cooperativeHSyncCV_.notify_all();
+    interruptDispatchCV_.notify_all();
 }
 
 void VDP::acknowledgeInterruptLevel(int level) {
-    if (level != 4) {
+    if (level != 4 && level != 6) {
         return;
     }
     {
-        std::lock_guard lock(cooperativeHSyncMutex_);
-        completedCooperativeHSyncTicket_ = nextCooperativeHSyncTicket_;
+        std::lock_guard lock(interruptDispatchMutex_);
+        completedInterruptDispatchTicket_ = nextInterruptDispatchTicket_;
     }
-    cooperativeHSyncCV_.notify_all();
+    interruptDispatchCV_.notify_all();
 }
 
 // ── Debug Dump ───────────────────────────────────────────────────────────────
@@ -602,7 +609,7 @@ void VDP::updateWindowTitle() {
 
 /// Main render thread loop: renders the frame scanline by scanline (scheduling an HSync interrupt after each line),
 /// sets the VBlank flag, schedules a VSync interrupt, presents to display, and manages frame timing based on sync mode.
-/// Interrupts are dispatched on the program thread via MegaDriveEnvironment::runVDPInterrupts().
+/// Interrupts are dispatched automatically on the CPU thread by the environment.
 int VDP::renderLoop() {
     static constexpr size_t kFrameTimeWindow = 60;
     std::array<uint64_t, kFrameTimeWindow> frameTimes{};

@@ -436,6 +436,7 @@ int MegaDriveEnvironment::cpuThreadEntry(void *data) {
 }
 
 void MegaDriveEnvironment::runVDPInterrupts() {
+    vdpCallbacksPending_.store(false, std::memory_order_release);
     VDP::Interrupt irq;
     while (vdp_.popInterrupt(irq)) {
         try {
@@ -471,6 +472,7 @@ void MegaDriveEnvironment::powerOn(bool isRestart) {
     m68kMasterCyclesLocal_ = 0;
     m68kMasterCycles_.store(0, std::memory_order_release);
     pendingIRQMask_.store(0, std::memory_order_release);
+    vdpCallbacksPending_.store(false, std::memory_order_release);
     traceFn_.store(0, std::memory_order_release);
     traceHistoryPos_ = 0;
     std::fill(std::begin(traceHistory_), std::end(traceHistory_), 0);

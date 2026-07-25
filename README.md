@@ -233,9 +233,10 @@ The important threading rules are:
 - SDL events, window presentation and `handleOptionHotkey()` execute on the
   main thread.
 - VDP rendering and interrupt scheduling execute on the VDP thread.
-- An enabled HBlank interrupt pauses before the next scanline until its
-  `hSync()` callback (or recompiled IRQ4 entry) completes. This preserves CRAM,
-  scroll and other raster writes in the framebuffer deterministically.
+- HBlank and VBlank use completion tickets: rendering pauses until the CPU
+  thread completes `hSync()`/`vSync()` (or enters the matching recompiled IRQ).
+  `pace()` and `waitForInterrupt()` dispatch callbacks automatically, so game
+  subclasses never need an interrupt-pump call.
 - The Z80 has its own execution thread; audio rendering is driven by SDL's
   audio callback.
 - Public mapped-memory, VDP-port and controller operations are synchronized.

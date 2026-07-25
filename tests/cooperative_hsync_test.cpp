@@ -53,7 +53,6 @@ class CooperativeHSyncEnvironment final : public MegaDriveEnvironment {
         writeBackdrop(0x0000);
 
         while (completedFrames_ < 3) {
-            runVDPInterrupts();
             pace();
         }
         snapshot_ = vdp().framebufferSnapshot();
@@ -145,7 +144,7 @@ int main() {
     assert((environment.pixelAt(4, 28) == std::array<std::uint8_t, 3>{7, 0, 0}));
 
     // Recompiled consumers acknowledge the same mandatory ticket when they
-    // enter the lock-free IRQ4 path instead of dispatching hSync() callbacks.
+    // enter the lock-free IRQ4 path; no subclass dispatch call is required.
     LockFreeHSyncEnvironment lockFreeEnvironment;
     lockFreeEnvironment.boot();
     assert(lockFreeEnvironment.handledHSyncs() >= 28);
