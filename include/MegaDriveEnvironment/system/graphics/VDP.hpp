@@ -52,6 +52,8 @@ class MegaDriveEnvironment;
  * game thread sees only the VDP interface.
  */
 class VDP {
+    friend class MegaDriveEnvironment;
+
     public:
     /// Render synchronization mode for framerate control.
     enum Synchronization : int {
@@ -123,12 +125,18 @@ class VDP {
         };
         Type type;
         int  line; ///< Scanline index for HSync; 0 for VSync.
+        /// Non-zero while the renderer awaits completion of this HBlank callback.
+        std::uint64_t dispatchTicket = 0;
     };
 
     /// Pops the oldest scheduled interrupt into @p out. Returns false when none
     /// are pending. Thread-safe; intended to be drained from the program thread
     /// (see MegaDriveEnvironment::runVDPInterrupts).
     bool popInterrupt(Interrupt &out);
+
+    /// Drops every queued callback and releases any scanline synchronization
+    /// ticket held by the renderer.
+    void discardPendingInterrupts();
 
     // ── Remote inspection / synchronization ───────────────────────────────
 
@@ -284,6 +292,16 @@ class VDP {
 
     /// Appends an interrupt to irqQueue_ (drops the oldest if at capacity).
     void scheduleInterrupt(Interrupt::Type type, int line);
+
+    /// Releases a renderer waiting for this completed cooperative callback.
+    void acknowledgeInterrupt(const Interrupt &interrupt);
+    /// Releases the current HBlank ticket after a recompiled IRQ4 handler starts.
+    void acknowledgeInterruptLevel(int level);
+
+    std::mutex cooperativeHSyncMutex_;
+    std::condition_variable cooperativeHSyncCV_;
+    std::uint64_t nextCooperativeHSyncTicket_ = 0;
+    std::uint64_t completedCooperativeHSyncTicket_ = 0;
 
     // ── Thread ─────────────────────────────────────────────────────────────
 

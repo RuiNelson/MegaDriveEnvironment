@@ -438,14 +438,20 @@ int MegaDriveEnvironment::cpuThreadEntry(void *data) {
 void MegaDriveEnvironment::runVDPInterrupts() {
     VDP::Interrupt irq;
     while (vdp_.popInterrupt(irq)) {
-        switch (irq.type) {
-            case VDP::Interrupt::HSync:
-                hSync(irq.line);
-                break;
-            case VDP::Interrupt::VSync:
-                vSync();
-                break;
+        try {
+            switch (irq.type) {
+                case VDP::Interrupt::HSync:
+                    hSync(irq.line);
+                    break;
+                case VDP::Interrupt::VSync:
+                    vSync();
+                    break;
+            }
+        } catch (...) {
+            vdp_.acknowledgeInterrupt(irq);
+            throw;
         }
+        vdp_.acknowledgeInterrupt(irq);
     }
     vdp_.remoteLockstepCPUCheckpoint();
 }

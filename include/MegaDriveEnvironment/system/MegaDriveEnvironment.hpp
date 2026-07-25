@@ -254,6 +254,7 @@ class MegaDriveEnvironment {
     /// Clears the pending bit for @p level (after the handler has been entered).
     void clearInterrupt(int level) {
         pendingIRQMask_.fetch_and(~(1u << level), std::memory_order_release);
+        vdp_.acknowledgeInterruptLevel(level);
     }
 
     /// Blocks the CPU thread until an interrupt above cpuInterruptMask() is

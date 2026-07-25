@@ -101,6 +101,7 @@ void VDP::start() {
 /// Stops the render thread, keeping the SDL window/renderer alive for a later start().
 void VDP::stop() {
     running_ = false;
+    cooperativeHSyncCV_.notify_all();
     setRemoteLockstep(false, 1);
     wakeSyncWaiters();
     if (thread_) {
@@ -386,6 +387,11 @@ void VDP::reset() {
     SDL_LockMutex(irqMutex_);
     irqQueue_.clear();
     SDL_UnlockMutex(irqMutex_);
+    {
+        std::lock_guard lock(cooperativeHSyncMutex_);
+        completedCooperativeHSyncTicket_ = nextCooperativeHSyncTicket_;
+    }
+    cooperativeHSyncCV_.notify_all();
 }
 
 /// Signals render thread to exit, waits for completion, then releases all SDL resources.
@@ -417,11 +423,17 @@ void VDP::shutdown() {
 
 /// Appends an interrupt to the queue, dropping the oldest entries past IRQ_QUEUE_MAX.
 void VDP::scheduleInterrupt(Interrupt::Type type, int line) {
+    std::uint64_t dispatchTicket = 0;
+    if (type == Interrupt::HSync) {
+        std::lock_guard lock(cooperativeHSyncMutex_);
+        dispatchTicket = ++nextCooperativeHSyncTicket_;
+    }
+
     SDL_LockMutex(irqMutex_);
     if (irqQueue_.size() >= IRQ_QUEUE_MAX) {
         irqQueue_.pop_front();
     }
-    irqQueue_.push_back(Interrupt{type, line});
+    irqQueue_.push_back(Interrupt{type, line, dispatchTicket});
     SDL_UnlockMutex(irqMutex_);
 
     // Also raise the lock-free pending-interrupt flag consulted by recompiled
@@ -445,6 +457,14 @@ void VDP::scheduleInterrupt(Interrupt::Type type, int line) {
             env_->raiseInterrupt(4);
         }
     }
+
+    if (dispatchTicket != 0) {
+        std::unique_lock lock(cooperativeHSyncMutex_);
+        cooperativeHSyncCV_.wait(lock, [&] {
+            return completedCooperativeHSyncTicket_ >= dispatchTicket ||
+                   !running_.load(std::memory_order_acquire);
+        });
+    }
 }
 
 /// Pops the oldest scheduled interrupt. Returns false when the queue is empty.
@@ -457,6 +477,36 @@ bool VDP::popInterrupt(Interrupt &out) {
     }
     SDL_UnlockMutex(irqMutex_);
     return has;
+}
+
+void VDP::discardPendingInterrupts() {
+    Interrupt interrupt;
+    while (popInterrupt(interrupt)) {
+        acknowledgeInterrupt(interrupt);
+    }
+}
+
+void VDP::acknowledgeInterrupt(const Interrupt &interrupt) {
+    if (interrupt.dispatchTicket == 0) {
+        return;
+    }
+    {
+        std::lock_guard lock(cooperativeHSyncMutex_);
+        completedCooperativeHSyncTicket_ =
+            std::max(completedCooperativeHSyncTicket_, interrupt.dispatchTicket);
+    }
+    cooperativeHSyncCV_.notify_all();
+}
+
+void VDP::acknowledgeInterruptLevel(int level) {
+    if (level != 4) {
+        return;
+    }
+    {
+        std::lock_guard lock(cooperativeHSyncMutex_);
+        completedCooperativeHSyncTicket_ = nextCooperativeHSyncTicket_;
+    }
+    cooperativeHSyncCV_.notify_all();
 }
 
 // ── Debug Dump ───────────────────────────────────────────────────────────────
