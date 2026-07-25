@@ -341,7 +341,17 @@ void VDP::signalVSync() {
 /// Thread-safe: Acquires mutex_, delegates to port_.writeControlPort(), releases mutex_.
 void VDP::writeControlPort(m_word value) {
     SDL_LockMutex(mutex_);
+    const bool displayWasEnabled = state_.displayEnabled();
     port_.writeControlPort(value);
+    // A real VDP blanks its output as soon as register 1 clears DISP. The
+    // renderer may already have completed the previous frame, so merely
+    // changing the register would leave that frame in the host framebuffer
+    // until the next render pass. Transitions in a native game commonly turn
+    // DISP off and back on during one VBlank; clear at the falling edge so the
+    // SDL presentation cannot expose the old scene in between.
+    if (displayWasEnabled && !state_.displayEnabled()) {
+        framebuffer_.clear();
+    }
     SDL_UnlockMutex(mutex_);
 }
 
@@ -557,16 +567,27 @@ void VDP::presentToScreen() {
     if (!texture_)
         return;
     updateWindowTitle();
-    const int framebufferW = state_.activeWidth();
-    const int framebufferH = state_.activeOutputHeight();
-    framebuffer_.uploadToTexture(texture_, framebufferW, framebufferH);
+    int framebufferW;
+    int framebufferH;
+    m_byte bgR;
+    m_byte bgG;
+    m_byte bgB;
+    {
+        // The CPU can rebuild VRAM/CRAM and change the display registers while
+        // the SDL main thread is presenting. Keep the framebuffer upload and
+        // the matching dimensions/background colour as one coherent snapshot.
+        SDL_LockMutex(mutex_);
+        framebufferW = state_.activeWidth();
+        framebufferH = state_.activeOutputHeight();
+        framebuffer_.uploadToTexture(texture_, framebufferW, framebufferH);
+        tile_.cramToRGB_FullRange(static_cast<m_byte>(state_.bgColorPalette()),
+                                  static_cast<m_byte>(state_.bgColorIndex()),
+                                  bgR,
+                                  bgG,
+                                  bgB);
+        SDL_UnlockMutex(mutex_);
+    }
 
-    m_byte bgR, bgG, bgB;
-    tile_.cramToRGB_FullRange(static_cast<m_byte>(state_.bgColorPalette()),
-                              static_cast<m_byte>(state_.bgColorIndex()),
-                              bgR,
-                              bgG,
-                              bgB);
     SDL_SetRenderDrawColor(sdlRenderer_, bgR, bgG, bgB, SDL_ALPHA_OPAQUE);
     SDL_RenderClear(sdlRenderer_);
 
