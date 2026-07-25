@@ -144,7 +144,7 @@ void MegaDriveEnvironment::boot() {
                     // plane nametables + registers) to a numbered PNG.
                     static unsigned shot = 0;
                     char            path[64];
-                    std::snprintf(path, sizeof path, "vpd_%03u.png", shot++);
+                    std::snprintf(path, sizeof path, "vdp_%03u.png", shot++);
                     vdp_.dumpEverythingToPNG(path, /*fullRange=*/true);
                     Logger::log("[capture] VDP debug view -> %s", path);
                 }

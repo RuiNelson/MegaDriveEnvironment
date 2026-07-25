@@ -602,7 +602,7 @@ Built-in host shortcuts:
 | `Ctrl+Q` | Request shutdown |
 | `Ctrl+R` | Cold-restart the game while preserving the process and loaded ROM |
 | `Ctrl+P` | Save the composed frame as `screenshot_NNN.png` |
-| `Ctrl+S` | Save the full VDP diagnostic sheet as `vpd_NNN.png` |
+| `Ctrl+S` | Save the full VDP diagnostic sheet as `vdp_NNN.png` |
 | `Alt/Option` + key or gamepad button | Call `handleOptionHotkey()` without changing emulated joypad state |
 
 The full VDP sheet contains the frame, tile sheets, plane name tables, palette,
