@@ -63,9 +63,13 @@ demonstrates that complete two-target workflow.
 - Reuse portable game logic in a separate real-hardware build instead of
   maintaining a disposable PC-only renderer and input layer.
 
+<p align="center">
+  <img src="docs/example.webp" height="350">
+</p>
+
 ## Current scope
 
-<p>
+<p align="center">
   <img src="docs/grafitti.webp" height="350">
 </p>
 
@@ -246,7 +250,7 @@ The important threading rules are:
 
 ## Getting started
 
-<p>
+<p align="center">
   <img src="docs/porsche.webp" height="300">
 </p>
 
@@ -383,7 +387,7 @@ into a second tutorial.
 
 ## Memory and hardware access
 
-<p>
+<p align="center">
   <img src="docs/library.webp" height="300">
 </p>
 
@@ -433,7 +437,7 @@ contains a more detailed discussion of stack, pools and decompression buffers.
 
 ## VDP and frame timing
 
-<p>
+<p align="center">
   <img src="docs/pixelart.webp" height="300">
 </p>
 
@@ -485,7 +489,7 @@ sprite tables without hiding entries behind the per-line limit.
 
 ## Controllers and configuration
 
-<p>
+<p align="center">
   <img src="docs/ninja.webp" height="300">
 </p>
 
@@ -528,7 +532,7 @@ GUID and are resolved to the current SDL session when the environment starts.
 
 ## Sound and Z80
 
-<p>
+<p align="center">
   <img src="docs/sax.webp" height="300">
 </p>
 
@@ -592,7 +596,7 @@ so the same sound routine remains valid on real hardware.
 
 ## Debugging tools
 
-<p>
+<p align="center">
   <img src="docs/cyberpunk.webp" height="300">
 </p>
 
@@ -646,7 +650,7 @@ game.setDebugLog(true); // once-per-second runtime/audio diagnostics
 
 ## Portability to real hardware
 
-<p>
+<p align="center">
   <img src="docs/robot.webp" height="300">
 </p>
 
