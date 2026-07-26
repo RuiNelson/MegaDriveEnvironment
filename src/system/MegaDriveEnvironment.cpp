@@ -99,6 +99,21 @@ void MegaDriveEnvironment::boot() {
                     fullscreenActive = false;
                 }
 
+                if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F &&
+                    (event.key.mod & SDL_KMOD_CTRL)) {
+                    // CTRL+F toggles desktop fullscreen independently of debug utilities.
+                    const bool fullscreen = !fullscreenActive;
+                    if (vdp_.setFullscreen(fullscreen)) {
+                        if (fullscreen) {
+                            cursorWasVisible = SDL_CursorVisible();
+                            SDL_HideCursor();
+                        } else if (cursorWasVisible) {
+                            SDL_ShowCursor();
+                        }
+                        fullscreenActive = fullscreen;
+                    }
+                }
+
                 if (debugUtilities_ && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
                     (event.key.mod & SDL_KMOD_ALT) &&
                     event.key.key != SDLK_LALT && event.key.key != SDLK_RALT) {

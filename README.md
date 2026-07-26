@@ -380,6 +380,7 @@ int main() {
 `run()` on a dedicated CPU thread, and keeps SDL event processing and frame
 presentation on the calling thread. Closing the window or pressing `Ctrl+Q`
 sets `shouldQuit()`; cooperative game loops should observe it and return.
+Press `Ctrl+F` to toggle desktop fullscreen.
 
 For a practical VBlank-driven loop, VDP initialization, assets and a portable
 memory adapter, use the Sample Game rather than growing the minimal snippet
@@ -607,6 +608,7 @@ Built-in host shortcuts:
 
 | Shortcut | Action |
 | --- | --- |
+| `Ctrl+F` | Toggle desktop fullscreen |
 | `Ctrl+Q` | Request shutdown |
 | `Ctrl+R` | Cold-restart the game while preserving the process and loaded ROM |
 | `Ctrl+P` | Save the composed frame as `screenshot_NNN.png` |
