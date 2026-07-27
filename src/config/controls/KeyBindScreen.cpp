@@ -141,7 +141,7 @@ void KeyBindScreen::handleEvent(const SDL_Event &e) {
                 saveAndExit();
         }
         if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
-            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_BACK)
+            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST || e.gbutton.button == SDL_GAMEPAD_BUTTON_BACK)
                 saveAndExit();
         }
     }

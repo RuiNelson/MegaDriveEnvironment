@@ -239,6 +239,15 @@ if(BUILD_TESTING AND PROJECT_IS_TOP_LEVEL)
         COMMAND megadrive_environment_debug_utilities_test
     )
 
+    add_executable(megadrive_environment_key_bind_screen_test
+        tests/key_bind_screen_test.cpp
+    )
+    target_link_libraries(megadrive_environment_key_bind_screen_test PRIVATE MegaDriveEnvironment)
+    add_test(
+        NAME megadrive_environment_key_bind_screen_test
+        COMMAND megadrive_environment_key_bind_screen_test
+    )
+
     find_package(Python3 3.9 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
         add_test(
