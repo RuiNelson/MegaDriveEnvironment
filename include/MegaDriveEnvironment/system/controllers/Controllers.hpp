@@ -91,7 +91,7 @@ class ControllersDelegate {
 ///
 /// | TH | Bit 5 | Bit 4 | Bit 3 | Bit 2 | Bit 1 | Bit 0 |
 /// |----|-------|-------|-------|-------|-------|-------|
-/// | 1  | 1     | 1     | /Mode | /X    | /Y    | /Z    |
+/// | 1  | /C    | /B    | /Mode | /X    | /Y    | /Z    |
 ///
 /// All data-port button bits are **active-low** (0 = pressed, 1 = released).
 ///
@@ -250,8 +250,9 @@ class Controllers {
         /// @name Mega Drive port shadow registers
         /// @{
         m_byte controlPort = 0x00; ///< Last value written to the control port.
-        m_byte dataPortOut = 0x40; ///< Last value written to the data port (TH defaults high).
-        int    sixButtonPhase = 0; ///< Number of TH rising edges in the active 6-button read sequence.
+        m_byte dataPortOut = 0x40; ///< Last value written to the data port.
+        bool   thHigh = true; ///< Effective TH input level seen by the pad (input mode pulls high).
+        int    sixButtonCounter = 0; ///< TH pulse counter for the active 6-button read sequence: 0,2,4,6,8.
         /// @}
     };
 
@@ -299,6 +300,9 @@ class Controllers {
     static void
     handleGamepadAxisEvent(PlayerSlot &slot, SDL_GamepadAxis axis, Sint16 value, PlayerControlsState &state);
 
+    /// @brief Recomputes effective TH level and advances the 6-button sequence on low-to-high pulses.
+    static void updateTHState(PlayerSlot &slot);
+
     /// @brief Sets one MD button in @p state to @p pressed.
     static void setButton(PlayerControlsState &state, MdButton button, bool pressed);
 
@@ -308,7 +312,7 @@ class Controllers {
     /// @param thHigh  True when the TH output line is driven high (bit 6 of
     ///                the last data-port write = 1).
     /// @return Active-low 8-bit byte suitable for returning to the game loop.
-    static m_byte encodeDataPort(const PlayerControlsState &state, bool thHigh, int sixButtonPhase);
+    static m_byte encodeDataPort(const PlayerControlsState &state, bool thHigh, int sixButtonCounter);
 
     /// Returns the logical OR of physical and remote button states.
     static PlayerControlsState combinedState(const PlayerControlsState &physical,

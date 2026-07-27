@@ -110,8 +110,10 @@ void Controllers::reset() {
     player2Slot_.controlPort = 0x00;
     player1Slot_.dataPortOut = 0x40;
     player2Slot_.dataPortOut = 0x40;
-    player1Slot_.sixButtonPhase = 0;
-    player2Slot_.sixButtonPhase = 0;
+    player1Slot_.thHigh = true;
+    player2Slot_.thHigh = true;
+    player1Slot_.sixButtonCounter = 0;
+    player2Slot_.sixButtonCounter = 0;
     SDL_UnlockMutex(stateMutex_);
 }
 
@@ -124,56 +126,44 @@ void Controllers::setDelegate(ControllersDelegate *delegate) {
 void Controllers::writePlayer1ControlPort(m_byte value) {
     SDL_LockMutex(stateMutex_);
     player1Slot_.controlPort = value;
+    updateTHState(player1Slot_);
     SDL_UnlockMutex(stateMutex_);
 }
 
 void Controllers::writePlayer2ControlPort(m_byte value) {
     SDL_LockMutex(stateMutex_);
     player2Slot_.controlPort = value;
+    updateTHState(player2Slot_);
     SDL_UnlockMutex(stateMutex_);
 }
 
 m_byte Controllers::readPlayer1DataPort() {
     SDL_LockMutex(stateMutex_);
-    const bool   thHigh = (player1Slot_.dataPortOut & 0x40u) != 0;
-    const m_byte result = encodeDataPort(combinedState(state1_, remoteState1_), thHigh, player1Slot_.sixButtonPhase);
+    const m_byte result =
+        encodeDataPort(combinedState(state1_, remoteState1_), player1Slot_.thHigh, player1Slot_.sixButtonCounter);
     SDL_UnlockMutex(stateMutex_);
     return result;
 }
 
 m_byte Controllers::readPlayer2DataPort() {
     SDL_LockMutex(stateMutex_);
-    const bool   thHigh = (player2Slot_.dataPortOut & 0x40u) != 0;
-    const m_byte result = encodeDataPort(combinedState(state2_, remoteState2_), thHigh, player2Slot_.sixButtonPhase);
+    const m_byte result =
+        encodeDataPort(combinedState(state2_, remoteState2_), player2Slot_.thHigh, player2Slot_.sixButtonCounter);
     SDL_UnlockMutex(stateMutex_);
     return result;
 }
 
 void Controllers::writePlayer1DataPort(m_byte value) {
     SDL_LockMutex(stateMutex_);
-    const bool wasHigh = (player1Slot_.dataPortOut & 0x40u) != 0;
-    const bool isHigh  = (value & 0x40u) != 0;
     player1Slot_.dataPortOut = value;
-    if (!wasHigh && isHigh) {
-        if (player1Slot_.sixButtonPhase >= 3)
-            player1Slot_.sixButtonPhase = 0;
-        else
-            ++player1Slot_.sixButtonPhase;
-    }
+    updateTHState(player1Slot_);
     SDL_UnlockMutex(stateMutex_);
 }
 
 void Controllers::writePlayer2DataPort(m_byte value) {
     SDL_LockMutex(stateMutex_);
-    const bool wasHigh = (player2Slot_.dataPortOut & 0x40u) != 0;
-    const bool isHigh  = (value & 0x40u) != 0;
     player2Slot_.dataPortOut = value;
-    if (!wasHigh && isHigh) {
-        if (player2Slot_.sixButtonPhase >= 3)
-            player2Slot_.sixButtonPhase = 0;
-        else
-            ++player2Slot_.sixButtonPhase;
-    }
+    updateTHState(player2Slot_);
     SDL_UnlockMutex(stateMutex_);
 }
 
@@ -508,6 +498,20 @@ void Controllers::handleGamepadAxisEvent(PlayerSlot          &slot,
 
 // ─── State helpers ────────────────────────────────────────────────────────────
 
+void Controllers::updateTHState(PlayerSlot &slot) {
+    const bool oldHigh = slot.thHigh;
+    const bool thIsOutput = (slot.controlPort & 0x40u) != 0;
+    const bool newHigh = thIsOutput ? ((slot.dataPortOut & 0x40u) != 0) : true;
+    slot.thHigh = newHigh;
+    if (!thIsOutput || oldHigh || !newHigh)
+        return;
+
+    if (slot.sixButtonCounter >= 8)
+        slot.sixButtonCounter = 0;
+    else
+        slot.sixButtonCounter += 2;
+}
+
 void Controllers::setButton(PlayerControlsState &state, MdButton button, bool pressed) {
     switch (button) {
         case MdButton::Up:
@@ -570,7 +574,7 @@ PlayerControlsState Controllers::combinedState(const PlayerControlsState &physic
 
 // ─── MD port encoding ─────────────────────────────────────────────────────────
 
-m_byte Controllers::encodeDataPort(const PlayerControlsState &s, bool thHigh, int sixButtonPhase) {
+m_byte Controllers::encodeDataPort(const PlayerControlsState &s, bool thHigh, int sixButtonCounter) {
     // Start with all input bits high: active-low means 1 = released.
     // Bit 7: unused (always 0).
     // Bit 6: TH line state.
@@ -585,11 +589,14 @@ m_byte Controllers::encodeDataPort(const PlayerControlsState &s, bool thHigh, in
             result &= static_cast<m_byte>(~(1u << bit));
     };
 
-    const bool sixButtonIdRead    = !thHigh && sixButtonPhase == 2;
-    const bool sixButtonExtraRead = thHigh && sixButtonPhase == 3;
-    const bool sixButtonPostRead  = !thHigh && sixButtonPhase == 3;
+    const int step = sixButtonCounter | (thHigh ? 1 : 0);
+    const bool sixButtonIdRead    = step == 4;
+    const bool sixButtonExtraRead = step == 7;
+    const bool sixButtonPostRead  = step == 6;
 
     if (sixButtonExtraRead) {
+        press(s.b, 4);
+        press(s.c, 5);
         press(s.z, 0);
         press(s.y, 1);
         press(s.x, 2);

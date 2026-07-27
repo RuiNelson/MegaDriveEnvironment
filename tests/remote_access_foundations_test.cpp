@@ -25,11 +25,17 @@ void testRemoteControllerOverlay() {
     // TH defaults high: P1 Up is bit 0 and B is bit 4, both active-low.
     assert((controllers.readPlayer1DataPort() & 0x11u) == 0);
 
-    // TH low exposes Start on bit 5 for player 2.
+    // With TH configured as input, data-port writes do not drive the pad.
+    controllers.writePlayer2DataPort(0x00);
+    assert((controllers.readPlayer2DataPort() & 0x40u) != 0);
+
+    // TH low exposes Start on bit 5 for player 2 once TH is configured as output.
+    controllers.writePlayer2ControlPort(0x40);
     controllers.writePlayer2DataPort(0x00);
     assert((controllers.readPlayer2DataPort() & 0x20u) == 0);
 
-    // A 6-button read sequence exposes X/Y/Z/Mode after the second TH rising edge.
+    // A 6-button read sequence exposes the ID low and X/Y/Z/Mode on the third rising edge.
+    controllers.writePlayer1ControlPort(0x40);
     controllers.writePlayer1DataPort(0x00);
     controllers.writePlayer1DataPort(0x40);
     controllers.writePlayer1DataPort(0x00);
@@ -38,6 +44,7 @@ void testRemoteControllerOverlay() {
     assert((controllers.readPlayer1DataPort() & 0x0Fu) == 0);
     controllers.writePlayer1DataPort(0x40);
     assert((controllers.readPlayer1DataPort() & 0x0Fu) == 0);
+    assert((controllers.readPlayer1DataPort() & 0x30u) == 0x20u); // B remains pressed, C remains released.
 
     controllers.clearRemoteState();
     assert((controllers.readPlayer1DataPort() & 0x11u) == 0x11u);
