@@ -74,6 +74,51 @@ void testGamepadBindingCancelsShortPress() {
     assert(screen.m_temp.bindings[int(MDButton::A)].gpButton == SDL_GAMEPAD_BUTTON_INVALID);
 }
 
+void testGamepadBackAloneCanBeBound() {
+    PlayerConfig config;
+    config.connected  = true;
+    config.deviceType = DeviceType::Gamepad;
+
+    KeyBindScreen screen(1, config);
+    screen.reset();
+    screen.handleEvent(gamepadButtonEvent(SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_GAMEPAD_BUTTON_BACK, 1 * kMS));
+    screen.handleEvent(timerEvent(1200 * kMS));
+
+    assert(!screen.isDone());
+    assert(!screen.wasCancelled());
+    assert(screen.m_bindIdx == 1);
+    assert(screen.m_temp.bindings[int(MDButton::A)].gpButton == SDL_GAMEPAD_BUTTON_BACK);
+}
+
+void testGamepadSelectStartCancelsBinding() {
+    PlayerConfig config;
+    config.connected  = true;
+    config.deviceType = DeviceType::Gamepad;
+
+    KeyBindScreen screen(1, config);
+    screen.reset();
+    screen.handleEvent(gamepadButtonEvent(SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_GAMEPAD_BUTTON_BACK, 1 * kMS));
+    screen.handleEvent(gamepadButtonEvent(SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_GAMEPAD_BUTTON_START, 2 * kMS));
+
+    assert(screen.isDone());
+    assert(screen.wasCancelled());
+}
+
+void testGamepadStartAloneCanStillBeBound() {
+    PlayerConfig config;
+    config.connected  = true;
+    config.deviceType = DeviceType::Gamepad;
+
+    KeyBindScreen screen(1, config);
+    screen.reset();
+    holdButton(screen, SDL_GAMEPAD_BUTTON_START, 1 * kMS);
+
+    assert(!screen.isDone());
+    assert(!screen.wasCancelled());
+    assert(screen.m_bindIdx == 1);
+    assert(screen.m_temp.bindings[int(MDButton::A)].gpButton == SDL_GAMEPAD_BUTTON_START);
+}
+
 void testGamepadBindingAdvancesToTesterAfterHeldButtons() {
     PlayerConfig config;
     config.connected  = true;
@@ -129,6 +174,9 @@ void testGamepadBackStillSavesFromTester() {
 int main() {
     testGamepadBindingRequiresHoldBeforeAdvance();
     testGamepadBindingCancelsShortPress();
+    testGamepadBackAloneCanBeBound();
+    testGamepadSelectStartCancelsBinding();
+    testGamepadStartAloneCanStillBeBound();
     testGamepadBindingAdvancesToTesterAfterHeldButtons();
     testGamepadEastSavesFromTester();
     testGamepadBackStillSavesFromTester();

@@ -119,7 +119,7 @@ struct DeviceBinding {
     /// @brief Gamepad button for this button (SDL_GamepadButton).
     /// Valid only when parent PlayerConfig::deviceType is Gamepad.
     /// Ignored if isAutoDir is true (directional buttons auto-mapped).
-    /// Cannot be SDL_GAMEPAD_BUTTON_BACK (reserved for cancel action).
+    /// Can be any SDL gamepad button.
     SDL_GamepadButton gpButton = SDL_GAMEPAD_BUTTON_INVALID;
 
     /// @brief Auto-direction flag for gamepad Up/Down/Left/Right buttons.

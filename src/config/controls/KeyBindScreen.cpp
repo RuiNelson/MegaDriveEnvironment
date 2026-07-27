@@ -64,6 +64,8 @@ void KeyBindScreen::reset() {
     m_bindIdx   = 0;
     m_temp      = m_config;
     clearPendingGamepadBinding();
+    m_gamepadBackDown  = false;
+    m_gamepadStartDown = false;
     buildButtonList();
     applyAutoDirections();
     openGamepad();
@@ -76,6 +78,8 @@ void KeyBindScreen::resetToTest() {
     m_bindIdx   = 0;
     m_temp      = m_config;
     clearPendingGamepadBinding();
+    m_gamepadBackDown  = false;
+    m_gamepadStartDown = false;
     buildButtonList();
     openGamepad();
 }
@@ -139,6 +143,13 @@ void KeyBindScreen::updatePendingGamepadBinding(Uint64 nowNS) {
         advance();
 }
 
+void KeyBindScreen::updateGamepadCancelChord(SDL_GamepadButton button, bool pressed) {
+    if (button == SDL_GAMEPAD_BUTTON_BACK)
+        m_gamepadBackDown = pressed;
+    else if (button == SDL_GAMEPAD_BUTTON_START)
+        m_gamepadStartDown = pressed;
+}
+
 // ─── Input ───────────────────────────────────────────────────────────────────
 
 void KeyBindScreen::handleEvent(const SDL_Event &e) {
@@ -154,10 +165,13 @@ void KeyBindScreen::handleEvent(const SDL_Event &e) {
     }
 
     if (m_phase == Phase::Binding) {
-        // In binding phase, gamepad Back also cancels
-        if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && e.gbutton.button == SDL_GAMEPAD_BUTTON_BACK) {
-            cancelOut();
-            return;
+        if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+            SDL_GamepadButton button = static_cast<SDL_GamepadButton>(e.gbutton.button);
+            updateGamepadCancelChord(button, e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
+            if (m_gamepadBackDown && m_gamepadStartDown) {
+                cancelOut();
+                return;
+            }
         }
 
         MDButton target = m_buttons[m_bindIdx];
@@ -170,8 +184,6 @@ void KeyBindScreen::handleEvent(const SDL_Event &e) {
             }
         } else {
             if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
-                if (e.gbutton.button == SDL_GAMEPAD_BUTTON_BACK)
-                    return; // already handled above
                 SDL_GamepadButton button = static_cast<SDL_GamepadButton>(e.gbutton.button);
                 if (m_pendingGamepadButton != button)
                     beginPendingGamepadBinding(button, nowNS);
@@ -325,7 +337,7 @@ void KeyBindScreen::renderBinding(UIRenderer &ui) {
     if (m_temp.deviceType == DeviceType::Keyboard)
         ui.drawHint("Press a key to bind  |  Esc: Cancel (discard)");
     else
-        ui.drawHint("Hold 400ms to bind, 1s to continue  |  Gamepad Back: Cancel");
+        ui.drawHint("Hold 400ms to bind, 1s to continue  |  Select+Start: Cancel");
 }
 
 void KeyBindScreen::renderTester(UIRenderer &ui) {
