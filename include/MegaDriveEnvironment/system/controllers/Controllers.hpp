@@ -253,6 +253,7 @@ class Controllers {
         m_byte dataPortOut = 0x40; ///< Last value written to the data port.
         bool   thHigh = true; ///< Effective TH input level seen by the pad (input mode pulls high).
         int    sixButtonCounter = 0; ///< TH pulse counter for the active 6-button read sequence: 0,2,4,6,8.
+        Uint64 lastSixButtonPulseTicks = 0; ///< SDL_GetTicksNS timestamp for the last accepted TH low-to-high pulse.
         /// @}
     };
 
@@ -302,6 +303,9 @@ class Controllers {
 
     /// @brief Recomputes effective TH level and advances the 6-button sequence on low-to-high pulses.
     static void updateTHState(PlayerSlot &slot);
+
+    /// @brief Resets stale 6-button sequence state after the hardware-style timeout.
+    static void refreshSixButtonTimeout(PlayerSlot &slot);
 
     /// @brief Sets one MD button in @p state to @p pressed.
     static void setButton(PlayerControlsState &state, MdButton button, bool pressed);

@@ -12,6 +12,11 @@ namespace {
 /// Left-stick deadzone threshold (≈ 25 % of the full ±32767 range).
 constexpr Sint16 kAxisDeadzone = 8000;
 
+/// Reset the 6-button sequence after a short idle period. Genesis Plus GX
+/// expires after roughly 25 display-line refreshes; 2 ms is deliberately above
+/// one NTSC line sequence and far below one frame.
+constexpr Uint64 kSixButtonTimeoutTicks = 2'000'000;
+
 // ─── Utility helpers ──────────────────────────────────────────────────────────
 
 /// @brief Splits @p s at the first occurrence of @p sep.
@@ -114,6 +119,8 @@ void Controllers::reset() {
     player2Slot_.thHigh = true;
     player1Slot_.sixButtonCounter = 0;
     player2Slot_.sixButtonCounter = 0;
+    player1Slot_.lastSixButtonPulseTicks = 0;
+    player2Slot_.lastSixButtonPulseTicks = 0;
     SDL_UnlockMutex(stateMutex_);
 }
 
@@ -139,6 +146,7 @@ void Controllers::writePlayer2ControlPort(m_byte value) {
 
 m_byte Controllers::readPlayer1DataPort() {
     SDL_LockMutex(stateMutex_);
+    refreshSixButtonTimeout(player1Slot_);
     const m_byte result =
         encodeDataPort(combinedState(state1_, remoteState1_), player1Slot_.thHigh, player1Slot_.sixButtonCounter);
     SDL_UnlockMutex(stateMutex_);
@@ -147,6 +155,7 @@ m_byte Controllers::readPlayer1DataPort() {
 
 m_byte Controllers::readPlayer2DataPort() {
     SDL_LockMutex(stateMutex_);
+    refreshSixButtonTimeout(player2Slot_);
     const m_byte result =
         encodeDataPort(combinedState(state2_, remoteState2_), player2Slot_.thHigh, player2Slot_.sixButtonCounter);
     SDL_UnlockMutex(stateMutex_);
@@ -499,6 +508,7 @@ void Controllers::handleGamepadAxisEvent(PlayerSlot          &slot,
 // ─── State helpers ────────────────────────────────────────────────────────────
 
 void Controllers::updateTHState(PlayerSlot &slot) {
+    refreshSixButtonTimeout(slot);
     const bool oldHigh = slot.thHigh;
     const bool thIsOutput = (slot.controlPort & 0x40u) != 0;
     const bool newHigh = thIsOutput ? ((slot.dataPortOut & 0x40u) != 0) : true;
@@ -506,10 +516,20 @@ void Controllers::updateTHState(PlayerSlot &slot) {
     if (!thIsOutput || oldHigh || !newHigh)
         return;
 
-    if (slot.sixButtonCounter >= 8)
-        slot.sixButtonCounter = 0;
-    else
+    if (slot.sixButtonCounter < 8) {
         slot.sixButtonCounter += 2;
+        slot.lastSixButtonPulseTicks = SDL_GetTicksNS();
+    }
+}
+
+void Controllers::refreshSixButtonTimeout(PlayerSlot &slot) {
+    if (slot.sixButtonCounter == 0 || slot.lastSixButtonPulseTicks == 0)
+        return;
+    const Uint64 now = SDL_GetTicksNS();
+    if (now - slot.lastSixButtonPulseTicks > kSixButtonTimeoutTicks) {
+        slot.sixButtonCounter = 0;
+        slot.lastSixButtonPulseTicks = 0;
+    }
 }
 
 void Controllers::setButton(PlayerControlsState &state, MdButton button, bool pressed) {

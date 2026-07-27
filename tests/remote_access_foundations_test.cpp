@@ -51,6 +51,29 @@ void testRemoteControllerOverlay() {
     assert((controllers.readPlayer2DataPort() & 0x20u) == 0x20u);
 }
 
+void testSixButtonSequenceExpiresBetweenFrames() {
+    Controllers controllers(nullptr);
+    PlayersControlState remote{};
+    remote.player1.connected = true;
+    controllers.setRemoteState(remote);
+    controllers.writePlayer1ControlPort(0x40);
+
+    controllers.writePlayer1DataPort(0x00);
+    assert((controllers.readPlayer1DataPort() & 0x03u) == 0x03u);
+    controllers.writePlayer1DataPort(0x40);
+
+    SDL_Delay(3);
+
+    controllers.writePlayer1DataPort(0x00);
+    assert((controllers.readPlayer1DataPort() & 0x03u) == 0x03u);
+    controllers.writePlayer1DataPort(0x40);
+
+    SDL_Delay(3);
+
+    controllers.writePlayer1DataPort(0x00);
+    assert((controllers.readPlayer1DataPort() & 0x03u) == 0x03u);
+}
+
 void testWholeSegmentRomSynchronization() {
     SystemMemory memory;
     constexpr std::size_t size = 4096;
@@ -89,5 +112,6 @@ void testWholeSegmentRomSynchronization() {
 
 int main() {
     testRemoteControllerOverlay();
+    testSixButtonSequenceExpiresBetweenFrames();
     testWholeSegmentRomSynchronization();
 }
