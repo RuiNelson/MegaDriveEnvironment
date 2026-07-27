@@ -31,10 +31,10 @@ with MegaDriveClient("127.0.0.1", 6969) as mega_drive:
     print(mega_drive.get_game_uptime_frames())
     print(mega_drive.get_execution_data())
 
-    # A+B+Right on player 1, Start on player 2, for exactly three frames.
+    # A+X+Right on player 1, Start+Mode on player 2, for exactly three frames.
     mega_drive.press_buttons(
-        player1=Buttons.A | Buttons.B | Buttons.RIGHT,
-        player2=Buttons.START,
+        player1=Buttons.A | Buttons.X | Buttons.RIGHT,
+        player2=Buttons.START | Buttons.MODE,
         frames=3,
     )
 

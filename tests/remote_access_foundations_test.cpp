@@ -14,6 +14,10 @@ void testRemoteControllerOverlay() {
     remote.player1.connected = true;
     remote.player1.up = true;
     remote.player1.b = true;
+    remote.player1.x = true;
+    remote.player1.y = true;
+    remote.player1.z = true;
+    remote.player1.mode = true;
     remote.player2.connected = true;
     remote.player2.start = true;
     controllers.setRemoteState(remote);
@@ -24,6 +28,16 @@ void testRemoteControllerOverlay() {
     // TH low exposes Start on bit 5 for player 2.
     controllers.writePlayer2DataPort(0x00);
     assert((controllers.readPlayer2DataPort() & 0x20u) == 0);
+
+    // A 6-button read sequence exposes X/Y/Z/Mode after the second TH rising edge.
+    controllers.writePlayer1DataPort(0x00);
+    controllers.writePlayer1DataPort(0x40);
+    controllers.writePlayer1DataPort(0x00);
+    controllers.writePlayer1DataPort(0x40);
+    controllers.writePlayer1DataPort(0x00);
+    assert((controllers.readPlayer1DataPort() & 0x0Fu) == 0);
+    controllers.writePlayer1DataPort(0x40);
+    assert((controllers.readPlayer1DataPort() & 0x0Fu) == 0);
 
     controllers.clearRemoteState();
     assert((controllers.readPlayer1DataPort() & 0x11u) == 0x11u);

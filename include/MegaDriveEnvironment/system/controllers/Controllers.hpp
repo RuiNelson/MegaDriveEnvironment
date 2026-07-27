@@ -23,6 +23,10 @@ struct PlayerControlsState {
     bool b         = false;
     bool c         = false;
     bool start     = false;
+    bool x         = false;
+    bool y         = false;
+    bool z         = false;
+    bool mode      = false;
 };
 
 /// @brief Combined input state for both players.
@@ -73,12 +77,21 @@ class ControllersDelegate {
 /// | Data    | `$A10003`  | `$A10005`  | Button read / TH write      |
 ///
 /// The game selects the active button group by driving the **TH** line (bit 6
-/// of the data port) via the control-port direction register:
+/// of the data port) via the control-port direction register. Controllers
+/// emulate a 6-button pad by default; the first TH reads are compatible with
+/// the original 3-button protocol:
 ///
 /// | TH | Bit 5  | Bit 4 | Bit 3  | Bit 2 | Bit 1 | Bit 0 |
 /// |----|--------|-------|--------|-------|-------|-------|
 /// | 1  | /C     | /B    | /Right | /Left | /Down | /Up   |
 /// | 0  | /Start | /A    | 0      | 0     | /Down | /Up   |
+///
+/// After two TH rising edges, the next TH-low read identifies a 6-button pad
+/// by driving bits 3:0 low. The following TH-high read exposes extra buttons:
+///
+/// | TH | Bit 5 | Bit 4 | Bit 3 | Bit 2 | Bit 1 | Bit 0 |
+/// |----|-------|-------|-------|-------|-------|-------|
+/// | 1  | 1     | 1     | /Mode | /X    | /Y    | /Z    |
 ///
 /// All data-port button bits are **active-low** (0 = pressed, 1 = released).
 ///
@@ -196,7 +209,7 @@ class Controllers {
     // ── Internal types ────────────────────────────────────────────────────
 
     /// @brief Mega Drive logical buttons.
-    enum class MdButton { Up, Down, Left, Right, A, B, C, Start };
+    enum class MdButton { Up, Down, Left, Right, A, B, C, Start, X, Y, Z, Mode };
 
     /// @brief SDL source type for a resolved binding.
     enum class SourceKind {
@@ -238,6 +251,7 @@ class Controllers {
         /// @{
         m_byte controlPort = 0x00; ///< Last value written to the control port.
         m_byte dataPortOut = 0x40; ///< Last value written to the data port (TH defaults high).
+        int    sixButtonPhase = 0; ///< Number of TH rising edges in the active 6-button read sequence.
         /// @}
     };
 
@@ -294,7 +308,7 @@ class Controllers {
     /// @param thHigh  True when the TH output line is driven high (bit 6 of
     ///                the last data-port write = 1).
     /// @return Active-low 8-bit byte suitable for returning to the game loop.
-    static m_byte encodeDataPort(const PlayerControlsState &state, bool thHigh);
+    static m_byte encodeDataPort(const PlayerControlsState &state, bool thHigh, int sixButtonPhase);
 
     /// Returns the logical OR of physical and remote button states.
     static PlayerControlsState combinedState(const PlayerControlsState &physical,

@@ -76,7 +76,7 @@ class KeyBindScreen : public Screen {
     SDL_Gamepad *m_gamepad = nullptr; ///< Open gamepad for polling (if gamepad device)
 
     /// @brief Build the list of buttons to bind based on device type.
-    /// For keyboard: all 8 buttons. For gamepad: only face buttons (A, B, C, Start).
+    /// For keyboard: all 12 buttons. For gamepad: all non-directional buttons.
     void buildButtonList();
 
     /// @brief Auto-assign direction buttons for gamepad devices.
@@ -114,7 +114,7 @@ class KeyBindScreen : public Screen {
         const char *label;      ///< Display label for the button
     };
 
-    /// @brief Build layout information for all 8 button boxes in tester grid.
+    /// @brief Build layout information for all 12 button boxes in tester grid.
     /// @return Vector of BoxInfo structures with computed positions.
     std::vector<BoxInfo> buildTesterLayout() const;
 

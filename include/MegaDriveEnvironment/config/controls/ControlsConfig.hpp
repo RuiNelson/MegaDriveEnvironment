@@ -41,7 +41,7 @@
 /// @defgroup Controls Controls Configuration Module
 /// @{
 
-/// @brief Enumerates the 8 physical buttons on a Mega Drive joypad.
+/// @brief Enumerates the 12 physical buttons on a Mega Drive 6-button joypad.
 ///
 /// Used as indices into the DeviceBinding array within PlayerConfig.
 /// Directional buttons (Up, Down, Left, Right) may be auto-mapped for gamepads.
@@ -54,7 +54,11 @@ enum class MDButton : int {
     B     = 5, ///< Face button: B
     C     = 6, ///< Face button: C
     Start = 7, ///< Action button: Start
-    COUNT = 8  ///< Total button count; used for array sizing
+    X     = 8, ///< Face button: X
+    Y     = 9, ///< Face button: Y
+    Z     = 10, ///< Face button: Z
+    Mode  = 11, ///< Mode button
+    COUNT = 12  ///< Total button count; used for array sizing
 };
 
 /// @brief Returns the human-readable name for an MDButton value.
@@ -80,6 +84,14 @@ inline const char *mdButtonName(MDButton b) {
             return "C";
         case MDButton::Start:
             return "Start";
+        case MDButton::X:
+            return "X";
+        case MDButton::Y:
+            return "Y";
+        case MDButton::Z:
+            return "Z";
+        case MDButton::Mode:
+            return "Mode";
         default:
             return "?";
     }
@@ -148,12 +160,12 @@ struct PlayerConfig {
 
 /// @brief Initializes two PlayerConfig structures with default key bindings.
 /// @param p1 (output) Player 1 configuration.
-///           Set to connected, keyboard device, with arrow keys + ZXCV binding.
+///           Set to connected, keyboard device, with arrow keys + ZXCV/ASDF binding.
 /// @param p2 (output) Player 2 configuration.
 ///           Set to not connected (disabled until configured).
 /// @note Default bindings for P1:
-///       Up→Up, Down→Down, Left→Left, Right→Right,
-///       A→Z, B→X, C→C, Start→V
+///       Up->Up, Down->Down, Left->Left, Right->Right,
+///       A->Z, B->X, C->C, Start->V, X->A, Y->S, Z->D, Mode->F
 /// @see PlayerConfig
 inline void setDefaultConfigs(PlayerConfig &p1, PlayerConfig &p2) {
     p1.connected                          = true;
@@ -166,6 +178,10 @@ inline void setDefaultConfigs(PlayerConfig &p1, PlayerConfig &p2) {
     p1.bindings[int(MDButton::B)].key     = SDLK_X;
     p1.bindings[int(MDButton::C)].key     = SDLK_C;
     p1.bindings[int(MDButton::Start)].key = SDLK_V;
+    p1.bindings[int(MDButton::X)].key     = SDLK_A;
+    p1.bindings[int(MDButton::Y)].key     = SDLK_S;
+    p1.bindings[int(MDButton::Z)].key     = SDLK_D;
+    p1.bindings[int(MDButton::Mode)].key  = SDLK_F;
 
     p2.connected  = false;
     p2.deviceType = DeviceType::Keyboard;

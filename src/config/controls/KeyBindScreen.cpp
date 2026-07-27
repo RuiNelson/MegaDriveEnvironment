@@ -36,10 +36,14 @@ void KeyBindScreen::buildButtonList() {
                      MDButton::A,
                      MDButton::B,
                      MDButton::C,
-                     MDButton::Start};
+                     MDButton::Start,
+                     MDButton::X,
+                     MDButton::Y,
+                     MDButton::Z,
+                     MDButton::Mode};
     } else {
         // Directions auto-assigned; only ask for face buttons
-        m_buttons = {MDButton::A, MDButton::B, MDButton::C, MDButton::Start};
+        m_buttons = {MDButton::A, MDButton::B, MDButton::C, MDButton::Start, MDButton::X, MDButton::Y, MDButton::Z, MDButton::Mode};
     }
 }
 
@@ -197,7 +201,7 @@ std::vector<KeyBindScreen::BoxInfo> KeyBindScreen::buildTesterLayout() const {
     constexpr int CY = 200;
 
     // Face buttons row y
-    constexpr int BY = CY + BH + GY + 20;
+    constexpr int BY = CY + BH + GY + 16;
 
     std::vector<BoxInfo> boxes;
 
@@ -207,13 +211,18 @@ std::vector<KeyBindScreen::BoxInfo> KeyBindScreen::buildTesterLayout() const {
     boxes.push_back({CX - BW - GX - BW / 2, CY, BW, BH, MDButton::Left, "LEFT"});
     boxes.push_back({CX + BW / 2 + GX, CY, BW, BH, MDButton::Right, "RIGHT"});
 
-    // Face buttons — 4 in a row
+    // Face buttons: lower row keeps the original 3-button layout, upper row
+    // exposes the 6-button pad additions.
     constexpr int faceW     = 4 * BW + 3 * GX;
     int           faceStart = (CC_WIN_W - faceW) / 2;
     boxes.push_back({faceStart + 0 * (BW + GX), BY, BW, BH, MDButton::A, "A"});
     boxes.push_back({faceStart + 1 * (BW + GX), BY, BW, BH, MDButton::B, "B"});
     boxes.push_back({faceStart + 2 * (BW + GX), BY, BW, BH, MDButton::C, "C"});
     boxes.push_back({faceStart + 3 * (BW + GX), BY, BW, BH, MDButton::Start, "START"});
+    boxes.push_back({faceStart + 0 * (BW + GX), BY - BH - GY, BW, BH, MDButton::X, "X"});
+    boxes.push_back({faceStart + 1 * (BW + GX), BY - BH - GY, BW, BH, MDButton::Y, "Y"});
+    boxes.push_back({faceStart + 2 * (BW + GX), BY - BH - GY, BW, BH, MDButton::Z, "Z"});
+    boxes.push_back({faceStart + 3 * (BW + GX), BY - BH - GY, BW, BH, MDButton::Mode, "MODE"});
 
     return boxes;
 }
@@ -251,7 +260,7 @@ void KeyBindScreen::renderBinding(UIRenderer &ui) {
         int listY = CC_WIN_H / 2 + CC_CHAR_H * 2;
         ui.drawCenteredText(CC_WIN_W / 2, listY, "Bound so far:", CC_COL_TEXT_GRAY);
         listY += CC_CHAR_H + 4;
-        for (int i = 0; i < m_bindIdx && i < 8; ++i) {
+        for (int i = 0; i < m_bindIdx && i < static_cast<int>(MDButton::COUNT); ++i) {
             MDButton    b    = m_buttons[i];
             std::string line = std::string(mdButtonName(b)) + ": ";
             const auto &bd   = m_temp.bindings[int(b)];

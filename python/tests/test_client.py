@@ -115,7 +115,7 @@ class MegaDriveClientTests(unittest.TestCase):
             self.assertEqual(command, 0x10)
             self.assertEqual(
                 payload,
-                pack(">BBII", Buttons.A | Buttons.RIGHT, Buttons.START, 3, 2_000),
+                pack(">HHII", Buttons.A | Buttons.RIGHT | Buttons.X, Buttons.START | Buttons.MODE, 3, 2_000),
             )
             return ACK, b""
 
@@ -127,8 +127,8 @@ class MegaDriveClientTests(unittest.TestCase):
             client.write_value(0xFF0100, 0x1234, width=2)
             self.assertEqual(client.read_value(0xFF0100, width=2), 0x1234)
             client.press_buttons(
-                player1=Buttons.A | Buttons.RIGHT,
-                player2=Buttons.START,
+                player1=Buttons.A | Buttons.RIGHT | Buttons.X,
+                player2=Buttons.START | Buttons.MODE,
                 frames=3,
                 timeout_ms=2_000,
             )
@@ -214,9 +214,9 @@ class MegaDriveClientTests(unittest.TestCase):
                 (
                     0x13,
                     pack(
-                        ">BB2xIII",
-                        Buttons.A | Buttons.RIGHT,
-                        Buttons.START,
+                        ">HH2xIII",
+                        Buttons.A | Buttons.RIGHT | Buttons.Y,
+                        Buttons.START | Buttons.Z,
                         4,
                         12,
                         3_000,
@@ -232,8 +232,8 @@ class MegaDriveClientTests(unittest.TestCase):
         with ClientHarness(enable, step, disable) as client:
             client.set_lockstep(True, timeout_ms=2_000)
             result = client.step_input(
-                player1=Buttons.A | Buttons.RIGHT,
-                player2=Buttons.START,
+                player1=Buttons.A | Buttons.RIGHT | Buttons.Y,
+                player2=Buttons.START | Buttons.Z,
                 held_frames=4,
                 total_frames=12,
                 timeout_ms=3_000,

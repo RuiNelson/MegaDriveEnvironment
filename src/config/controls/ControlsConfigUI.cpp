@@ -15,10 +15,10 @@ enum class UIState { MainMenu, Player1Config, Player2Config, Player1KeyBind, Pla
 
 // ─── Store ↔ runtime conversion ───────────────────────────────────────────────
 
-static const char *MD_BUTTON_NAMES[] = {"Up", "Down", "Left", "Right", "A", "B", "C", "Start"};
+static const char *MD_BUTTON_NAMES[] = {"Up", "Down", "Left", "Right", "A", "B", "C", "Start", "X", "Y", "Z", "Mode"};
 
 static int mdButtonIndex(const std::string &name) {
-    for (int i = 0; i < 8; ++i)
+    for (int i = 0; i < static_cast<int>(MDButton::COUNT); ++i)
         if (name == MD_BUTTON_NAMES[i])
             return i;
     return -1;
@@ -85,7 +85,7 @@ static PlayerConfiguration fromRuntime(const PlayerConfig &pc) {
         cfg.gamepadGuid = buf;
     }
 
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < static_cast<int>(MDButton::COUNT); ++i) {
         const auto &b = pc.bindings[i];
         std::string s = MD_BUTTON_NAMES[i];
         s += '@';

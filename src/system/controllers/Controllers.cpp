@@ -33,7 +33,8 @@ std::string guidToString(SDL_GUID guid) {
 /// @brief Returns true when both states describe identical button presses.
 bool statesEqual(const PlayerControlsState &a, const PlayerControlsState &b) noexcept {
     return a.connected == b.connected && a.up == b.up && a.down == b.down && a.left == b.left && a.right == b.right &&
-           a.a == b.a && a.b == b.b && a.c == b.c && a.start == b.start;
+           a.a == b.a && a.b == b.b && a.c == b.c && a.start == b.start && a.x == b.x && a.y == b.y &&
+           a.z == b.z && a.mode == b.mode;
 }
 
 } // namespace
@@ -109,6 +110,8 @@ void Controllers::reset() {
     player2Slot_.controlPort = 0x00;
     player1Slot_.dataPortOut = 0x40;
     player2Slot_.dataPortOut = 0x40;
+    player1Slot_.sixButtonPhase = 0;
+    player2Slot_.sixButtonPhase = 0;
     SDL_UnlockMutex(stateMutex_);
 }
 
@@ -133,7 +136,7 @@ void Controllers::writePlayer2ControlPort(m_byte value) {
 m_byte Controllers::readPlayer1DataPort() {
     SDL_LockMutex(stateMutex_);
     const bool   thHigh = (player1Slot_.dataPortOut & 0x40u) != 0;
-    const m_byte result = encodeDataPort(combinedState(state1_, remoteState1_), thHigh);
+    const m_byte result = encodeDataPort(combinedState(state1_, remoteState1_), thHigh, player1Slot_.sixButtonPhase);
     SDL_UnlockMutex(stateMutex_);
     return result;
 }
@@ -141,20 +144,36 @@ m_byte Controllers::readPlayer1DataPort() {
 m_byte Controllers::readPlayer2DataPort() {
     SDL_LockMutex(stateMutex_);
     const bool   thHigh = (player2Slot_.dataPortOut & 0x40u) != 0;
-    const m_byte result = encodeDataPort(combinedState(state2_, remoteState2_), thHigh);
+    const m_byte result = encodeDataPort(combinedState(state2_, remoteState2_), thHigh, player2Slot_.sixButtonPhase);
     SDL_UnlockMutex(stateMutex_);
     return result;
 }
 
 void Controllers::writePlayer1DataPort(m_byte value) {
     SDL_LockMutex(stateMutex_);
+    const bool wasHigh = (player1Slot_.dataPortOut & 0x40u) != 0;
+    const bool isHigh  = (value & 0x40u) != 0;
     player1Slot_.dataPortOut = value;
+    if (!wasHigh && isHigh) {
+        if (player1Slot_.sixButtonPhase >= 3)
+            player1Slot_.sixButtonPhase = 0;
+        else
+            ++player1Slot_.sixButtonPhase;
+    }
     SDL_UnlockMutex(stateMutex_);
 }
 
 void Controllers::writePlayer2DataPort(m_byte value) {
     SDL_LockMutex(stateMutex_);
+    const bool wasHigh = (player2Slot_.dataPortOut & 0x40u) != 0;
+    const bool isHigh  = (value & 0x40u) != 0;
     player2Slot_.dataPortOut = value;
+    if (!wasHigh && isHigh) {
+        if (player2Slot_.sixButtonPhase >= 3)
+            player2Slot_.sixButtonPhase = 0;
+        else
+            ++player2Slot_.sixButtonPhase;
+    }
     SDL_UnlockMutex(stateMutex_);
 }
 
@@ -173,6 +192,10 @@ Controllers::PlayerSlot Controllers::buildSlot(const PlayerConfiguration &cfg) {
         {"B", MdButton::B},
         {"C", MdButton::C},
         {"Start", MdButton::Start},
+        {"X", MdButton::X},
+        {"Y", MdButton::Y},
+        {"Z", MdButton::Z},
+        {"Mode", MdButton::Mode},
     };
 
     PlayerSlot slot;
@@ -511,6 +534,18 @@ void Controllers::setButton(PlayerControlsState &state, MdButton button, bool pr
         case MdButton::Start:
             state.start = pressed;
             break;
+        case MdButton::X:
+            state.x = pressed;
+            break;
+        case MdButton::Y:
+            state.y = pressed;
+            break;
+        case MdButton::Z:
+            state.z = pressed;
+            break;
+        case MdButton::Mode:
+            state.mode = pressed;
+            break;
     }
 }
 
@@ -526,12 +561,16 @@ PlayerControlsState Controllers::combinedState(const PlayerControlsState &physic
         .b = physical.b || remote.b,
         .c = physical.c || remote.c,
         .start = physical.start || remote.start,
+        .x = physical.x || remote.x,
+        .y = physical.y || remote.y,
+        .z = physical.z || remote.z,
+        .mode = physical.mode || remote.mode,
     };
 }
 
 // ─── MD port encoding ─────────────────────────────────────────────────────────
 
-m_byte Controllers::encodeDataPort(const PlayerControlsState &s, bool thHigh) {
+m_byte Controllers::encodeDataPort(const PlayerControlsState &s, bool thHigh, int sixButtonPhase) {
     // Start with all input bits high: active-low means 1 = released.
     // Bit 7: unused (always 0).
     // Bit 6: TH line state.
@@ -546,7 +585,26 @@ m_byte Controllers::encodeDataPort(const PlayerControlsState &s, bool thHigh) {
             result &= static_cast<m_byte>(~(1u << bit));
     };
 
-    // Up and Down are available regardless of TH.
+    const bool sixButtonIdRead    = !thHigh && sixButtonPhase == 2;
+    const bool sixButtonExtraRead = thHigh && sixButtonPhase == 3;
+    const bool sixButtonPostRead  = !thHigh && sixButtonPhase == 3;
+
+    if (sixButtonExtraRead) {
+        press(s.z, 0);
+        press(s.y, 1);
+        press(s.x, 2);
+        press(s.mode, 3);
+        return result;
+    }
+
+    if (sixButtonPostRead) {
+        result |= 0x0Fu;
+        press(s.a, 4);
+        press(s.start, 5);
+        return result;
+    }
+
+    // Up and Down are available regardless of TH until the 6-button ID read.
     press(s.up, 0);
     press(s.down, 1);
 
@@ -559,6 +617,8 @@ m_byte Controllers::encodeDataPort(const PlayerControlsState &s, bool thHigh) {
     } else {
         // TH=0 → bits 3:2 are grounded (always 0); bits 5:4 map to /Start, /A.
         result &= ~0x0Cu; // force bits 3:2 low (grounded pins)
+        if (sixButtonIdRead)
+            result &= ~0x03u; // force bits 1:0 low to identify a 6-button pad
         press(s.a, 4);
         press(s.start, 5);
     }

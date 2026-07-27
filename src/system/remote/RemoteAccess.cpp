@@ -189,7 +189,7 @@ bool validRange(std::uint32_t address, std::uint32_t length) {
     return address < kBusSize && length <= kBusSize - address;
 }
 
-PlayerControlsState decodeButtons(std::uint8_t mask) {
+PlayerControlsState decodeButtons(std::uint16_t mask) {
     return {
         .connected = mask != 0,
         .up = (mask & 0x01) != 0,
@@ -200,7 +200,17 @@ PlayerControlsState decodeButtons(std::uint8_t mask) {
         .b = (mask & 0x20) != 0,
         .c = (mask & 0x40) != 0,
         .start = (mask & 0x80) != 0,
+        .x = (mask & 0x100) != 0,
+        .y = (mask & 0x200) != 0,
+        .z = (mask & 0x400) != 0,
+        .mode = (mask & 0x800) != 0,
     };
+}
+
+std::pair<std::uint16_t, std::uint16_t> readButtonMasks(std::span<const std::uint8_t> payload, bool extended) {
+    if (extended)
+        return {readU16(payload, 0), readU16(payload, 2)};
+    return {payload[0], payload[1]};
 }
 
 } // namespace
@@ -466,17 +476,22 @@ class RemoteAccess::Impl {
     }
 
     Result pressButtons(std::span<const std::uint8_t> payload) {
-        if (payload.size() != 10)
-            return Result::failure(Error::MalformedPayload, "PRESS_BUTTONS requires 10 bytes");
-        const std::uint32_t frames = readU32(payload, 2);
-        const std::uint32_t timeoutMs = readU32(payload, 6);
+        if (payload.size() != 10 && payload.size() != 12)
+            return Result::failure(Error::MalformedPayload, "PRESS_BUTTONS requires 10 or 12 bytes");
+        const bool extended = payload.size() == 12;
+        const auto [player1Mask, player2Mask] = readButtonMasks(payload, extended);
+        if ((player1Mask & 0xF000u) != 0 || (player2Mask & 0xF000u) != 0)
+            return Result::failure(Error::InvalidArgument, "button masks must fit the 12-button controller mask");
+        const std::size_t timingOffset = extended ? 4 : 2;
+        const std::uint32_t frames = readU32(payload, timingOffset);
+        const std::uint32_t timeoutMs = readU32(payload, timingOffset + 4);
         if (frames == 0 || timeoutMs == 0)
             return Result::failure(Error::InvalidArgument, "frames and timeout must be non-zero");
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
         if (!waitVSyncUntil(deadline))
             return Result::failure(Error::Timeout, "timed out before initial VSync");
 
-        PlayersControlState state{decodeButtons(payload[0]), decodeButtons(payload[1])};
+        PlayersControlState state{decodeButtons(player1Mask), decodeButtons(player2Mask)};
         environment_->controllers().setRemoteState(state);
         struct ReleaseGuard {
             Controllers &controllers;
@@ -510,14 +525,28 @@ class RemoteAccess::Impl {
     }
 
     Result stepInput(std::span<const std::uint8_t> payload) {
-        if (payload.size() != 16 || payload[2] != 0 || payload[3] != 0)
+        if (payload.size() != 16 && payload.size() != 18)
             return Result::failure(
                 Error::MalformedPayload,
-                "STEP_INPUT requires P1:u8, P2:u8, reserved:2, held-frames:u32, "
+                "STEP_INPUT requires 16-byte legacy or 18-byte extended payload");
+        const bool extended = payload.size() == 18;
+        if (!extended && (payload[2] != 0 || payload[3] != 0))
+            return Result::failure(
+                Error::MalformedPayload,
+                "STEP_INPUT legacy payload requires P1:u8, P2:u8, reserved:2, held-frames:u32, "
                 "total-frames:u32, timeout:u32");
-        const std::uint32_t heldFrames = readU32(payload, 4);
-        const std::uint32_t totalFrames = readU32(payload, 8);
-        const std::uint32_t timeoutMs = readU32(payload, 12);
+        if (extended && (payload[4] != 0 || payload[5] != 0))
+            return Result::failure(
+                Error::MalformedPayload,
+                "STEP_INPUT extended payload requires P1:u16, P2:u16, reserved:2, held-frames:u32, "
+                "total-frames:u32, timeout:u32");
+        const auto [player1Mask, player2Mask] = readButtonMasks(payload, extended);
+        if ((player1Mask & 0xF000u) != 0 || (player2Mask & 0xF000u) != 0)
+            return Result::failure(Error::InvalidArgument, "button masks must fit the 12-button controller mask");
+        const std::size_t frameOffset = extended ? 6 : 4;
+        const std::uint32_t heldFrames = readU32(payload, frameOffset);
+        const std::uint32_t totalFrames = readU32(payload, frameOffset + 4);
+        const std::uint32_t timeoutMs = readU32(payload, frameOffset + 8);
         if (totalFrames == 0 || heldFrames > totalFrames || timeoutMs == 0)
             return Result::failure(
                 Error::InvalidArgument,
@@ -531,7 +560,7 @@ class RemoteAccess::Impl {
         } guard{environment_->controllers()};
 
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
-        const PlayersControlState pressed{decodeButtons(payload[0]), decodeButtons(payload[1])};
+        const PlayersControlState pressed{decodeButtons(player1Mask), decodeButtons(player2Mask)};
         environment_->controllers().setRemoteState(heldFrames == 0 ? PlayersControlState{} : pressed);
         for (std::uint32_t frame = 0; frame < totalFrames; ++frame) {
             if (frame == heldFrames)

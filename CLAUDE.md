@@ -55,6 +55,10 @@ Games derive from `MegaDriveEnvironment`, implement `run()`, and may override
 - `Z80`: Z80 RAM, bus control, banked access, and VBlank IRQ;
 - `RemoteAccess`: host-only observation and automation protocol.
 
+Controller input defaults to a 6-button Mega Drive pad. Player 1's built-in
+keyboard defaults map X/Y/Z/Mode to A/S/D/F respectively, in addition to the
+existing D-pad, A/B/C, and Start bindings.
+
 Maintain the distinction between host facilities and console-visible hardware.
 Do not leak SDL, filesystem, sockets, or remote-control behavior into portable
 game logic unless the public API explicitly represents a host-only feature.

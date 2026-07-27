@@ -49,10 +49,10 @@ are 32-bit fields but must fit the Mega Drive's 24-bit address space.
 | `03` | `GET_EXECUTION_DATA` | empty | copy of the current execution-data buffer |
 | `04` | `SET_EXECUTION_DATA` | replacement buffer | empty |
 | `05` | `GET_GAME_UPTIME_FRAMES` | empty | complete VSync frames since the last start or cold reset:u64 |
-| `10` | `PRESS_BUTTONS` | P1 mask:u8, P2 mask:u8, frames:u32, timeout-ms:u32 | empty after buttons are released |
+| `10` | `PRESS_BUTTONS` | P1 mask:u16, P2 mask:u16, frames:u32, timeout-ms:u32 | empty after buttons are released |
 | `11` | `RELEASE_BUTTONS` | empty | empty |
 | `12` | `SET_LOCKSTEP` | enabled:u8, reserved:3, timeout-ms:u32 | empty at a complete-frame boundary |
-| `13` | `STEP_INPUT` | P1 mask:u8, P2 mask:u8, reserved:2, held-frames:u32, total-frames:u32, timeout-ms:u32 | final frame:u64, complete 64 KiB work RAM |
+| `13` | `STEP_INPUT` | P1 mask:u16, P2 mask:u16, reserved:2, held-frames:u32, total-frames:u32, timeout-ms:u32 | final frame:u64, complete 64 KiB work RAM |
 | `20` | `READ_MEMORY` | address:u32, length:u32 | raw bytes |
 | `21` | `WRITE_MEMORY` | address:u32, raw bytes | empty |
 | `22` | `WAIT_MEMORY_CHANGED` | address:u32, width:u8, reserved:3, timeout-ms:u32 | observed value:u32 |
@@ -68,10 +68,12 @@ are 32-bit fields but must fit the Mega Drive's 24-bit address space.
 | `42` | `WAIT_HSYNC_REACH_LINE` | line:u16, reserved:2, timeout-ms:u32 | empty |
 
 Button mask bits are: bit 0 Up, 1 Down, 2 Left, 3 Right, 4 A, 5 B, 6 C,
-and 7 Start. Remote buttons are ORed with physical input. `PRESS_BUTTONS`
-waits for the next VSync, applies both masks, holds them for exactly `frames`
-complete frame intervals, releases them, and only then replies. Timeout or
-disconnect also releases them.
+7 Start, 8 X, 9 Y, 10 Z, and 11 Mode. Bits 12-15 are reserved. Remote buttons
+are ORed with physical input. `PRESS_BUTTONS` waits for the next VSync,
+applies both masks, holds them for exactly `frames` complete frame intervals,
+releases them, and only then replies. Timeout or disconnect also releases them.
+For compatibility, the server still accepts the legacy `PRESS_BUTTONS`
+payload `P1 mask:u8, P2 mask:u8, frames:u32, timeout-ms:u32`.
 
 `SET_LOCKSTEP(1)` stops execution at a complete-frame boundary. The response
 is delayed until the renderer is waiting before the next frame and the active
@@ -88,6 +90,9 @@ quiescent again before the response is assembled. Its first eight bytes are
 the final `GET_GAME_UPTIME_FRAMES` value, followed by one coherent byte-for-byte
 snapshot of addresses `FF0000-FFFFFF`. The snapshot and frame counter therefore
 come from the same stopped boundary, without a separate memory request.
+For compatibility, the server still accepts the legacy `STEP_INPUT` payload
+`P1 mask:u8, P2 mask:u8, reserved:2, held-frames:u32, total-frames:u32,
+timeout-ms:u32`.
 
 Memory wait widths are `1`, `2`, or `4`, must be naturally aligned, and use
 68000 big-endian values. `WAIT_MEMORY_CHANGED` captures its initial value when

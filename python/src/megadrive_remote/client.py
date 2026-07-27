@@ -268,12 +268,12 @@ class MegaDriveClient:
         """Hold controller masks from the next VSync for ``frames`` frames."""
 
         frames = self._positive(frames, "frames")
-        if not 0 <= int(player1) <= 0xFF or not 0 <= int(player2) <= 0xFF:
-            raise ValueError("button masks must fit one byte")
+        if not 0 <= int(player1) <= 0x0FFF or not 0 <= int(player2) <= 0x0FFF:
+            raise ValueError("button masks must fit the 12-button controller mask")
         if timeout_ms is None:
             timeout_ms = max(1_000, frames * 50 + 1_000)
         timeout_ms = self._positive(timeout_ms, "timeout_ms")
-        payload = pack(">BBII", int(player1), int(player2), frames, timeout_ms)
+        payload = pack(">HHII", int(player1), int(player2), frames, timeout_ms)
         self._request(Command.PRESS_BUTTONS, payload, operation_timeout_ms=timeout_ms)
 
     def release_buttons(self) -> None:
@@ -313,8 +313,8 @@ class MegaDriveClient:
         copy of all 64 KiB of 68000 work RAM.
         """
 
-        if not 0 <= int(player1) <= 0xFF or not 0 <= int(player2) <= 0xFF:
-            raise ValueError("button masks must fit one byte")
+        if not 0 <= int(player1) <= 0x0FFF or not 0 <= int(player2) <= 0x0FFF:
+            raise ValueError("button masks must fit the 12-button controller mask")
         if not isinstance(held_frames, int) or held_frames < 0:
             raise ValueError("held_frames must be a non-negative integer")
         total_frames = self._positive(total_frames, "total_frames")
@@ -326,7 +326,7 @@ class MegaDriveClient:
         response = self._request(
             Command.STEP_INPUT,
             pack(
-                ">BB2xIII",
+                ">HH2xIII",
                 int(player1),
                 int(player2),
                 held_frames,

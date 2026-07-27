@@ -19,6 +19,10 @@ class Buttons(IntFlag):
     B = 1 << 5
     C = 1 << 6
     START = 1 << 7
+    X = 1 << 8
+    Y = 1 << 9
+    Z = 1 << 10
+    MODE = 1 << 11
 
 
 @dataclass(frozen=True)

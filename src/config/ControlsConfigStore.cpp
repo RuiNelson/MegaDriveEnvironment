@@ -39,7 +39,18 @@ static PlayerConfiguration nodeToPlayer(const YAML::Node &n) {
 static void applyDefaults(PlayerConfiguration &p1, PlayerConfiguration &p2) {
     p1.enabled    = true;
     p1.deviceType = InputDevice::Keyboard;
-    p1.bindings   = {"Up@Up", "Down@Down", "Left@Left", "Right@Right", "A@Z", "B@X", "C@C", "Start@V"};
+    p1.bindings   = {"Up@Up",
+                     "Down@Down",
+                     "Left@Left",
+                     "Right@Right",
+                     "A@Z",
+                     "B@X",
+                     "C@C",
+                     "Start@V",
+                     "X@A",
+                     "Y@S",
+                     "Z@D",
+                     "Mode@F"};
 
     p2.enabled    = false;
     p2.deviceType = InputDevice::Keyboard;

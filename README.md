@@ -11,7 +11,7 @@ Mega Drive runtime.
 `MegaDriveEnvironment` shortens the inner development loop. Game code runs
 natively, so the debugger, profiler, sanitizers, logs and IDE all work as they
 would for any other desktop program. Around that code, the environment models
-the memory map, VDP, 3-button controllers, Z80, YM2612 and PSG closely enough to
+the memory map, VDP, 6-button controllers, Z80, YM2612 and PSG closely enough to
 develop and inspect real hardware-style interactions.
 
 The environment is deliberately **not a complete, cycle-accurate console
@@ -56,7 +56,7 @@ demonstrates that complete two-target workflow.
 - Debug game code with native breakpoints, stepping and memory inspection.
 - Keep the Mega Drive's 24-bit, big-endian address space visible to the game.
 - Exercise VDP ports, planes, sprites, scrolling, DMA and interrupts.
-- Read keyboard or gamepad input through the original 3-button joypad protocol.
+- Read keyboard or gamepad input through the Mega Drive 6-button joypad protocol.
 - Run Z80 programs and send timestamped writes to the YM2612 and PSG.
 - Capture the current frame or a full VDP diagnostic image without enabling
   expensive per-frame debug output.
@@ -79,7 +79,7 @@ demonstrates that complete two-target workflow.
 | System memory | 24-bit address normalization, 4 MiB ROM, 64 KiB Work RAM, big-endian byte/word/long access and mapped-device routing |
 | VDP | Mode 5 ports and registers, VRAM/CRAM/VSRAM, planes A/B, window, scrolling, linked sprites, priorities, sprite limits/collision, DMA, H/V counters, HBlank/VBlank events, interlace and shadow/highlight |
 | Video output | SDL3 window, integer/fitted scaling, internal 50/60 Hz timer or display VSync modes, PNG captures |
-| Controllers | Two configurable keyboard/gamepad players exposed through the active-low 3-button protocol |
+| Controllers | Two configurable keyboard/gamepad players exposed through the active-low 6-button protocol |
 | Sound | YM2612 through ymfm, SN76489-compatible PSG, 48 kHz output and timestamped non-blocking event delivery |
 | Z80 | Z80 core, 8 KiB RAM, banked 68000 access, bus request/reset and VBlank IRQ |
 | Region | Language and 50/60 Hz pins through the hardware version register |
@@ -504,11 +504,15 @@ missing or malformed, Player 1 uses the defaults below and Player 2 is disabled.
 | B | `X` |
 | C | `C` |
 | Start | `V` |
+| X | `A` |
+| Y | `S` |
+| Z | `D` |
+| Mode | `F` |
 
 Games intended for real hardware should read the active-low controller data
 ports and drive the TH line exactly as they would on the console. The
-`Controllers` class translates configured keyboard/gamepad state into that
-3-button protocol at `$A10003/$A10005`.
+`Controllers` class translates configured keyboard/gamepad state into the
+6-button protocol at `$A10003/$A10005`.
 
 Applications can expose the built-in configuration UI:
 
@@ -686,7 +690,7 @@ the recommended starting point for a new project.
 | [`system/MegaDriveEnvironment.hpp`](include/MegaDriveEnvironment/system/MegaDriveEnvironment.hpp) | Lifecycle, subsystem ownership, region, pacing and host hooks |
 | [`system/memory/SystemMemory.hpp`](include/MegaDriveEnvironment/system/memory/SystemMemory.hpp) | 24-bit bus, ROM/Work RAM and mapped-device routing |
 | [`system/graphics/VDP.hpp`](include/MegaDriveEnvironment/system/graphics/VDP.hpp) | VDP ports, synchronization, scaling, interrupts and PNG diagnostics |
-| [`system/controllers/Controllers.hpp`](include/MegaDriveEnvironment/system/controllers/Controllers.hpp) | Input state and 3-button port protocol |
+| [`system/controllers/Controllers.hpp`](include/MegaDriveEnvironment/system/controllers/Controllers.hpp) | Input state and 6-button port protocol |
 | [`system/sound/Sound.hpp`](include/MegaDriveEnvironment/system/sound/Sound.hpp) | YM2612/PSG access and audio diagnostics |
 | [`system/z80/Z80.hpp`](include/MegaDriveEnvironment/system/z80/Z80.hpp) | Z80 RAM, bus/reset and execution lifecycle |
 | [`config/controls/ControlsConfigUI.hpp`](include/MegaDriveEnvironment/config/controls/ControlsConfigUI.hpp) | Interactive keyboard/gamepad binding UI |
