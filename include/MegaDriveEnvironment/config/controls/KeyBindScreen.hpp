@@ -21,7 +21,7 @@
 /// 4. On save: write working copy back to m_config
 /// 5. On cancel: discard working copy, return to PlayerConfigScreen
 ///
-/// Esc or SDL_GAMEPAD_BUTTON_BACK at any time cancels (discards all changes).
+/// Esc or SDL_GAMEPAD_BUTTON_BACK during binding cancels (discards all changes).
 /// Enter/East in tester phase saves and exits.
 /// @see Screen, PlayerConfig
 class KeyBindScreen : public Screen {
@@ -75,6 +75,10 @@ class KeyBindScreen : public Screen {
 
     SDL_Gamepad *m_gamepad = nullptr; ///< Open gamepad for polling (if gamepad device)
 
+    bool              m_pendingGamepadButtonSaved = false; ///< Whether the current hold has been stored.
+    SDL_GamepadButton m_pendingGamepadButton      = SDL_GAMEPAD_BUTTON_INVALID;
+    Uint64            m_pendingGamepadButtonNS    = 0;
+
     /// @brief Build the list of buttons to bind based on device type.
     /// For keyboard: all 12 buttons. For gamepad: all non-directional buttons.
     void buildButtonList();
@@ -97,6 +101,15 @@ class KeyBindScreen : public Screen {
 
     /// @brief Save working copy to authoritative config and exit.
     void saveAndExit();
+
+    /// @brief Clear any pending delayed gamepad binding.
+    void clearPendingGamepadBinding();
+
+    /// @brief Start or restart the delayed gamepad binding hold.
+    void beginPendingGamepadBinding(SDL_GamepadButton button, Uint64 nowNS);
+
+    /// @brief Store/advance a delayed gamepad binding once its hold thresholds pass.
+    void updatePendingGamepadBinding(Uint64 nowNS);
 
     // ── Rendering helpers ────────────────────────────────────────────────────
     /// @brief Render binding phase UI (prompt for current button).
