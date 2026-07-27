@@ -200,8 +200,9 @@ std::vector<KeyBindScreen::BoxInfo> KeyBindScreen::buildTesterLayout() const {
     constexpr int CX = CC_WIN_W / 2;
     constexpr int CY = 200;
 
-    // Face buttons row y
-    constexpr int BY = CY + BH + GY + 16;
+    // Face buttons row y. Keep extra vertical space now that the 6-button pad
+    // uses two rows in the tester.
+    constexpr int BY = CY + BH + GY + 34;
 
     std::vector<BoxInfo> boxes;
 
