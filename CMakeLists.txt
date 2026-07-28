@@ -248,6 +248,19 @@ if(BUILD_TESTING AND PROJECT_IS_TOP_LEVEL)
         COMMAND megadrive_environment_key_bind_screen_test
     )
 
+    add_executable(megadrive_environment_controllers_configuration_test
+        tests/controllers_configuration_test.cpp
+    )
+    target_link_libraries(megadrive_environment_controllers_configuration_test PRIVATE MegaDriveEnvironment)
+    add_test(
+        NAME megadrive_environment_controllers_configuration_test
+        COMMAND megadrive_environment_controllers_configuration_test
+    )
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/controllers_configuration_test")
+    set_tests_properties(megadrive_environment_controllers_configuration_test PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/controllers_configuration_test"
+    )
+
     find_package(Python3 3.9 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
         add_test(

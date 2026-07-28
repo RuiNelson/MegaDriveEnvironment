@@ -49,7 +49,8 @@ bool statesEqual(const PlayerControlsState &a, const PlayerControlsState &b) noe
 Controllers::Controllers(MegaDriveEnvironment *env) : Controllers(env, ControlsConfigStore{}) {
 }
 
-Controllers::Controllers(MegaDriveEnvironment *env, const ControlsConfigStore &configuration) : env_(env) {
+Controllers::Controllers(MegaDriveEnvironment *env, const ControlsConfigStore &configuration)
+    : env_(env), currentConfiguration_(configuration) {
     SDL_InitSubSystem(SDL_INIT_GAMEPAD);
 
     stateMutex_    = SDL_CreateMutex();
@@ -72,10 +73,8 @@ Controllers::Controllers(MegaDriveEnvironment *env, const ControlsConfigStore &c
 Controllers::~Controllers() {
     SDL_RemoveEventWatch(sdlEventFilter, this);
 
-    if (player1Slot_.gamepad)
-        SDL_CloseGamepad(player1Slot_.gamepad);
-    if (player2Slot_.gamepad)
-        SDL_CloseGamepad(player2Slot_.gamepad);
+    closeGamepad(player1Slot_);
+    closeGamepad(player2Slot_);
 
     if (stateMutex_) {
         SDL_DestroyMutex(stateMutex_);
@@ -94,6 +93,116 @@ PlayersControlState Controllers::getCurrentState() const {
     PlayersControlState snapshot{combinedState(state1_, remoteState1_), combinedState(state2_, remoteState2_)};
     SDL_UnlockMutex(stateMutex_);
     return snapshot;
+}
+
+ControlsConfigStore Controllers::configuration() const {
+    SDL_LockMutex(stateMutex_);
+    ControlsConfigStore snapshot = currentConfiguration_;
+    SDL_UnlockMutex(stateMutex_);
+    return snapshot;
+}
+
+void Controllers::setConfiguration(const ControlsConfigStore &configuration) {
+    PlayerControlsState oldState1;
+    PlayerControlsState oldState2;
+    PlayerControlsState newState1;
+    PlayerControlsState newState2;
+
+    {
+        SDL_LockMutex(stateMutex_);
+        oldState1 = state1_;
+        oldState2 = state2_;
+
+        currentConfiguration_ = configuration;
+        state1_ = applyPlayerConfigurationLocked(player1Slot_, currentConfiguration_.player1);
+        state2_ = applyPlayerConfigurationLocked(player2Slot_, currentConfiguration_.player2);
+        newState1 = state1_;
+        newState2 = state2_;
+
+        SDL_UnlockMutex(stateMutex_);
+    }
+
+    ControllersDelegate *delegate = nullptr;
+    {
+        SDL_LockMutex(delegateMutex_);
+        delegate = delegate_;
+        SDL_UnlockMutex(delegateMutex_);
+    }
+
+    if (delegate) {
+        if (!statesEqual(newState1, oldState1))
+            delegate->controllersStateDidUpdate(newState1);
+        if (!statesEqual(newState2, oldState2))
+            delegate->controllersStateDidUpdate(newState2);
+    }
+}
+
+void Controllers::setPlayerConfiguration(int player, const PlayerConfiguration &configuration) {
+    if (player != 1 && player != 2)
+        return;
+
+    PlayerControlsState oldState;
+    PlayerControlsState newState;
+
+    {
+        SDL_LockMutex(stateMutex_);
+        if (player == 1) {
+            oldState = state1_;
+            currentConfiguration_.player1 = configuration;
+            state1_ = applyPlayerConfigurationLocked(player1Slot_, currentConfiguration_.player1);
+            newState = state1_;
+        } else {
+            oldState = state2_;
+            currentConfiguration_.player2 = configuration;
+            state2_ = applyPlayerConfigurationLocked(player2Slot_, currentConfiguration_.player2);
+            newState = state2_;
+        }
+        SDL_UnlockMutex(stateMutex_);
+    }
+
+    ControllersDelegate *delegate = nullptr;
+    {
+        SDL_LockMutex(delegateMutex_);
+        delegate = delegate_;
+        SDL_UnlockMutex(delegateMutex_);
+    }
+
+    if (delegate && !statesEqual(newState, oldState))
+        delegate->controllersStateDidUpdate(newState);
+}
+
+void Controllers::saveConfiguration() const {
+    ControlsConfigStore snapshot = configuration();
+    snapshot.save();
+}
+
+void Controllers::setConfigurationAndSave(const ControlsConfigStore &configuration) {
+    setConfiguration(configuration);
+    saveConfiguration();
+}
+
+std::vector<AvailableGamepad> Controllers::availableGamepads() {
+    SDL_InitSubSystem(SDL_INIT_GAMEPAD);
+
+    std::vector<AvailableGamepad> result;
+    int                           count = 0;
+    SDL_JoystickID               *ids   = SDL_GetGamepads(&count);
+    if (!ids)
+        return result;
+
+    result.reserve(static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        const char *name = SDL_GetGamepadNameForID(ids[i]);
+        result.push_back(AvailableGamepad{
+            .id = ids[i],
+            .guid = guidToString(SDL_GetJoystickGUIDForID(ids[i])),
+            .name = name ? name : "",
+            .open = SDL_GetGamepadFromID(ids[i]) != nullptr,
+        });
+    }
+
+    SDL_free(ids);
+    return result;
 }
 
 void Controllers::setRemoteState(const PlayersControlState &state) {
@@ -250,11 +359,7 @@ void Controllers::tryOpenGamepad(PlayerSlot &slot) {
     if (slot.device != InputDevice::Gamepad || slot.gamepadGuid.empty())
         return;
 
-    if (slot.gamepad) {
-        SDL_CloseGamepad(slot.gamepad);
-        slot.gamepad   = nullptr;
-        slot.gamepadId = 0;
-    }
+    closeGamepad(slot);
 
     int             count = 0;
     SDL_JoystickID *ids   = SDL_GetGamepads(&count);
@@ -272,6 +377,27 @@ void Controllers::tryOpenGamepad(PlayerSlot &slot) {
     }
 
     SDL_free(ids);
+}
+
+void Controllers::closeGamepad(PlayerSlot &slot) {
+    if (!slot.gamepad)
+        return;
+
+    SDL_CloseGamepad(slot.gamepad);
+    slot.gamepad   = nullptr;
+    slot.gamepadId = 0;
+}
+
+PlayerControlsState Controllers::applyPlayerConfigurationLocked(PlayerSlot                &slot,
+                                                                const PlayerConfiguration &configuration) {
+    closeGamepad(slot);
+    slot = buildSlot(configuration);
+    tryOpenGamepad(slot);
+
+    PlayerControlsState state{};
+    state.connected = configuration.enabled &&
+                      ((slot.device == InputDevice::Keyboard) || (slot.device == InputDevice::Gamepad && slot.gamepad));
+    return state;
 }
 
 // ─── SDL event watch ──────────────────────────────────────────────────────────

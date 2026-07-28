@@ -35,6 +35,14 @@ struct PlayersControlState {
     PlayerControlsState player2; ///< State for player 2.
 };
 
+/// @brief SDL gamepad discovered on the host.
+struct AvailableGamepad {
+    SDL_JoystickID id = 0; ///< SDL runtime joystick ID. Valid only for the current process/session.
+    std::string    guid;   ///< Stable SDL GUID string suitable for PlayerConfiguration::gamepadGuid.
+    std::string    name;   ///< Human-readable SDL gamepad name, empty when SDL does not provide one.
+    bool           open = false; ///< True when SDL already has this gamepad open.
+};
+
 // ─── Delegate ─────────────────────────────────────────────────────────────────
 
 /// @brief Observer interface for controller state changes.
@@ -141,6 +149,35 @@ class Controllers {
     ///
     /// @return A copy of the most recently received @c PlayersControlState.
     PlayersControlState getCurrentState() const;
+
+    /// @brief Returns the current persistent controls configuration.
+    ///
+    /// The returned object matches the format saved by ControlsConfigStore.
+    /// Gamepad joystick IDs are intentionally not included because they are SDL
+    /// session-local; use AvailableGamepad::guid when assigning a gamepad.
+    ControlsConfigStore configuration() const;
+
+    /// @brief Applies a complete controls configuration while the game is running.
+    ///
+    /// Physical button state is cleared for both players, gamepads are
+    /// re-resolved from GUIDs, remote input is preserved, and emulated port
+    /// registers are reset. Call saveConfiguration() afterwards to persist.
+    void setConfiguration(const ControlsConfigStore &configuration);
+
+    /// @brief Applies one player's controls configuration while the game is running.
+    ///
+    /// @param player  Player index, 1 or 2. Other values are ignored.
+    /// @param configuration Persistent player configuration to apply.
+    void setPlayerConfiguration(int player, const PlayerConfiguration &configuration);
+
+    /// @brief Saves the current controls configuration to controls.yaml.
+    void saveConfiguration() const;
+
+    /// @brief Applies and then saves a complete controls configuration.
+    void setConfigurationAndSave(const ControlsConfigStore &configuration);
+
+    /// @brief Returns the SDL gamepads currently visible to the host.
+    static std::vector<AvailableGamepad> availableGamepads();
 
     /// Replaces the host-independent remote overlay for both players. Buttons
     /// in this state are ORed with keyboard/gamepad input when the emulated
@@ -269,6 +306,13 @@ class Controllers {
     /// Does nothing when no matching gamepad is found or the device type is Keyboard.
     static void tryOpenGamepad(PlayerSlot &slot);
 
+    /// @brief Closes the currently open gamepad for @p slot, if any.
+    static void closeGamepad(PlayerSlot &slot);
+
+    /// @brief Rebuilds a player slot and returns the cleared physical state.
+    PlayerControlsState applyPlayerConfigurationLocked(PlayerSlot               &slot,
+                                                       const PlayerConfiguration &configuration);
+
     /// @brief Dispatches an SDL event to the appropriate input handler.
     ///
     /// Called from the SDL event watch on every SDL event.  Acquires the state
@@ -332,6 +376,7 @@ class Controllers {
 
     PlayerSlot player1Slot_;
     PlayerSlot player2Slot_;
+    ControlsConfigStore currentConfiguration_;
 
     /// @name Button state and port registers — shared between event callback and game thread
     /// @{

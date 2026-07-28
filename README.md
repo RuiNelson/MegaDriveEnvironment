@@ -494,8 +494,13 @@ sprite tables without hiding entries behind the per-line limit.
   <img src="docs/ninja.webp" height="300">
 </p>
 
-`Controllers` loads `controls.yaml` once during construction. If the file is
-missing or malformed, Player 1 uses the defaults below and Player 2 is disabled.
+`Controllers` loads `controls.yaml` during construction. If the file is missing
+or malformed, Player 1 uses the defaults below and Player 2 is disabled. The
+configuration can also be changed while the game is running with
+`controllers().setConfiguration(...)` or
+`controllers().setPlayerConfiguration(...)`; call
+`controllers().saveConfiguration()` or `setConfigurationAndSave(...)` to make
+the active bindings permanent in `controls.yaml`.
 
 | Mega Drive input | Default keyboard input |
 | --- | --- |
@@ -513,6 +518,12 @@ Games intended for real hardware should read the active-low controller data
 ports and drive the TH line exactly as they would on the console. The
 `Controllers` class translates configured keyboard/gamepad state into the
 6-button protocol at `$A10003/$A10005`.
+
+`Controllers::availableGamepads()` returns a small SDL-friendly list of the
+currently connected gamepads: runtime joystick ID, stable GUID string, display
+name, and whether SDL already has the device open. Use the GUID when filling
+`PlayerConfiguration::gamepadGuid`; SDL joystick IDs are session-local and
+should not be persisted.
 
 Applications can expose the built-in configuration UI:
 
