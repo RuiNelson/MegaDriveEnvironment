@@ -525,6 +525,11 @@ name, and whether SDL already has the device open. Use the GUID when filling
 `PlayerConfiguration::gamepadGuid`; SDL joystick IDs are session-local and
 should not be persisted.
 
+For in-game binding screens, `beginInputCapture()` records the next keyboard
+or gamepad button press. `consumeCapturedInput()` returns an SDL name that can
+be written directly into a persistent binding string such as `A@Z` or
+`B@south`.
+
 Applications can expose the built-in configuration UI:
 
 ```cpp

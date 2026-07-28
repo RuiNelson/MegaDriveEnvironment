@@ -205,6 +205,35 @@ std::vector<AvailableGamepad> Controllers::availableGamepads() {
     return result;
 }
 
+void Controllers::beginInputCapture() {
+    SDL_LockMutex(stateMutex_);
+    capturedInput_.reset();
+    capturePending_ = true;
+    SDL_UnlockMutex(stateMutex_);
+}
+
+void Controllers::cancelInputCapture() {
+    SDL_LockMutex(stateMutex_);
+    capturedInput_.reset();
+    capturePending_ = false;
+    SDL_UnlockMutex(stateMutex_);
+}
+
+bool Controllers::inputCapturePending() const {
+    SDL_LockMutex(stateMutex_);
+    const bool pending = capturePending_;
+    SDL_UnlockMutex(stateMutex_);
+    return pending;
+}
+
+std::optional<CapturedInput> Controllers::consumeCapturedInput() {
+    SDL_LockMutex(stateMutex_);
+    std::optional<CapturedInput> input = std::move(capturedInput_);
+    capturedInput_.reset();
+    SDL_UnlockMutex(stateMutex_);
+    return input;
+}
+
 void Controllers::setRemoteState(const PlayersControlState &state) {
     SDL_LockMutex(stateMutex_);
     remoteState1_ = state.player1;
@@ -400,6 +429,14 @@ PlayerControlsState Controllers::applyPlayerConfigurationLocked(PlayerSlot      
     return state;
 }
 
+void Controllers::recordCapturedInputLocked(CapturedInput input) {
+    if (!capturePending_)
+        return;
+
+    capturedInput_ = std::move(input);
+    capturePending_ = false;
+}
+
 // ─── SDL event watch ──────────────────────────────────────────────────────────
 
 bool Controllers::sdlEventFilter(void *userdata, SDL_Event *event) {
@@ -426,6 +463,17 @@ void Controllers::handleEvent(const SDL_Event &event) {
             case SDL_EVENT_KEY_DOWN:
             case SDL_EVENT_KEY_UP: {
                 const bool pressed = (event.type == SDL_EVENT_KEY_DOWN);
+                if (pressed && !event.key.repeat) {
+                    const char *keyName = SDL_GetKeyName(event.key.key);
+                    if (!keyName || keyName[0] == '\0')
+                        keyName = SDL_GetScancodeName(event.key.scancode);
+                    recordCapturedInputLocked(CapturedInput{
+                        .deviceType = InputDevice::Keyboard,
+                        .sdlName = keyName ? keyName : "",
+                        .key = event.key.key,
+                        .scancode = event.key.scancode,
+                    });
+                }
                 handleKeyEvent(player1Slot_, event.key.scancode, pressed, newState1);
                 handleKeyEvent(player2Slot_, event.key.scancode, pressed, newState2);
                 break;
@@ -435,6 +483,18 @@ void Controllers::handleEvent(const SDL_Event &event) {
             case SDL_EVENT_GAMEPAD_BUTTON_UP: {
                 const bool pressed = (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
                 const auto button  = static_cast<SDL_GamepadButton>(event.gbutton.button);
+                if (pressed) {
+                    const char *buttonName = SDL_GetGamepadStringForButton(button);
+                    const char *gamepadName = SDL_GetGamepadNameForID(event.gbutton.which);
+                    recordCapturedInputLocked(CapturedInput{
+                        .deviceType = InputDevice::Gamepad,
+                        .sdlName = buttonName ? buttonName : "",
+                        .gamepadId = event.gbutton.which,
+                        .gamepadGuid = guidToString(SDL_GetJoystickGUIDForID(event.gbutton.which)),
+                        .gamepadName = gamepadName ? gamepadName : "",
+                        .gamepadButton = button,
+                    });
+                }
                 if (player1Slot_.gamepadId == event.gbutton.which)
                     handleGamepadButtonEvent(player1Slot_, button, pressed, newState1);
                 if (player2Slot_.gamepadId == event.gbutton.which)

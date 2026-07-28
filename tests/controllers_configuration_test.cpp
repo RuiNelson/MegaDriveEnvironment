@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <cassert>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -66,6 +67,31 @@ void testConfigurationPersistence() {
     assert(loaded.player2.bindings[0] == "B@Space");
 }
 
+void testKeyboardInputCapture() {
+    Controllers controllers(nullptr);
+    assert(!controllers.consumeCapturedInput().has_value());
+
+    controllers.beginInputCapture();
+    assert(controllers.inputCapturePending());
+    controllers.cancelInputCapture();
+    assert(!controllers.inputCapturePending());
+
+    pushKey(SDLK_Z, SDL_SCANCODE_Z, true);
+    assert(!controllers.consumeCapturedInput().has_value());
+
+    controllers.beginInputCapture();
+    pushKey(SDLK_Z, SDL_SCANCODE_Z, true);
+    assert(!controllers.inputCapturePending());
+
+    std::optional<CapturedInput> captured = controllers.consumeCapturedInput();
+    assert(captured.has_value());
+    assert(captured->deviceType == InputDevice::Keyboard);
+    assert(captured->key == SDLK_Z);
+    assert(captured->scancode == SDL_SCANCODE_Z);
+    assert(captured->sdlName == "Z");
+    assert(!controllers.consumeCapturedInput().has_value());
+}
+
 void testAvailableGamepadsWrapper() {
     const auto gamepads = Controllers::availableGamepads();
     for (const AvailableGamepad &gamepad : gamepads) {
@@ -81,5 +107,6 @@ int main() {
 
     testRuntimeReconfiguration();
     testConfigurationPersistence();
+    testKeyboardInputCapture();
     testAvailableGamepadsWrapper();
 }

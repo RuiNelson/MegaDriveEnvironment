@@ -3,6 +3,7 @@
 #include "ControlsConfigStore.hpp"
 #include <data_types.hpp>
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -41,6 +42,23 @@ struct AvailableGamepad {
     std::string    guid;   ///< Stable SDL GUID string suitable for PlayerConfiguration::gamepadGuid.
     std::string    name;   ///< Human-readable SDL gamepad name, empty when SDL does not provide one.
     bool           open = false; ///< True when SDL already has this gamepad open.
+};
+
+/// @brief Physical input captured from the next keyboard/gamepad button press.
+///
+/// Use sdlName as the right-hand side of a PlayerConfiguration binding string,
+/// for example "A@" + captured.sdlName.
+struct CapturedInput {
+    InputDevice deviceType = InputDevice::Keyboard;
+    std::string sdlName; ///< SDL key or gamepad button name suitable for PlayerConfiguration::bindings.
+
+    SDL_Keycode  key = SDLK_UNKNOWN;
+    SDL_Scancode scancode = SDL_SCANCODE_UNKNOWN;
+
+    SDL_JoystickID       gamepadId = 0;
+    std::string          gamepadGuid;
+    std::string          gamepadName;
+    SDL_GamepadButton    gamepadButton = SDL_GAMEPAD_BUTTON_INVALID;
 };
 
 // ─── Delegate ─────────────────────────────────────────────────────────────────
@@ -179,6 +197,22 @@ class Controllers {
     /// @brief Returns the SDL gamepads currently visible to the host.
     static std::vector<AvailableGamepad> availableGamepads();
 
+    /// @brief Starts capturing the next keyboard or gamepad button press.
+    ///
+    /// The pressed input is still delivered to normal gameplay. Capture ends
+    /// automatically after the first non-repeat key-down or gamepad-button-down
+    /// event and can be retrieved with consumeCapturedInput().
+    void beginInputCapture();
+
+    /// @brief Cancels a pending input capture and discards any captured input.
+    void cancelInputCapture();
+
+    /// @brief True while waiting for the next key/gamepad button press.
+    bool inputCapturePending() const;
+
+    /// @brief Returns and clears the last captured input, if any.
+    std::optional<CapturedInput> consumeCapturedInput();
+
     /// Replaces the host-independent remote overlay for both players. Buttons
     /// in this state are ORed with keyboard/gamepad input when the emulated
     /// data ports are read. Intended for deterministic automation tools.
@@ -313,6 +347,9 @@ class Controllers {
     PlayerControlsState applyPlayerConfigurationLocked(PlayerSlot               &slot,
                                                        const PlayerConfiguration &configuration);
 
+    /// @brief Records @p input as the completed capture when capture is pending.
+    void recordCapturedInputLocked(CapturedInput input);
+
     /// @brief Dispatches an SDL event to the appropriate input handler.
     ///
     /// Called from the SDL event watch on every SDL event.  Acquires the state
@@ -385,6 +422,8 @@ class Controllers {
     PlayerControlsState state2_     = {};
     PlayerControlsState remoteState1_ = {};
     PlayerControlsState remoteState2_ = {};
+    bool                         capturePending_ = false;
+    std::optional<CapturedInput> capturedInput_;
     /// @}
 
     /// @name Delegate
