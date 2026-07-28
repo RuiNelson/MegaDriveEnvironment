@@ -90,6 +90,23 @@ void testKeyboardInputCapture() {
     assert(captured->scancode == SDL_SCANCODE_Z);
     assert(captured->sdlName == "Z");
     assert(!controllers.consumeCapturedInput().has_value());
+
+    controllers.beginInputCapture(20);
+    pushKey(SDLK_X, SDL_SCANCODE_X, true);
+    pushKey(SDLK_X, SDL_SCANCODE_X, false);
+    assert(controllers.inputCapturePending());
+    assert(!controllers.consumeCapturedInput().has_value());
+
+    pushKey(SDLK_C, SDL_SCANCODE_C, true);
+    SDL_Delay(25);
+    captured = controllers.consumeCapturedInput();
+    assert(captured.has_value());
+    assert(captured->deviceType == InputDevice::Keyboard);
+    assert(captured->key == SDLK_C);
+    assert(captured->scancode == SDL_SCANCODE_C);
+    assert(captured->sdlName == "C");
+    assert(!controllers.inputCapturePending());
+    pushKey(SDLK_C, SDL_SCANCODE_C, false);
 }
 
 void testAvailableGamepadsWrapper() {

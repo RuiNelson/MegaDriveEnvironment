@@ -3,6 +3,7 @@
 #include "ControlsConfigStore.hpp"
 #include <data_types.hpp>
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -197,18 +198,20 @@ class Controllers {
     /// @brief Returns the SDL gamepads currently visible to the host.
     static std::vector<AvailableGamepad> availableGamepads();
 
-    /// @brief Starts capturing the next keyboard or gamepad button press.
+    /// @brief Starts capturing the next keyboard or gamepad button held long enough.
     ///
     /// The pressed input is still delivered to normal gameplay. Capture ends
     /// automatically after the first non-repeat key-down or gamepad-button-down
-    /// event and can be retrieved with consumeCapturedInput().
-    void beginInputCapture();
+    /// event that remains pressed for at least @p minimumHoldTimeMS and can be
+    /// retrieved with consumeCapturedInput(). Shorter presses are ignored and
+    /// capture remains pending.
+    void beginInputCapture(std::uint32_t minimumHoldTimeMS = 0);
 
     /// @brief Cancels a pending input capture and discards any captured input.
     void cancelInputCapture();
 
     /// @brief True while waiting for the next key/gamepad button press.
-    bool inputCapturePending() const;
+    bool inputCapturePending();
 
     /// @brief Returns and clears the last captured input, if any.
     std::optional<CapturedInput> consumeCapturedInput();
@@ -347,8 +350,17 @@ class Controllers {
     PlayerControlsState applyPlayerConfigurationLocked(PlayerSlot               &slot,
                                                        const PlayerConfiguration &configuration);
 
-    /// @brief Records @p input as the completed capture when capture is pending.
-    void recordCapturedInputLocked(CapturedInput input);
+    /// @brief Starts timing @p input as a capture candidate when capture is pending.
+    void beginCapturedInputHoldLocked(CapturedInput input);
+
+    /// @brief Completes the active capture candidate if it has been held long enough.
+    void completeCapturedInputHoldIfReadyLocked();
+
+    /// @brief Releases the active keyboard capture candidate, if it matches.
+    void releaseCapturedKeyboardInputLocked(SDL_Scancode scancode);
+
+    /// @brief Releases the active gamepad capture candidate, if it matches.
+    void releaseCapturedGamepadInputLocked(SDL_JoystickID gamepadId, SDL_GamepadButton button);
 
     /// @brief Dispatches an SDL event to the appropriate input handler.
     ///
@@ -424,6 +436,9 @@ class Controllers {
     PlayerControlsState remoteState2_ = {};
     bool                         capturePending_ = false;
     std::optional<CapturedInput> capturedInput_;
+    std::optional<CapturedInput> heldCaptureInput_;
+    Uint64                       heldCaptureStartedTicks_ = 0;
+    Uint64                       captureMinimumHoldTicks_ = 0;
     /// @}
 
     /// @name Delegate

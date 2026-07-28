@@ -205,9 +205,12 @@ std::vector<AvailableGamepad> Controllers::availableGamepads() {
     return result;
 }
 
-void Controllers::beginInputCapture() {
+void Controllers::beginInputCapture(std::uint32_t minimumHoldTimeMS) {
     SDL_LockMutex(stateMutex_);
     capturedInput_.reset();
+    heldCaptureInput_.reset();
+    heldCaptureStartedTicks_ = 0;
+    captureMinimumHoldTicks_ = static_cast<Uint64>(minimumHoldTimeMS) * 1'000'000ull;
     capturePending_ = true;
     SDL_UnlockMutex(stateMutex_);
 }
@@ -215,12 +218,16 @@ void Controllers::beginInputCapture() {
 void Controllers::cancelInputCapture() {
     SDL_LockMutex(stateMutex_);
     capturedInput_.reset();
+    heldCaptureInput_.reset();
+    heldCaptureStartedTicks_ = 0;
+    captureMinimumHoldTicks_ = 0;
     capturePending_ = false;
     SDL_UnlockMutex(stateMutex_);
 }
 
-bool Controllers::inputCapturePending() const {
+bool Controllers::inputCapturePending() {
     SDL_LockMutex(stateMutex_);
+    completeCapturedInputHoldIfReadyLocked();
     const bool pending = capturePending_;
     SDL_UnlockMutex(stateMutex_);
     return pending;
@@ -228,6 +235,7 @@ bool Controllers::inputCapturePending() const {
 
 std::optional<CapturedInput> Controllers::consumeCapturedInput() {
     SDL_LockMutex(stateMutex_);
+    completeCapturedInputHoldIfReadyLocked();
     std::optional<CapturedInput> input = std::move(capturedInput_);
     capturedInput_.reset();
     SDL_UnlockMutex(stateMutex_);
@@ -429,12 +437,53 @@ PlayerControlsState Controllers::applyPlayerConfigurationLocked(PlayerSlot      
     return state;
 }
 
-void Controllers::recordCapturedInputLocked(CapturedInput input) {
-    if (!capturePending_)
+void Controllers::beginCapturedInputHoldLocked(CapturedInput input) {
+    if (!capturePending_ || capturedInput_ || heldCaptureInput_)
         return;
 
-    capturedInput_ = std::move(input);
+    heldCaptureInput_ = std::move(input);
+    heldCaptureStartedTicks_ = SDL_GetTicksNS();
+    completeCapturedInputHoldIfReadyLocked();
+}
+
+void Controllers::completeCapturedInputHoldIfReadyLocked() {
+    if (!capturePending_ || capturedInput_ || !heldCaptureInput_)
+        return;
+
+    const Uint64 now = SDL_GetTicksNS();
+    if (now - heldCaptureStartedTicks_ < captureMinimumHoldTicks_)
+        return;
+
+    capturedInput_ = std::move(heldCaptureInput_);
+    heldCaptureInput_.reset();
+    heldCaptureStartedTicks_ = 0;
     capturePending_ = false;
+}
+
+void Controllers::releaseCapturedKeyboardInputLocked(SDL_Scancode scancode) {
+    if (!heldCaptureInput_ || heldCaptureInput_->deviceType != InputDevice::Keyboard ||
+        heldCaptureInput_->scancode != scancode) {
+        return;
+    }
+
+    completeCapturedInputHoldIfReadyLocked();
+    if (heldCaptureInput_) {
+        heldCaptureInput_.reset();
+        heldCaptureStartedTicks_ = 0;
+    }
+}
+
+void Controllers::releaseCapturedGamepadInputLocked(SDL_JoystickID gamepadId, SDL_GamepadButton button) {
+    if (!heldCaptureInput_ || heldCaptureInput_->deviceType != InputDevice::Gamepad ||
+        heldCaptureInput_->gamepadId != gamepadId || heldCaptureInput_->gamepadButton != button) {
+        return;
+    }
+
+    completeCapturedInputHoldIfReadyLocked();
+    if (heldCaptureInput_) {
+        heldCaptureInput_.reset();
+        heldCaptureStartedTicks_ = 0;
+    }
 }
 
 // ─── SDL event watch ──────────────────────────────────────────────────────────
@@ -467,12 +516,14 @@ void Controllers::handleEvent(const SDL_Event &event) {
                     const char *keyName = SDL_GetKeyName(event.key.key);
                     if (!keyName || keyName[0] == '\0')
                         keyName = SDL_GetScancodeName(event.key.scancode);
-                    recordCapturedInputLocked(CapturedInput{
+                    beginCapturedInputHoldLocked(CapturedInput{
                         .deviceType = InputDevice::Keyboard,
                         .sdlName = keyName ? keyName : "",
                         .key = event.key.key,
                         .scancode = event.key.scancode,
                     });
+                } else if (!pressed) {
+                    releaseCapturedKeyboardInputLocked(event.key.scancode);
                 }
                 handleKeyEvent(player1Slot_, event.key.scancode, pressed, newState1);
                 handleKeyEvent(player2Slot_, event.key.scancode, pressed, newState2);
@@ -486,7 +537,7 @@ void Controllers::handleEvent(const SDL_Event &event) {
                 if (pressed) {
                     const char *buttonName = SDL_GetGamepadStringForButton(button);
                     const char *gamepadName = SDL_GetGamepadNameForID(event.gbutton.which);
-                    recordCapturedInputLocked(CapturedInput{
+                    beginCapturedInputHoldLocked(CapturedInput{
                         .deviceType = InputDevice::Gamepad,
                         .sdlName = buttonName ? buttonName : "",
                         .gamepadId = event.gbutton.which,
@@ -494,6 +545,8 @@ void Controllers::handleEvent(const SDL_Event &event) {
                         .gamepadName = gamepadName ? gamepadName : "",
                         .gamepadButton = button,
                     });
+                } else {
+                    releaseCapturedGamepadInputLocked(event.gbutton.which, button);
                 }
                 if (player1Slot_.gamepadId == event.gbutton.which)
                     handleGamepadButtonEvent(player1Slot_, button, pressed, newState1);
