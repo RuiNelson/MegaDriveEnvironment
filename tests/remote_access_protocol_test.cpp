@@ -1,6 +1,7 @@
 #include "system/MegaDriveEnvironment.hpp"
 
 #include <array>
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <cstdint>
@@ -21,6 +22,12 @@ class TestEnvironment final : public MegaDriveEnvironment {
         : MegaDriveEnvironment(VDP::InternalTimer, VDP::Scale1x, VDP::HardwareSpriteLimit, port) {}
     protected:
     void run() override {}
+    void handleOptionHotkey(OptionHotkeyCode keyCode) override {
+        lastHotkey.store(keyCode.keyboardKey, std::memory_order_release);
+    }
+
+    public:
+    std::atomic<SDL_Keycode> lastHotkey{SDLK_UNKNOWN};
 };
 
 std::uint16_t reservePort() {
@@ -142,6 +149,8 @@ int main() {
     assert(connected);
 
     assert(request(socketFd, 0x00, 1, {}).empty());
+    assert(request(socketFd, 0x06, 99, {'L'}).empty());
+    assert(environment.lastHotkey.load(std::memory_order_acquire) == SDLK_L);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
     const auto uptimeMs = readU64(request(socketFd, 0x02, 2, {}));

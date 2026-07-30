@@ -53,6 +53,7 @@ enum class Command : std::uint8_t {
     GetExecutionData = 0x03,
     SetExecutionData = 0x04,
     GetGameUptimeFrames = 0x05,
+    TriggerOptionHotkey = 0x06,
     PressButtons = 0x10,
     ReleaseButtons = 0x11,
     SetLockstep = 0x12,
@@ -422,6 +423,8 @@ class RemoteAccess::Impl {
                 appendU64(result.payload, environment_->gameUptimeFrames());
                 return result;
             }
+            case Command::TriggerOptionHotkey:
+                return triggerOptionHotkey(payload);
             case Command::PressButtons:
                 return pressButtons(payload);
             case Command::ReleaseButtons:
@@ -461,6 +464,20 @@ class RemoteAccess::Impl {
                 return waitHSyncLine(payload);
         }
         return Result::failure(Error::UnknownCommand, "unknown command");
+    }
+
+    Result triggerOptionHotkey(std::span<const std::uint8_t> payload) {
+        if (payload.size() != 1 || payload[0] < 0x20u || payload[0] > 0x7Eu)
+            return Result::failure(Error::InvalidArgument,
+                                   "TRIGGER_OPTION_HOTKEY requires one printable ASCII key");
+        const auto key = static_cast<SDL_Keycode>(payload[0] >= 'A' && payload[0] <= 'Z'
+                                                     ? payload[0] - 'A' + 'a'
+                                                     : payload[0]);
+        environment_->triggerOptionHotkey(MegaDriveEnvironment::OptionHotkeyCode{
+            .source = MegaDriveEnvironment::OptionHotkeyCode::Source::Keyboard,
+            .keyboardKey = key,
+        });
+        return {};
     }
 
     Result restartGame(std::span<const std::uint8_t> payload) {

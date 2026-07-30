@@ -49,6 +49,7 @@ are 32-bit fields but must fit the Mega Drive's 24-bit address space.
 | `03` | `GET_EXECUTION_DATA` | empty | copy of the current execution-data buffer |
 | `04` | `SET_EXECUTION_DATA` | replacement buffer | empty |
 | `05` | `GET_GAME_UPTIME_FRAMES` | empty | complete VSync frames since the last start or cold reset:u64 |
+| `06` | `TRIGGER_OPTION_HOTKEY` | printable ASCII key:u8 | empty after the game's host debug-hotkey callback runs |
 | `10` | `PRESS_BUTTONS` | P1 mask:u16, P2 mask:u16, frames:u32, timeout-ms:u32 | empty after buttons are released |
 | `11` | `RELEASE_BUTTONS` | empty | empty |
 | `12` | `SET_LOCKSTEP` | enabled:u8, reserved:3, timeout-ms:u32 | empty at a complete-frame boundary |
@@ -74,6 +75,11 @@ applies both masks, holds them for exactly `frames` complete frame intervals,
 releases them, and only then replies. Timeout or disconnect also releases them.
 For compatibility, the server still accepts the legacy `PRESS_BUTTONS`
 payload `P1 mask:u8, P2 mask:u8, frames:u32, timeout-ms:u32`.
+
+`TRIGGER_OPTION_HOTKEY` delivers its key to the same host-only callback as an
+Alt/Option keyboard chord, lowercasing ASCII letters first. It is intended for
+game-defined debugging actions such as cheats; unsupported keys are harmless.
+The callback is ignored when the host has disabled debug utilities.
 
 `SET_LOCKSTEP(1)` stops execution at a complete-frame boundary. The response
 is delayed until the renderer is waiting before the next frame and the active

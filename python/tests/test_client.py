@@ -177,6 +177,17 @@ class MegaDriveClientTests(unittest.TestCase):
             client.set_execution_data(bytearray(replacement))
             client.set_execution_data(b"")
 
+    def test_trigger_option_hotkey_normalizes_ascii_letters(self) -> None:
+        def trigger(command: int, payload: bytes) -> tuple[int, bytes]:
+            self.assertEqual((command, payload), (0x06, b"l"))
+            return ACK, b""
+
+        with ClientHarness(trigger) as client:
+            client.trigger_option_hotkey("L")
+
+        with self.assertRaises(ValueError):
+            MegaDriveClient().trigger_option_hotkey("ll")
+
     def test_vram_controller_release_and_sync_payloads(self) -> None:
         expected = (
             (0x32, pack(">HI", 0x1200, 3), b"abc"),

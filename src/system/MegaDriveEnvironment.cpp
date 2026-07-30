@@ -54,6 +54,11 @@ MegaDriveEnvironment::~MegaDriveEnvironment() {
     powerOff();
 }
 
+void MegaDriveEnvironment::triggerOptionHotkey(OptionHotkeyCode keyCode) {
+    if (debugUtilities_)
+        handleOptionHotkey(keyCode);
+}
+
 void MegaDriveEnvironment::boot() {
     quitRequested_.store(false, std::memory_order_release);
     restartRequested_.store(false, std::memory_order_release);

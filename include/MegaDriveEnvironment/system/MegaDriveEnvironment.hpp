@@ -155,6 +155,11 @@ class MegaDriveEnvironment {
         debugUtilities_ = enabled;
     }
 
+    /// Delivers a host-only debug hotkey through the same callback as an
+    /// Alt/Option keyboard chord. This is intended for remote automation.
+    /// Calls made while debug utilities are disabled are ignored.
+    void triggerOptionHotkey(OptionHotkeyCode keyCode);
+
     /// Requests desktop fullscreen when boot() starts. Call before boot().
     void setStartFullscreen(bool enabled) {
         startFullscreen_ = enabled;

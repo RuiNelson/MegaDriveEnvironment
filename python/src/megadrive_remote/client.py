@@ -257,6 +257,17 @@ class MegaDriveClient:
 
         self._request(Command.SET_EXECUTION_DATA, bytes(data))
 
+    def trigger_option_hotkey(self, key: str) -> None:
+        """Trigger a printable host debug hotkey, as if Alt/Option+``key`` was pressed.
+
+        The target game decides which keys it supports. This only has an effect
+        when its host debug utilities are enabled.
+        """
+
+        if not isinstance(key, str) or len(key) != 1 or not key.isascii() or not key.isprintable():
+            raise ValueError("key must be one printable ASCII character")
+        self._request(Command.TRIGGER_OPTION_HOTKEY, key.lower().encode("ascii"))
+
     def press_buttons(
         self,
         *,

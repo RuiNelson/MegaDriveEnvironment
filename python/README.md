@@ -30,6 +30,7 @@ with MegaDriveClient("127.0.0.1", 6969) as mega_drive:
     print(mega_drive.get_game_uptime_ms())
     print(mega_drive.get_game_uptime_frames())
     print(mega_drive.get_execution_data())
+    mega_drive.trigger_option_hotkey("l")  # game-defined Alt/Option+L debug action
 
     # A+X+Right on player 1, Start+Mode on player 2, for exactly three frames.
     mega_drive.press_buttons(
@@ -77,6 +78,7 @@ with MegaDriveClient("127.0.0.1", 6969) as mega_drive:
 - `get_game_uptime_ms()`;
 - `get_game_uptime_frames()`;
 - `get_execution_data()` and `set_execution_data()`;
+- `trigger_option_hotkey()` for game-defined host debug actions;
 - `press_buttons()` and `release_buttons()`;
 - `set_lockstep()` and `step_input()`;
 - `read_memory()`, `write_memory()`, `read_value()`, and `write_value()`;
