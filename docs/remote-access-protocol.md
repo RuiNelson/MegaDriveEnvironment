@@ -54,6 +54,7 @@ are 32-bit fields but must fit the Mega Drive's 24-bit address space.
 | `11` | `RELEASE_BUTTONS` | empty | empty |
 | `12` | `SET_LOCKSTEP` | enabled:u8, reserved:3, timeout-ms:u32 | empty at a complete-frame boundary |
 | `13` | `STEP_INPUT` | P1 mask:u16, P2 mask:u16, reserved:2, held-frames:u32, total-frames:u32, timeout-ms:u32 | final frame:u64, complete 64 KiB work RAM |
+| `14` | `HOLD_BUTTONS` | P1 mask:u16, P2 mask:u16 (or legacy P1:u8, P2:u8) | empty immediately; masks stay latched |
 | `20` | `READ_MEMORY` | address:u32, length:u32 | raw bytes |
 | `21` | `WRITE_MEMORY` | address:u32, raw bytes | empty |
 | `22` | `WAIT_MEMORY_CHANGED` | address:u32, width:u8, reserved:3, timeout-ms:u32 | observed value:u32 |
@@ -75,6 +76,14 @@ applies both masks, holds them for exactly `frames` complete frame intervals,
 releases them, and only then replies. Timeout or disconnect also releases them.
 For compatibility, the server still accepts the legacy `PRESS_BUTTONS`
 payload `P1 mask:u8, P2 mask:u8, frames:u32, timeout-ms:u32`.
+
+`HOLD_BUTTONS` latches both masks into the remote controller state and returns
+immediately without waiting on VSync and without clearing on return. The latch
+remains until the next `HOLD_BUTTONS` (replace), `PRESS_BUTTONS` (which still
+auto-releases after its frames), `RELEASE_BUTTONS`, disconnect, restart, or
+lockstep entry. Use this for continuous walking and other held directions;
+pulse face buttons by including them for one hold update and omitting them on
+the next. Legacy 2-byte `P1:u8, P2:u8` payloads are accepted.
 
 `TRIGGER_OPTION_HOTKEY` delivers its key to the same host-only callback as an
 Alt/Option keyboard chord, lowercasing ASCII letters first. It is intended for

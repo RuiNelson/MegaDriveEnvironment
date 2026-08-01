@@ -276,7 +276,11 @@ class MegaDriveClient:
         frames: int = 1,
         timeout_ms: int | None = None,
     ) -> None:
-        """Hold controller masks from the next VSync for ``frames`` frames."""
+        """Hold controller masks from the next VSync for ``frames`` frames.
+
+        Always releases after ``frames`` complete frame intervals. Prefer
+        :meth:`hold_buttons` for continuous walking (sticky latch).
+        """
 
         frames = self._positive(frames, "frames")
         if not 0 <= int(player1) <= 0x0FFF or not 0 <= int(player2) <= 0x0FFF:
@@ -286,6 +290,25 @@ class MegaDriveClient:
         timeout_ms = self._positive(timeout_ms, "timeout_ms")
         payload = pack(">HHII", int(player1), int(player2), frames, timeout_ms)
         self._request(Command.PRESS_BUTTONS, payload, operation_timeout_ms=timeout_ms)
+
+    def hold_buttons(
+        self,
+        *,
+        player1: Buttons | int = Buttons.NONE,
+        player2: Buttons | int = Buttons.NONE,
+    ) -> None:
+        """Latch remote controller masks until the next hold/press/release.
+
+        Does not wait on VSync and does not auto-release. Directions stay
+        held across observation polls so the game sees continuous walking.
+        Call :meth:`release_buttons` (or ``hold_buttons`` with
+        ``Buttons.NONE``) to clear.
+        """
+
+        if not 0 <= int(player1) <= 0x0FFF or not 0 <= int(player2) <= 0x0FFF:
+            raise ValueError("button masks must fit the 12-button controller mask")
+        payload = pack(">HH", int(player1), int(player2))
+        self._request(Command.HOLD_BUTTONS, payload)
 
     def release_buttons(self) -> None:
         self._request(Command.RELEASE_BUTTONS)

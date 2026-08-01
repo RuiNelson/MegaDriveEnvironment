@@ -58,6 +58,9 @@ enum class Command : std::uint8_t {
     ReleaseButtons = 0x11,
     SetLockstep = 0x12,
     StepInput = 0x13,
+    // Latch remote buttons until HOLD_BUTTONS again, PRESS_BUTTONS, RELEASE_BUTTONS,
+    // disconnect, restart, or lockstep clear. Does not wait on VSync.
+    HoldButtons = 0x14,
     ReadMemory = 0x20,
     WriteMemory = 0x21,
     WaitMemoryChanged = 0x22,
@@ -432,6 +435,8 @@ class RemoteAccess::Impl {
                     return Result::failure(Error::MalformedPayload, "RELEASE_BUTTONS has no payload");
                 environment_->controllers().clearRemoteState();
                 return {};
+            case Command::HoldButtons:
+                return holdButtons(payload);
             case Command::SetLockstep:
                 return setLockstep(payload);
             case Command::StepInput:
@@ -519,6 +524,22 @@ class RemoteAccess::Impl {
             if (!waitVSyncUntil(deadline))
                 return Result::failure(Error::Timeout, "timed out while holding buttons");
         }
+        return {};
+    }
+
+    Result holdButtons(std::span<const std::uint8_t> payload) {
+        // Sticky remote pad state for continuous walking / held directions.
+        // Unlike PRESS_BUTTONS this does not wait on VSync and does not clear
+        // on return — the next HOLD_BUTTONS, PRESS_BUTTONS, RELEASE_BUTTONS,
+        // disconnect, restart, or lockstep entry replaces or clears it.
+        if (payload.size() != 2 && payload.size() != 4)
+            return Result::failure(Error::MalformedPayload, "HOLD_BUTTONS requires 2 or 4 bytes");
+        const bool extended = payload.size() == 4;
+        const auto [player1Mask, player2Mask] = readButtonMasks(payload, extended);
+        if ((player1Mask & 0xF000u) != 0 || (player2Mask & 0xF000u) != 0)
+            return Result::failure(Error::InvalidArgument, "button masks must fit the 12-button controller mask");
+        environment_->controllers().setRemoteState(
+            PlayersControlState{decodeButtons(player1Mask), decodeButtons(player2Mask)});
         return {};
     }
 
