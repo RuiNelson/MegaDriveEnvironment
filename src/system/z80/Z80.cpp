@@ -195,6 +195,12 @@ void Z80::runThread() {
         runTowardWallClock(kThreadRunTStates);
         SDL_UnlockMutex(mutex_);
 
+        // A BUSREQ that landed during the slice must ACK on the next
+        // iteration. Sleeping first adds up to 100 µs of 68K stall per retry
+        // of sound_ym2612_acquire (voices hit that path every sample pulse).
+        if (resetHeld_.load(std::memory_order_acquire) ||
+            busRequested_.load(std::memory_order_acquire))
+            continue;
         SDL_DelayNS(100'000);
     }
 }

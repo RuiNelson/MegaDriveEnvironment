@@ -132,6 +132,9 @@ consumer after this repository's tests pass.
   explicit; these are correctness boundaries, not convenience details.
 - Avoid blocking the emulated CPU/audio/render loops with logging, network I/O,
   or filesystem work.
+- The Z80 thread must ACK `$A11100` promptly when the 68K requests the bus.
+  After a run slice, skip the 100 µs pacing delay if `BUSREQ` is already
+  asserted. Sleeping first stalls `sound_ym2612_acquire` during DAC voices.
 - Keep remote-access protocol changes backward-aware and update
   `docs/remote-access-protocol.md`, the C++ tests, and the Python client
   together.
