@@ -7,28 +7,37 @@
 
 /// @brief Third screen: interactive key and button binding with live tester.
 ///
+/// A single binding session (reset()) targets exactly one device — keyboard
+/// or gamepad, never both — so a player missing one device can always finish
+/// configuring the other: nothing ever waits on input from a device that
+/// might not be present. PlayerConfigScreen exposes this as two separate
+/// entry points, "Bind Keyboard" and "Bind Gamepad".
+///
 /// Two-phase workflow:
-/// - **Binding Phase**: Prompts for each active device's buttons in turn —
-///   keyboard keys first (if enabled), then gamepad buttons (if enabled).
-///   When both devices are enabled, every button is prompted for once per
-///   device, since either device can drive it during play. Directional
-///   buttons are auto-assigned on gamepads (not prompted).
+/// - **Binding Phase**: Prompts for each of the session's device's buttons in
+///   turn. Directional buttons are auto-assigned on gamepads (not prompted).
 /// - **Testing Phase**: Displays all buttons in a grid. A box turns red when
-///   pressed on keyboard OR gamepad (live state), yellow when released. User
-///   verifies bindings before saving.
+///   pressed on keyboard OR gamepad (live state), yellow when released —
+///   this phase always reflects every active device at once, since that is
+///   what actually drives gameplay. User verifies bindings before saving.
 ///
 /// Flow:
-/// 1. reset() called before screen shown; creates working copy of config
+/// 1. reset(mode) called before screen shown; creates working copy of config
 /// 2. Binding phase: iterate through m_targets, prompt for each one
 /// 3. Testing phase: display tester grid, poll button states, allow save/cancel
 /// 4. On save: write working copy back to m_config
 /// 5. On cancel: discard working copy, return to PlayerConfigScreen
 ///
-/// Esc or Select+Start during binding cancels (discards all changes).
+/// Esc or Select+Start during binding cancels (discards only this session's
+/// changes — a previous session for the other device is unaffected, since it
+/// was already saved back to m_config before this one started).
 /// Enter/East in tester phase saves and exits.
 /// @see Screen, PlayerConfig
 class KeyBindScreen : public Screen {
     public:
+    /// @brief Which single device a binding session targets.
+    enum class BindMode { Keyboard, Gamepad };
+
     /// @brief Construct the key binding screen.
     /// @param playerNum The player number (1 or 2) for display labels.
     /// @param config Reference to the PlayerConfig to edit.
@@ -51,13 +60,16 @@ class KeyBindScreen : public Screen {
         return m_cancelled;
     }
 
-    /// @brief Reset the screen state before showing.
+    /// @brief Reset the screen state before showing, to bind one device.
+    /// @param mode Which device this session prompts for.
     /// @note Creates working copy of m_config, initializes phase/index,
-    ///       builds the bind target list, applies auto-directions for gamepad.
-    void reset();
+    ///       builds the bind target list for @p mode, applies auto-directions
+    ///       when @p mode is Gamepad.
+    void reset(BindMode mode);
 
     /// @brief Reset directly to the testing phase, skipping binding.
     /// @note Working copy of m_config is made; no binding prompts are shown.
+    /// Tests every currently active device at once, matching gameplay.
     void resetToTest();
 
     private:
@@ -67,21 +79,15 @@ class KeyBindScreen : public Screen {
         Testing  ///< Displaying tester grid
     };
 
-    /// @brief One button prompted for during the binding phase, tagged by
-    /// which device it is being bound on.
-    struct BindTarget {
-        MDButton btn;
-        bool     isGamepad;
-    };
-
     int           m_playerNum; ///< Player number (1 or 2)
     PlayerConfig &m_config;    ///< Authoritative config (read-only during screen)
     PlayerConfig  m_temp;      ///< Working copy; only saved on successful exit
 
-    Phase                   m_phase     = Phase::Binding; ///< Current phase
-    bool                    m_cancelled = false;          ///< Whether binding was cancelled
-    int                     m_bindIdx   = 0;              ///< Index into m_targets list
-    std::vector<BindTarget> m_targets;                    ///< Targets to bind (order matters)
+    BindMode              m_mode      = BindMode::Keyboard; ///< Device targeted by the current binding session
+    Phase                 m_phase     = Phase::Binding;     ///< Current phase
+    bool                  m_cancelled = false;              ///< Whether binding was cancelled
+    int                   m_bindIdx   = 0;                  ///< Index into m_targets list
+    std::vector<MDButton> m_targets;                        ///< Buttons to bind this session (order matters)
 
     SDL_Gamepad *m_gamepad = nullptr; ///< Open gamepad for polling (if gamepad enabled)
 
@@ -91,12 +97,12 @@ class KeyBindScreen : public Screen {
     bool              m_gamepadBackDown           = false;
     bool              m_gamepadStartDown          = false;
 
-    /// @brief Build the list of binding targets from the active device(s).
-    /// Keyboard contributes all 12 buttons; gamepad contributes all
+    /// @brief Build the list of binding targets for m_mode.
+    /// Keyboard mode lists all 12 buttons; gamepad mode lists only the
     /// non-directional buttons (directions are auto-mapped).
     void buildTargetList();
 
-    /// @brief Auto-assign direction buttons on the gamepad side, when gamepad is enabled.
+    /// @brief Auto-assign direction buttons on the gamepad side.
     /// Marks Up/Down/Left/Right with isAutoDir=true; user won't be prompted for them.
     void applyAutoDirections();
 

@@ -253,8 +253,12 @@ void runControlsConfig() {
                         p1Bind.resetToTest();
                         state   = UIState::Player1KeyBind;
                         current = &p1Bind;
+                    } else if (r == PlayerConfigResult::BindKeyboard) {
+                        p1Bind.reset(KeyBindScreen::BindMode::Keyboard);
+                        state   = UIState::Player1KeyBind;
+                        current = &p1Bind;
                     } else {
-                        p1Bind.reset();
+                        p1Bind.reset(KeyBindScreen::BindMode::Gamepad);
                         state   = UIState::Player1KeyBind;
                         current = &p1Bind;
                     }
@@ -272,8 +276,12 @@ void runControlsConfig() {
                         p2Bind.resetToTest();
                         state   = UIState::Player2KeyBind;
                         current = &p2Bind;
+                    } else if (r == PlayerConfigResult::BindKeyboard) {
+                        p2Bind.reset(KeyBindScreen::BindMode::Keyboard);
+                        state   = UIState::Player2KeyBind;
+                        current = &p2Bind;
                     } else {
-                        p2Bind.reset();
+                        p2Bind.reset(KeyBindScreen::BindMode::Gamepad);
                         state   = UIState::Player2KeyBind;
                         current = &p2Bind;
                     }

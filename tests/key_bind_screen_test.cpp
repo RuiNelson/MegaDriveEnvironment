@@ -49,7 +49,7 @@ void testGamepadBindingRequiresHoldBeforeAdvance() {
     config.gamepadEnabled = true;
 
     KeyBindScreen screen(1, config);
-    screen.reset();
+    screen.reset(KeyBindScreen::BindMode::Gamepad);
     screen.handleEvent(gamepadButtonEvent(SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_GAMEPAD_BUTTON_SOUTH, 1 * kMS));
 
     screen.handleEvent(timerEvent(400 * kMS));
@@ -73,7 +73,7 @@ void testGamepadBindingCancelsShortPress() {
     config.gamepadEnabled = true;
 
     KeyBindScreen screen(1, config);
-    screen.reset();
+    screen.reset(KeyBindScreen::BindMode::Gamepad);
     screen.handleEvent(gamepadButtonEvent(SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_GAMEPAD_BUTTON_SOUTH, 1 * kMS));
     screen.handleEvent(gamepadButtonEvent(SDL_EVENT_GAMEPAD_BUTTON_UP, SDL_GAMEPAD_BUTTON_SOUTH, 300 * kMS));
     screen.handleEvent(timerEvent(1200 * kMS));
@@ -88,7 +88,7 @@ void testGamepadBackAloneCanBeBound() {
     config.gamepadEnabled = true;
 
     KeyBindScreen screen(1, config);
-    screen.reset();
+    screen.reset(KeyBindScreen::BindMode::Gamepad);
     screen.handleEvent(gamepadButtonEvent(SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_GAMEPAD_BUTTON_BACK, 1 * kMS));
     screen.handleEvent(timerEvent(1200 * kMS));
 
@@ -104,7 +104,7 @@ void testGamepadSelectStartCancelsBinding() {
     config.gamepadEnabled = true;
 
     KeyBindScreen screen(1, config);
-    screen.reset();
+    screen.reset(KeyBindScreen::BindMode::Gamepad);
     screen.handleEvent(gamepadButtonEvent(SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_GAMEPAD_BUTTON_BACK, 1 * kMS));
     screen.handleEvent(gamepadButtonEvent(SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_GAMEPAD_BUTTON_START, 2 * kMS));
 
@@ -118,7 +118,7 @@ void testGamepadStartAloneCanStillBeBound() {
     config.gamepadEnabled = true;
 
     KeyBindScreen screen(1, config);
-    screen.reset();
+    screen.reset(KeyBindScreen::BindMode::Gamepad);
     holdButton(screen, SDL_GAMEPAD_BUTTON_START, 1 * kMS);
 
     assert(!screen.isDone());
@@ -133,7 +133,7 @@ void testGamepadBindingAdvancesToTesterAfterHeldButtons() {
     config.gamepadEnabled = true;
 
     KeyBindScreen screen(1, config);
-    screen.reset();
+    screen.reset(KeyBindScreen::BindMode::Gamepad);
 
     holdButton(screen, SDL_GAMEPAD_BUTTON_SOUTH, 1 * kMS);
     holdButton(screen, SDL_GAMEPAD_BUTTON_EAST, 1100 * kMS);
@@ -177,22 +177,20 @@ void testGamepadBackStillSavesFromTester() {
     assert(!screen.wasCancelled());
 }
 
-void testDualDeviceBindingSequenceCoversBothDevicesIndependently() {
+void testKeyboardOnlyBindingSessionNeverTouchesGamepadFields() {
     PlayerConfig config;
     config.connected       = true;
     config.keyboardEnabled = true;
-    config.gamepadEnabled  = true;
+    config.gamepadEnabled  = true; // also enabled, but this session must not require it
 
     KeyBindScreen screen(1, config);
-    screen.reset();
+    screen.reset(KeyBindScreen::BindMode::Keyboard);
 
-    // Keyboard contributes all 12 buttons, gamepad the 8 face buttons
-    // (directions are auto-assigned), in that order.
-    assert(screen.m_targets.size() == 20);
-    assert(!screen.m_targets[0].isGamepad);
-    assert(screen.m_targets[0].btn == MDButton::Up);
-    assert(screen.m_targets[12].isGamepad);
-    assert(screen.m_targets[12].btn == MDButton::A);
+    // A keyboard session lists exactly the 12 buttons, never gamepad targets,
+    // so a player without a gamepad can finish it without ever waiting on a
+    // button press that cannot happen.
+    assert(screen.m_targets.size() == 12);
+    assert(screen.m_targets[0] == MDButton::Up);
 
     static constexpr SDL_Keycode kKeyboardDefaults[12] = {
         SDLK_UP, SDLK_DOWN, SDLK_LEFT, SDLK_RIGHT, SDLK_Z, SDLK_X, SDLK_C, SDLK_V, SDLK_A, SDLK_S, SDLK_D, SDLK_F,
@@ -200,11 +198,26 @@ void testDualDeviceBindingSequenceCoversBothDevicesIndependently() {
     for (SDL_Keycode key : kKeyboardDefaults)
         screen.handleEvent(keyDownEvent(key));
 
-    // All keyboard targets are bound; the next target is the first gamepad one.
-    assert(screen.m_phase == KeyBindScreen::Phase::Binding);
-    assert(screen.m_bindIdx == 12);
+    assert(screen.m_phase == KeyBindScreen::Phase::Testing);
     assert(screen.m_temp.bindings[int(MDButton::Up)].key == SDLK_UP);
     assert(screen.m_temp.bindings[int(MDButton::A)].key == SDLK_Z);
+    // No gamepad button was ever pressed during this session.
+    assert(screen.m_temp.bindings[int(MDButton::A)].gpButton == SDL_GAMEPAD_BUTTON_INVALID);
+}
+
+void testGamepadOnlyBindingSessionPreservesExistingKeyboardBindings() {
+    PlayerConfig config;
+    config.connected                     = true;
+    config.keyboardEnabled               = true;
+    config.gamepadEnabled                = true;
+    config.bindings[int(MDButton::A)].key = SDLK_Z; // bound in an earlier, separate keyboard session
+
+    KeyBindScreen screen(1, config);
+    screen.reset(KeyBindScreen::BindMode::Gamepad);
+
+    // A gamepad session lists only the 8 face buttons (directions auto-assigned).
+    assert(screen.m_targets.size() == 8);
+    assert(screen.m_targets[0] == MDButton::A);
 
     holdButton(screen, SDL_GAMEPAD_BUTTON_SOUTH, 1 * kMS);
     holdButton(screen, SDL_GAMEPAD_BUTTON_EAST, 1100 * kMS);
@@ -216,10 +229,29 @@ void testDualDeviceBindingSequenceCoversBothDevicesIndependently() {
     holdButton(screen, SDL_GAMEPAD_BUTTON_MISC1, 7700 * kMS);
 
     assert(screen.m_phase == KeyBindScreen::Phase::Testing);
-    // Binding A on the gamepad must not disturb A's independent keyboard key.
+    // Binding A on the gamepad must not disturb A's independent, already-set keyboard key.
     assert(screen.m_temp.bindings[int(MDButton::A)].key == SDLK_Z);
     assert(screen.m_temp.bindings[int(MDButton::A)].gpButton == SDL_GAMEPAD_BUTTON_SOUTH);
     assert(screen.m_temp.bindings[int(MDButton::Mode)].gpButton == SDL_GAMEPAD_BUTTON_MISC1);
+}
+
+void testCancellingGamepadSessionDiscardsOnlyThatSessionsChanges() {
+    PlayerConfig config;
+    config.connected                     = true;
+    config.keyboardEnabled               = true;
+    config.gamepadEnabled                = true;
+    config.bindings[int(MDButton::A)].key = SDLK_Z; // already saved from an earlier keyboard session
+
+    KeyBindScreen screen(1, config);
+    screen.reset(KeyBindScreen::BindMode::Gamepad);
+    holdButton(screen, SDL_GAMEPAD_BUTTON_SOUTH, 1 * kMS);
+    screen.handleEvent(keyDownEvent(SDLK_ESCAPE));
+
+    assert(screen.isDone());
+    assert(screen.wasCancelled());
+    // The authoritative config (already saved keyboard key) is untouched by the cancel.
+    assert(config.bindings[int(MDButton::A)].key == SDLK_Z);
+    assert(config.bindings[int(MDButton::A)].gpButton == SDL_GAMEPAD_BUTTON_INVALID);
 }
 
 } // namespace
@@ -233,6 +265,8 @@ int main() {
     testGamepadBindingAdvancesToTesterAfterHeldButtons();
     testGamepadEastSavesFromTester();
     testGamepadBackStillSavesFromTester();
-    testDualDeviceBindingSequenceCoversBothDevicesIndependently();
+    testKeyboardOnlyBindingSessionNeverTouchesGamepadFields();
+    testGamepadOnlyBindingSessionPreservesExistingKeyboardBindings();
+    testCancellingGamepadSessionDiscardsOnlyThatSessionsChanges();
     return 0;
 }

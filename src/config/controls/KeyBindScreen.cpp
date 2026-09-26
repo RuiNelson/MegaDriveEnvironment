@@ -37,17 +37,16 @@ void KeyBindScreen::buildTargetList() {
     };
 
     m_targets.clear();
-    if (m_temp.keyboardEnabled)
+    if (m_mode == BindMode::Keyboard) {
         for (MDButton b : kAllButtons)
-            m_targets.push_back({b, false});
-    if (m_temp.gamepadEnabled)
+            m_targets.push_back(b);
+    } else {
         for (MDButton b : kFaceButtons)
-            m_targets.push_back({b, true});
+            m_targets.push_back(b);
+    }
 }
 
 void KeyBindScreen::applyAutoDirections() {
-    if (!m_temp.gamepadEnabled)
-        return;
     for (MDButton dir : {MDButton::Up, MDButton::Down, MDButton::Left, MDButton::Right}) {
         m_temp.bindings[int(dir)].isAutoDir = true;
         m_temp.bindings[int(dir)].gpButton  = SDL_GAMEPAD_BUTTON_INVALID;
@@ -55,9 +54,10 @@ void KeyBindScreen::applyAutoDirections() {
     }
 }
 
-void KeyBindScreen::reset() {
+void KeyBindScreen::reset(BindMode mode) {
     m_done      = false;
     m_cancelled = false;
+    m_mode      = mode;
     m_phase     = Phase::Binding;
     m_bindIdx   = 0;
     m_temp      = m_config;
@@ -65,7 +65,8 @@ void KeyBindScreen::reset() {
     m_gamepadBackDown  = false;
     m_gamepadStartDown = false;
     buildTargetList();
-    applyAutoDirections();
+    if (m_mode == BindMode::Gamepad)
+        applyAutoDirections();
     openGamepad();
 }
 
@@ -78,7 +79,6 @@ void KeyBindScreen::resetToTest() {
     clearPendingGamepadBinding();
     m_gamepadBackDown  = false;
     m_gamepadStartDown = false;
-    buildTargetList();
     openGamepad();
 }
 
@@ -121,7 +121,7 @@ void KeyBindScreen::beginPendingGamepadBinding(SDL_GamepadButton button, Uint64 
 }
 
 void KeyBindScreen::updatePendingGamepadBinding(Uint64 nowNS) {
-    if (m_phase != Phase::Binding || m_bindIdx >= (int)m_targets.size() || !m_targets[m_bindIdx].isGamepad ||
+    if (m_phase != Phase::Binding || m_mode != BindMode::Gamepad || m_bindIdx >= (int)m_targets.size() ||
         m_pendingGamepadButton == SDL_GAMEPAD_BUTTON_INVALID)
         return;
 
@@ -129,7 +129,7 @@ void KeyBindScreen::updatePendingGamepadBinding(Uint64 nowNS) {
     constexpr Uint64 kAdvanceHoldNS = 1'000'000'000ull;
 
     const Uint64 heldNS = nowNS - m_pendingGamepadButtonNS;
-    MDButton     target = m_targets[m_bindIdx].btn;
+    MDButton     target = m_targets[m_bindIdx];
 
     if (!m_pendingGamepadButtonSaved && heldNS >= kSaveHoldNS) {
         m_temp.bindings[int(target)].gpButton  = m_pendingGamepadButton;
@@ -175,11 +175,11 @@ void KeyBindScreen::handleEvent(const SDL_Event &e) {
         if (m_bindIdx >= (int)m_targets.size())
             return;
 
-        const BindTarget &target = m_targets[m_bindIdx];
+        MDButton target = m_targets[m_bindIdx];
 
-        if (!target.isGamepad) {
+        if (m_mode == BindMode::Keyboard) {
             if (e.type == SDL_EVENT_KEY_DOWN) {
-                m_temp.bindings[int(target.btn)].key = e.key.key;
+                m_temp.bindings[int(target)].key = e.key.key;
                 advance();
             }
         } else {
@@ -291,13 +291,14 @@ std::vector<KeyBindScreen::BoxInfo> KeyBindScreen::buildTesterLayout() const {
 // ─── Render ──────────────────────────────────────────────────────────────────
 
 void KeyBindScreen::renderBinding(UIRenderer &ui) {
-    const BindTarget &target = m_targets[m_bindIdx];
+    const bool isGamepad = (m_mode == BindMode::Gamepad);
+    MDButton   target    = m_targets[m_bindIdx];
 
     // Title
     std::string title = "Player ";
     title += std::to_string(m_playerNum);
     title += " - Bind ";
-    title += (target.isGamepad ? "Buttons" : "Keys");
+    title += (isGamepad ? "Buttons" : "Keys");
     ui.drawCenteredText(CC_WIN_W / 2, 20, title, CC_COL_TEXT_YELLOW);
 
     // Progress
@@ -305,14 +306,11 @@ void KeyBindScreen::renderBinding(UIRenderer &ui) {
     ui.drawCenteredText(CC_WIN_W / 2, 55, progress, CC_COL_TEXT_GRAY);
 
     // Prompt
-    std::string prompt = target.isGamepad ? "Press and hold button for:" : "Press key for:";
+    std::string prompt = isGamepad ? "Press and hold button for:" : "Press key for:";
     ui.drawCenteredText(CC_WIN_W / 2, CC_WIN_H / 2 - CC_CHAR_H * 3, prompt, CC_COL_TEXT_WHITE);
 
-    // Button name — large, centred. When both devices are active, the same MD
-    // button is prompted for twice (once per device); disambiguate that case.
-    std::string btnName = mdButtonName(target.btn);
-    if (m_temp.keyboardEnabled && m_temp.gamepadEnabled)
-        btnName += target.isGamepad ? " (Gamepad)" : " (Keyboard)";
+    // Button name — large, centred.
+    std::string btnName = mdButtonName(target);
     ui.drawCenteredText(CC_WIN_W / 2, CC_WIN_H / 2 - CC_CHAR_H / 2, btnName, CC_COL_TEXT_YELLOW);
 
     // Already-bound targets (small list above bottom, capped to the most recent few)
@@ -329,13 +327,10 @@ void KeyBindScreen::renderBinding(UIRenderer &ui) {
             ++row;
         }
         for (int i = firstShown; i < m_bindIdx; ++i) {
-            const BindTarget &t    = m_targets[i];
-            std::string       line = mdButtonName(t.btn);
-            if (m_temp.keyboardEnabled && m_temp.gamepadEnabled)
-                line += t.isGamepad ? " (Gamepad)" : " (Keyboard)";
-            line += ": ";
-            const auto &bd = m_temp.bindings[int(t.btn)];
-            if (!t.isGamepad) {
+            MDButton    b    = m_targets[i];
+            std::string line = std::string(mdButtonName(b)) + ": ";
+            const auto &bd   = m_temp.bindings[int(b)];
+            if (!isGamepad) {
                 const char *kn = SDL_GetKeyName(bd.key);
                 line += kn ? kn : "?";
             } else {
@@ -347,7 +342,7 @@ void KeyBindScreen::renderBinding(UIRenderer &ui) {
         }
     }
 
-    if (!target.isGamepad)
+    if (!isGamepad)
         ui.drawHint("Press a key to bind  |  Esc: Cancel (discard)");
     else
         ui.drawHint("Hold 400ms to bind, 1s to continue  |  Select+Start: Cancel");

@@ -8,9 +8,10 @@
 /// @brief Result enum for PlayerConfigScreen.
 /// @see PlayerConfigScreen::getResult()
 enum class PlayerConfigResult {
-    BindKeys,   ///< User proceeded to key/button binding
-    TestInputs, ///< User proceeded to input tester (skips binding phase)
-    Back        ///< User returned to main menu
+    BindKeyboard, ///< User proceeded to bind keyboard keys
+    BindGamepad,  ///< User proceeded to bind gamepad buttons
+    TestInputs,   ///< User proceeded to input tester (skips binding phase)
+    Back          ///< User returned to main menu
 };
 
 /// @brief Entry in the gamepad device list.
@@ -23,17 +24,22 @@ struct GamepadEntry {
 
 /// @brief Second screen: configure one player's input devices and launch key binding.
 ///
-/// Presents a six-item menu:
+/// Presents a seven-item menu:
 /// 1. Connected toggle — Enable/disable player
 /// 2. Keyboard toggle — Enable/disable keyboard input independently
 /// 3. Gamepad — Open modal to choose Off, Automatic, or a specific gamepad
-/// 4. Bind Keys / Buttons — Launch KeyBindScreen (disabled unless connected and
-///    at least one device active)
-/// 5. Test Inputs — same enable rule as item 4
-/// 6. Back — Return to main menu
+/// 4. Bind Keyboard — Launch KeyBindScreen for keyboard keys (disabled unless
+///    connected and keyboard is enabled)
+/// 5. Bind Gamepad — Launch KeyBindScreen for gamepad buttons (disabled unless
+///    connected and gamepad is enabled)
+/// 6. Test Inputs — enabled whenever connected and at least one device is active
+/// 7. Back — Return to main menu
 ///
 /// Keyboard and gamepad may both be active at once: either device then drives
-/// the same Mega Drive buttons for this player.
+/// the same Mega Drive buttons for this player. Binding each device from its
+/// own menu item means a player missing one device (e.g. no gamepad plugged
+/// in) can always finish configuring the other without getting stuck waiting
+/// on input that will never arrive.
 /// @see Screen, PlayerConfig
 class PlayerConfigScreen : public Screen {
     public:
@@ -65,7 +71,8 @@ class PlayerConfigScreen : public Screen {
     int           m_playerNum; ///< Player number (1 or 2)
     PlayerConfig &m_config;    ///< Reference to the configuration being edited
 
-    /// @brief Current menu selection (0=connected, 1=keyboard, 2=gamepad, 3=bind, 4=test, 5=back).
+    /// @brief Current menu selection (0=connected, 1=keyboard, 2=gamepad,
+    /// 3=bind keyboard, 4=bind gamepad, 5=test, 6=back).
     int                m_sel    = 0;
     PlayerConfigResult m_result = PlayerConfigResult::Back;
 
@@ -102,7 +109,7 @@ class PlayerConfigScreen : public Screen {
     void confirm();
 
     /// @brief Check if a menu item is currently enabled.
-    /// @param item Menu item index (0-5).
+    /// @param item Menu item index (0-6).
     /// @return true if item is selectable.
     bool isItemEnabled(int item) const;
 

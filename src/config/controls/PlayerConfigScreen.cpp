@@ -1,7 +1,7 @@
 #include "PlayerConfigScreen.hpp"
 #include <cstring>
 
-static constexpr int kItemCount = 6; // connected, keyboard, gamepad, bind, test, back
+static constexpr int kItemCount = 7; // connected, keyboard, gamepad, bind keyboard, bind gamepad, test, back
 
 PlayerConfigScreen::PlayerConfigScreen(int playerNum, PlayerConfig &config) : m_playerNum(playerNum), m_config(config) {
 }
@@ -176,8 +176,14 @@ bool PlayerConfigScreen::isItemEnabled(int item) const {
     // Keyboard toggle and gamepad picker require the player to be connected.
     if (item == 1 || item == 2)
         return m_config.connected;
-    // Binding and testing require connected plus at least one active device.
-    if (item == 3 || item == 4)
+    // Each bind entry requires connected plus that specific device active,
+    // so a player missing one device can still finish configuring the other.
+    if (item == 3)
+        return m_config.connected && m_config.keyboardEnabled;
+    if (item == 4)
+        return m_config.connected && m_config.gamepadEnabled;
+    // Testing requires connected plus at least one active device.
+    if (item == 5)
         return m_config.connected && (m_config.keyboardEnabled || m_config.gamepadEnabled);
     return true;
 }
@@ -203,19 +209,25 @@ void PlayerConfigScreen::confirm() {
             if (m_config.connected)
                 openModal();
             break;
-        case 3: // Bind keys (only if connected and a device is active)
+        case 3: // Bind keyboard (only if connected and keyboard is active)
             if (isItemEnabled(3)) {
-                m_result = PlayerConfigResult::BindKeys;
+                m_result = PlayerConfigResult::BindKeyboard;
                 m_done   = true;
             }
             break;
-        case 4: // Test inputs (only if connected and a device is active)
+        case 4: // Bind gamepad (only if connected and gamepad is active)
             if (isItemEnabled(4)) {
+                m_result = PlayerConfigResult::BindGamepad;
+                m_done   = true;
+            }
+            break;
+        case 5: // Test inputs (only if connected and a device is active)
+            if (isItemEnabled(5)) {
                 m_result = PlayerConfigResult::TestInputs;
                 m_done   = true;
             }
             break;
-        case 5: // Back
+        case 6: // Back
             m_result = PlayerConfigResult::Back;
             m_done   = true;
             break;
@@ -378,7 +390,7 @@ void PlayerConfigScreen::render(UIRenderer &ui) {
         ui.drawHLine(rowX, rowX + rowW, sepY, CC_COL_BORDER);
     }
 
-    // ── Item 3: Bind Keys / Buttons ───────────────────────────────────────────
+    // ── Item 3: Bind Keyboard ─────────────────────────────────────────────────
     {
         int  y       = startY + 3 * spacing + 16;
         bool sel     = (m_sel == 3);
@@ -386,18 +398,33 @@ void PlayerConfigScreen::render(UIRenderer &ui) {
         rowBg(y, sel, enabled);
 
         SDL_Color fg = !enabled ? CC_COL_TEXT_DISABLED : sel ? CC_COL_TEXT_WHITE : CC_COL_TEXT_GRAY;
-        ui.drawText(rowX + ipad, y + ty_off, "Bind Keys / Buttons", fg);
+        ui.drawText(rowX + ipad, y + ty_off, "Bind Keyboard", fg);
 
         SDL_Color arrowCol = !enabled ? CC_COL_TEXT_DISABLED : sel ? CC_COL_TEXT_YELLOW : CC_COL_TEXT_GRAY;
         int       aw       = ui.textWidth(">");
         ui.drawText(rowX + rowW - ipad - aw, y + ty_off, ">", arrowCol);
     }
 
-    // ── Item 4: Test Inputs ───────────────────────────────────────────────────
+    // ── Item 4: Bind Gamepad ──────────────────────────────────────────────────
     {
         int  y       = startY + 4 * spacing + 16;
         bool sel     = (m_sel == 4);
         bool enabled = isItemEnabled(4);
+        rowBg(y, sel, enabled);
+
+        SDL_Color fg = !enabled ? CC_COL_TEXT_DISABLED : sel ? CC_COL_TEXT_WHITE : CC_COL_TEXT_GRAY;
+        ui.drawText(rowX + ipad, y + ty_off, "Bind Gamepad", fg);
+
+        SDL_Color arrowCol = !enabled ? CC_COL_TEXT_DISABLED : sel ? CC_COL_TEXT_YELLOW : CC_COL_TEXT_GRAY;
+        int       aw       = ui.textWidth(">");
+        ui.drawText(rowX + rowW - ipad - aw, y + ty_off, ">", arrowCol);
+    }
+
+    // ── Item 5: Test Inputs ───────────────────────────────────────────────────
+    {
+        int  y       = startY + 5 * spacing + 16;
+        bool sel     = (m_sel == 5);
+        bool enabled = isItemEnabled(5);
         rowBg(y, sel, enabled);
 
         SDL_Color fg = !enabled ? CC_COL_TEXT_DISABLED : sel ? CC_COL_TEXT_WHITE : CC_COL_TEXT_GRAY;
@@ -408,10 +435,10 @@ void PlayerConfigScreen::render(UIRenderer &ui) {
         ui.drawText(rowX + rowW - ipad - aw, y + ty_off, ">", arrowCol);
     }
 
-    // ── Item 5: Back ──────────────────────────────────────────────────────────
+    // ── Item 6: Back ──────────────────────────────────────────────────────────
     {
-        int  y   = startY + 5 * spacing + 16;
-        bool sel = (m_sel == 5);
+        int  y   = startY + 6 * spacing + 16;
+        bool sel = (m_sel == 6);
         rowBg(y, sel);
 
         SDL_Color fg = sel ? CC_COL_TEXT_WHITE : CC_COL_TEXT_GRAY;
