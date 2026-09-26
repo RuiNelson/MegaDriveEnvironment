@@ -564,8 +564,9 @@ The mapped sound path mirrors the console architecture:
 - Z80 RAM, bus request, reset and VBlank IRQ are modelled;
 - writes from different producers are stamped on a shared master-cycle
   timeline;
-- the YM2612 is advanced on the SDL audio callback thread; the PSG runs on a
-  dedicated `md-psg` worker that fills a SPSC sample ring mixed at callback time;
+- the YM2612 and the PSG are both advanced on the SDL audio callback thread, on
+  one master-cycle timeline, so FM and PSG writes stamped with the same cycle
+  are heard together;
 - gameplay-facing audio writes do not block the producer thread once real-time
   audio is active. Under contention or queue pressure, diagnostics report
   dropped events rather than stalling the game.
@@ -587,18 +588,24 @@ ymfm directly; use the mapped ports or the `Sound` helpers.
 ### PSG and host mixing
 
 The SN76489-style PSG is implemented inside `Sound` (not part of ymfm). It models
-the **Mega Drive integrated (ASIC) SN76489A clone** with:
+the **Mega Drive integrated (ASIC) SN76489A clone** after
+[Genesis Plus GX](https://github.com/ekeeke/Genesis-Plus-GX), with:
 
 - master-cycle-accurate tone/noise generators (`(master/15)/16` half-period units);
+- register writes applied at their own master cycle, on the next PSG clock tick,
+  as GPX does; a new tone period takes over at the next edge;
 - period `0` ≡ `1` (integrated behaviour, not the discrete `0x400` quirk);
 - 16-bit LFSR white/periodic noise with taps 0⊕3, shifted on the rising edge only;
-- 2 dB attenuation table and ~1.5× PSG preamp (VA4 MD1 FM/PSG balance);
-- sample-period integration so square/noise edges are anti-aliased at 48 kHz.
+- GPX's 2 dB attenuation table and ~1.5× PSG preamp (VA4 MD1 FM/PSG balance);
+- band limited synthesis: every output transition is rendered as a Kaiser
+  windowed sinc step (32 taps, the job blip_buf does in GPX), keeping aliasing
+  more than 70 dB below the tone even for high notes, and a muted chip settles
+  on exactly zero.
 
-In realtime mode the PSG chip and its write queue live on a dedicated thread
-(`md-psg`); the audio callback only pops pre-rendered stereo frames from the
-PSG ring and mixes them with FM. Headless diagnostics keep both chips
-synchronous on the calling thread.
+The band limited output trails the chip by 16 samples (~0.33 ms). While
+streaming, the audio callback owns the PSG chip and renders it next to FM;
+headless diagnostics keep both chips synchronous on the calling thread and
+apply PSG writes immediately.
 
 PSG and FM streams are preamplified, mixed, lightly filtered and delivered on
 the shared master-cycle timeline described above.
