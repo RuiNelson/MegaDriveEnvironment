@@ -59,13 +59,14 @@ Controllers::Controllers(MegaDriveEnvironment *env, const ControlsConfigStore &c
     player1Slot_ = buildSlot(configuration.player1);
     player2Slot_ = buildSlot(configuration.player2);
 
-    tryOpenGamepad(player1Slot_);
-    tryOpenGamepad(player2Slot_);
+    // Player 1 is resolved first so it gets priority when gamepads must be
+    // shared out automatically (no GUID recorded, or the recorded one is
+    // absent).
+    resolveGamepadsLocked(player1Slot_, player2Slot_);
+    resolveGamepadsLocked(player2Slot_, player1Slot_);
 
-    state1_.connected = configuration.player1.enabled &&
-                        ((player1Slot_.device == InputDevice::Keyboard) || (player1Slot_.gamepad != nullptr));
-    state2_.connected = configuration.player2.enabled &&
-                        ((player2Slot_.device == InputDevice::Keyboard) || (player2Slot_.gamepad != nullptr));
+    state1_.connected = computeConnectedLocked(player1Slot_);
+    state2_.connected = computeConnectedLocked(player2Slot_);
 
     SDL_AddEventWatch(sdlEventFilter, this);
 }
@@ -114,8 +115,18 @@ void Controllers::setConfiguration(const ControlsConfigStore &configuration) {
         oldState2 = state2_;
 
         currentConfiguration_ = configuration;
-        state1_ = applyPlayerConfigurationLocked(player1Slot_, currentConfiguration_.player1);
-        state2_ = applyPlayerConfigurationLocked(player2Slot_, currentConfiguration_.player2);
+
+        closeGamepad(player1Slot_);
+        closeGamepad(player2Slot_);
+        player1Slot_ = buildSlot(currentConfiguration_.player1);
+        player2Slot_ = buildSlot(currentConfiguration_.player2);
+        resolveGamepadsLocked(player1Slot_, player2Slot_);
+        resolveGamepadsLocked(player2Slot_, player1Slot_);
+
+        state1_            = PlayerControlsState{};
+        state1_.connected  = computeConnectedLocked(player1Slot_);
+        state2_            = PlayerControlsState{};
+        state2_.connected  = computeConnectedLocked(player2Slot_);
         newState1 = state1_;
         newState2 = state2_;
 
@@ -149,12 +160,12 @@ void Controllers::setPlayerConfiguration(int player, const PlayerConfiguration &
         if (player == 1) {
             oldState = state1_;
             currentConfiguration_.player1 = configuration;
-            state1_ = applyPlayerConfigurationLocked(player1Slot_, currentConfiguration_.player1);
+            state1_ = applyPlayerConfigurationLocked(player1Slot_, currentConfiguration_.player1, player2Slot_);
             newState = state1_;
         } else {
             oldState = state2_;
             currentConfiguration_.player2 = configuration;
-            state2_ = applyPlayerConfigurationLocked(player2Slot_, currentConfiguration_.player2);
+            state2_ = applyPlayerConfigurationLocked(player2Slot_, currentConfiguration_.player2, player1Slot_);
             newState = state2_;
         }
         SDL_UnlockMutex(stateMutex_);
@@ -344,73 +355,100 @@ Controllers::PlayerSlot Controllers::buildSlot(const PlayerConfiguration &cfg) {
     };
 
     PlayerSlot slot;
-    slot.device      = cfg.deviceType;
-    slot.gamepadGuid = cfg.gamepadGuid;
+    slot.enabled         = true;
+    slot.keyboardEnabled = cfg.keyboardEnabled;
+    slot.gamepadEnabled  = cfg.gamepadEnabled;
+    slot.gamepadGuid     = cfg.gamepadGuid;
 
-    for (const auto &raw : cfg.bindings) {
+    auto parseBinding = [&](const std::string &raw, bool isGamepadList) {
         const auto parts = splitOnce(raw, '@');
         if (!parts) {
             SDL_Log("[Controllers] Malformed binding '%s' — missing '@'.", raw.c_str());
-            continue;
+            return;
         }
         const auto &[mdName, sdlName] = *parts;
 
         const auto mdIt = kMdButtonByName.find(mdName);
         if (mdIt == kMdButtonByName.end()) {
             SDL_Log("[Controllers] Unknown MD button '%s' in binding '%s'.", mdName.c_str(), raw.c_str());
-            continue;
+            return;
         }
 
         Binding binding{};
         binding.mdButton = mdIt->second;
 
-        if (sdlName == "auto") {
-            // "auto" maps a directional button to the left analogue stick axis.
+        if (isGamepadList && sdlName == "auto") {
+            // "auto" maps a directional button to the D-pad OR the left analogue stick.
             binding.sourceKind   = SourceKind::GamepadAxis;
             slot.hasAxisBindings = true;
-        } else if (cfg.deviceType == InputDevice::Keyboard) {
-            binding.sourceKind = SourceKind::Keyboard;
-            binding.scancode   = SDL_GetScancodeFromName(sdlName.c_str());
-            if (binding.scancode == SDL_SCANCODE_UNKNOWN) {
-                SDL_Log("[Controllers] Unknown key name '%s' in binding '%s'.", sdlName.c_str(), raw.c_str());
-                continue;
-            }
-        } else {
+        } else if (isGamepadList) {
             binding.sourceKind = SourceKind::GamepadButton;
             binding.gpadButton = SDL_GetGamepadButtonFromString(sdlName.c_str());
             if (binding.gpadButton == SDL_GAMEPAD_BUTTON_INVALID) {
                 SDL_Log("[Controllers] Unknown gamepad button '%s' in binding '%s'.", sdlName.c_str(), raw.c_str());
-                continue;
+                return;
+            }
+        } else {
+            binding.sourceKind = SourceKind::Keyboard;
+            binding.scancode   = SDL_GetScancodeFromName(sdlName.c_str());
+            if (binding.scancode == SDL_SCANCODE_UNKNOWN) {
+                SDL_Log("[Controllers] Unknown key name '%s' in binding '%s'.", sdlName.c_str(), raw.c_str());
+                return;
             }
         }
 
         slot.bindings.push_back(std::move(binding));
-    }
+    };
+
+    for (const auto &raw : cfg.keyboardBindings)
+        parseBinding(raw, false);
+    for (const auto &raw : cfg.gamepadBindings)
+        parseBinding(raw, true);
 
     return slot;
 }
 
 // ─── Gamepad resolution ───────────────────────────────────────────────────────
 
-void Controllers::tryOpenGamepad(PlayerSlot &slot) {
-    if (slot.device != InputDevice::Gamepad || slot.gamepadGuid.empty())
-        return;
-
+void Controllers::resolveGamepadsLocked(PlayerSlot &slot, const PlayerSlot &other) {
     closeGamepad(slot);
+    if (!slot.gamepadEnabled)
+        return;
 
     int             count = 0;
     SDL_JoystickID *ids   = SDL_GetGamepads(&count);
     if (!ids)
         return;
 
-    for (int i = 0; i < count; ++i) {
-        const SDL_GUID    guid    = SDL_GetJoystickGUIDForID(ids[i]);
-        const std::string guidStr = guidToString(guid);
-        if (guidStr == slot.gamepadGuid) {
-            slot.gamepadId = ids[i];
-            slot.gamepad   = SDL_OpenGamepad(ids[i]);
+    // Prefer the exact configured device, skipping one already claimed by
+    // the other player.
+    SDL_JoystickID chosen = 0;
+    if (!slot.gamepadGuid.empty()) {
+        for (int i = 0; i < count; ++i) {
+            if (ids[i] == other.gamepadId)
+                continue;
+            if (guidToString(SDL_GetJoystickGUIDForID(ids[i])) == slot.gamepadGuid) {
+                chosen = ids[i];
+                break;
+            }
+        }
+    }
+
+    // No GUID recorded, or the recorded device is not connected: fall back
+    // to the first still-unclaimed gamepad so the player is never left
+    // without input for lack of an exact match.
+    if (chosen == 0) {
+        for (int i = 0; i < count; ++i) {
+            if (ids[i] == other.gamepadId)
+                continue;
+            chosen = ids[i];
             break;
         }
+    }
+
+    if (chosen != 0) {
+        slot.gamepadId = chosen;
+        slot.gamepad   = SDL_OpenGamepad(chosen);
     }
 
     SDL_free(ids);
@@ -426,15 +464,19 @@ void Controllers::closeGamepad(PlayerSlot &slot) {
 }
 
 PlayerControlsState Controllers::applyPlayerConfigurationLocked(PlayerSlot                &slot,
-                                                                const PlayerConfiguration &configuration) {
+                                                                 const PlayerConfiguration &configuration,
+                                                                 const PlayerSlot          &other) {
     closeGamepad(slot);
     slot = buildSlot(configuration);
-    tryOpenGamepad(slot);
+    resolveGamepadsLocked(slot, other);
 
     PlayerControlsState state{};
-    state.connected = configuration.enabled &&
-                      ((slot.device == InputDevice::Keyboard) || (slot.device == InputDevice::Gamepad && slot.gamepad));
+    state.connected = computeConnectedLocked(slot);
     return state;
+}
+
+bool Controllers::computeConnectedLocked(const PlayerSlot &slot) {
+    return slot.enabled && (slot.keyboardEnabled || (slot.gamepadEnabled && slot.gamepad != nullptr));
 }
 
 void Controllers::beginCapturedInputHoldLocked(CapturedInput input) {
@@ -567,32 +609,39 @@ void Controllers::handleEvent(const SDL_Event &event) {
 
             case SDL_EVENT_GAMEPAD_ADDED: {
                 // A new gamepad connected — try to match it to an unclaimed slot.
-                if (!player1Slot_.gamepad)
-                    tryOpenGamepad(player1Slot_);
-                if (!player2Slot_.gamepad)
-                    tryOpenGamepad(player2Slot_);
-                // Only update connected for gamepad slots; keyboard slots are always
-                // connected when enabled and must not be overwritten here.
-                if (player1Slot_.device == InputDevice::Gamepad)
-                    newState1.connected = (player1Slot_.gamepad != nullptr);
-                if (player2Slot_.device == InputDevice::Gamepad)
-                    newState2.connected = (player2Slot_.gamepad != nullptr);
+                // Player 1 resolves first so it keeps priority.
+                if (player1Slot_.gamepadEnabled && !player1Slot_.gamepad)
+                    resolveGamepadsLocked(player1Slot_, player2Slot_);
+                if (player2Slot_.gamepadEnabled && !player2Slot_.gamepad)
+                    resolveGamepadsLocked(player2Slot_, player1Slot_);
+                newState1.connected = computeConnectedLocked(player1Slot_);
+                newState2.connected = computeConnectedLocked(player2Slot_);
                 break;
             }
 
             case SDL_EVENT_GAMEPAD_REMOVED: {
+                // Only the gamepad-sourced state is cleared: a keyboard bound
+                // to the same player keeps working without interruption.
                 const SDL_JoystickID removed = event.gdevice.which;
                 if (player1Slot_.gamepadId == removed) {
                     SDL_CloseGamepad(player1Slot_.gamepad);
-                    player1Slot_.gamepad   = nullptr;
-                    player1Slot_.gamepadId = 0;
-                    newState1              = {}; // clear all buttons; connected becomes false
+                    player1Slot_.gamepad    = nullptr;
+                    player1Slot_.gamepadId  = 0;
+                    player1Slot_.gamepadHeld = PlayerControlsState{};
+                    player1Slot_.axisX = player1Slot_.axisY = 0;
+                    player1Slot_.dpadUp = player1Slot_.dpadDown = player1Slot_.dpadLeft = player1Slot_.dpadRight = false;
+                    applyMergedButtonsLocked(player1Slot_, newState1);
+                    newState1.connected = computeConnectedLocked(player1Slot_);
                 }
                 if (player2Slot_.gamepadId == removed) {
                     SDL_CloseGamepad(player2Slot_.gamepad);
-                    player2Slot_.gamepad   = nullptr;
-                    player2Slot_.gamepadId = 0;
-                    newState2              = {};
+                    player2Slot_.gamepad    = nullptr;
+                    player2Slot_.gamepadId  = 0;
+                    player2Slot_.gamepadHeld = PlayerControlsState{};
+                    player2Slot_.axisX = player2Slot_.axisY = 0;
+                    player2Slot_.dpadUp = player2Slot_.dpadDown = player2Slot_.dpadLeft = player2Slot_.dpadRight = false;
+                    applyMergedButtonsLocked(player2Slot_, newState2);
+                    newState2.connected = computeConnectedLocked(player2Slot_);
                 }
                 break;
             }
@@ -639,17 +688,16 @@ void Controllers::handleEvent(const SDL_Event &event) {
 
 // ─── Per-event input handlers ─────────────────────────────────────────────────
 
-void Controllers::handleKeyEvent(const PlayerSlot    &slot,
-                                 SDL_Scancode         scancode,
-                                 bool                 pressed,
-                                 PlayerControlsState &state) {
-    if (slot.device != InputDevice::Keyboard)
+void Controllers::handleKeyEvent(PlayerSlot &slot, SDL_Scancode scancode, bool pressed, PlayerControlsState &state) {
+    if (!slot.keyboardEnabled)
         return;
 
     for (const auto &b : slot.bindings) {
         if (b.sourceKind == SourceKind::Keyboard && b.scancode == scancode)
-            setButton(state, b.mdButton, pressed);
+            setButton(slot.keyboardHeld, b.mdButton, pressed);
     }
+
+    applyMergedButtonsLocked(slot, state);
 }
 
 void Controllers::handleGamepadButtonEvent(PlayerSlot          &slot,
@@ -659,14 +707,13 @@ void Controllers::handleGamepadButtonEvent(PlayerSlot          &slot,
     // Explicit button bindings
     for (const auto &b : slot.bindings) {
         if (b.sourceKind == SourceKind::GamepadButton && b.gpadButton == button)
-            setButton(state, b.mdButton, pressed);
+            setButton(slot.gamepadHeld, b.mdButton, pressed);
     }
 
     // Track D-pad state for "auto" (GamepadAxis) direction bindings.
     // D-pad buttons arrive as button events, not axis events, so they must be
     // handled here and combined with the analogue-stick state.
-    if (!slot.hasAxisBindings)
-        return;
+    bool isDpadButton = true;
     switch (button) {
         case SDL_GAMEPAD_BUTTON_DPAD_UP:
             slot.dpadUp = pressed;
@@ -681,30 +728,36 @@ void Controllers::handleGamepadButtonEvent(PlayerSlot          &slot,
             slot.dpadRight = pressed;
             break;
         default:
-            return;
+            isDpadButton = false;
+            break;
     }
-    for (const auto &b : slot.bindings) {
-        if (b.sourceKind != SourceKind::GamepadAxis)
-            continue;
-        bool p = false;
-        switch (b.mdButton) {
-            case MdButton::Up:
-                p = (slot.axisY < -kAxisDeadzone) || slot.dpadUp;
-                break;
-            case MdButton::Down:
-                p = (slot.axisY > kAxisDeadzone) || slot.dpadDown;
-                break;
-            case MdButton::Left:
-                p = (slot.axisX < -kAxisDeadzone) || slot.dpadLeft;
-                break;
-            case MdButton::Right:
-                p = (slot.axisX > kAxisDeadzone) || slot.dpadRight;
-                break;
-            default:
-                break;
+
+    if (slot.hasAxisBindings && isDpadButton) {
+        for (const auto &b : slot.bindings) {
+            if (b.sourceKind != SourceKind::GamepadAxis)
+                continue;
+            bool p = false;
+            switch (b.mdButton) {
+                case MdButton::Up:
+                    p = (slot.axisY < -kAxisDeadzone) || slot.dpadUp;
+                    break;
+                case MdButton::Down:
+                    p = (slot.axisY > kAxisDeadzone) || slot.dpadDown;
+                    break;
+                case MdButton::Left:
+                    p = (slot.axisX < -kAxisDeadzone) || slot.dpadLeft;
+                    break;
+                case MdButton::Right:
+                    p = (slot.axisX > kAxisDeadzone) || slot.dpadRight;
+                    break;
+                default:
+                    break;
+            }
+            setButton(slot.gamepadHeld, b.mdButton, p);
         }
-        setButton(state, b.mdButton, p);
     }
+
+    applyMergedButtonsLocked(slot, state);
 }
 
 void Controllers::handleGamepadAxisEvent(PlayerSlot          &slot,
@@ -740,8 +793,10 @@ void Controllers::handleGamepadAxisEvent(PlayerSlot          &slot,
             default:
                 break;
         }
-        setButton(state, b.mdButton, pressed);
+        setButton(slot.gamepadHeld, b.mdButton, pressed);
     }
+
+    applyMergedButtonsLocked(slot, state);
 }
 
 // ─── State helpers ────────────────────────────────────────────────────────────
@@ -810,6 +865,21 @@ void Controllers::setButton(PlayerControlsState &state, MdButton button, bool pr
             state.mode = pressed;
             break;
     }
+}
+
+void Controllers::applyMergedButtonsLocked(const PlayerSlot &slot, PlayerControlsState &state) {
+    state.up    = slot.keyboardHeld.up || slot.gamepadHeld.up;
+    state.down  = slot.keyboardHeld.down || slot.gamepadHeld.down;
+    state.left  = slot.keyboardHeld.left || slot.gamepadHeld.left;
+    state.right = slot.keyboardHeld.right || slot.gamepadHeld.right;
+    state.a     = slot.keyboardHeld.a || slot.gamepadHeld.a;
+    state.b     = slot.keyboardHeld.b || slot.gamepadHeld.b;
+    state.c     = slot.keyboardHeld.c || slot.gamepadHeld.c;
+    state.start = slot.keyboardHeld.start || slot.gamepadHeld.start;
+    state.x     = slot.keyboardHeld.x || slot.gamepadHeld.x;
+    state.y     = slot.keyboardHeld.y || slot.gamepadHeld.y;
+    state.z     = slot.keyboardHeld.z || slot.gamepadHeld.z;
+    state.mode  = slot.keyboardHeld.mode || slot.gamepadHeld.mode;
 }
 
 PlayerControlsState Controllers::combinedState(const PlayerControlsState &physical,

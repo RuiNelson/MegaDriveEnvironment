@@ -12,6 +12,10 @@
 
 class MegaDriveEnvironment;
 
+/// @brief Physical source of one captured input event.
+/// @see CapturedInput
+enum class InputDevice : int { Keyboard = 0, Gamepad = 1 };
+
 // ─── Input state ──────────────────────────────────────────────────────────────
 
 /// @brief Instantaneous digital input state for a single player.
@@ -48,10 +52,11 @@ struct AvailableGamepad {
 /// @brief Physical input captured from the next keyboard/gamepad button press.
 ///
 /// Use sdlName as the right-hand side of a PlayerConfiguration binding string,
-/// for example "A@" + captured.sdlName.
+/// for example "A@" + captured.sdlName, added to keyboardBindings when
+/// deviceType is Keyboard or to gamepadBindings when it is Gamepad.
 struct CapturedInput {
     InputDevice deviceType = InputDevice::Keyboard;
-    std::string sdlName; ///< SDL key or gamepad button name suitable for PlayerConfiguration::bindings.
+    std::string sdlName; ///< SDL key or gamepad button name suitable for a binding string.
 
     SDL_Keycode  key = SDLK_UNKNOWN;
     SDL_Scancode scancode = SDL_SCANCODE_UNKNOWN;
@@ -302,13 +307,25 @@ class Controllers {
     };
 
     /// @brief Runtime state for one player's input slot.
+    ///
+    /// Keyboard and gamepad may be enabled independently and simultaneously:
+    /// either device can drive the same Mega Drive button at the same time.
+    /// keyboardHeld and gamepadHeld latch each device's own contribution so
+    /// releasing one device's button never clobbers the other's held state;
+    /// the two are OR-ed together to produce the player's effective state.
     struct PlayerSlot {
-        InputDevice          device    = InputDevice::Keyboard;
-        SDL_JoystickID       gamepadId = 0;       ///< 0 when not yet resolved.
-        SDL_Gamepad         *gamepad   = nullptr; ///< nullptr when not open.
-        std::string          gamepadGuid;         ///< Target GUID string (from config).
-        std::vector<Binding> bindings;
-        bool                 hasAxisBindings = false; ///< True if any binding uses GamepadAxis.
+        bool                  enabled         = false;
+        bool                  keyboardEnabled = false;
+        bool                  gamepadEnabled  = false;
+        SDL_JoystickID        gamepadId       = 0;       ///< 0 when not yet resolved.
+        SDL_Gamepad          *gamepad         = nullptr; ///< nullptr when not open.
+        std::string           gamepadGuid;               ///< Target GUID string (from config); empty = automatic.
+        std::vector<Binding>  bindings; ///< Combined keyboard + gamepad bindings, tagged by sourceKind.
+        bool                  hasAxisBindings = false; ///< True if any binding uses GamepadAxis.
+
+        /// @brief Per-device latched button state, OR-ed together for the effective state.
+        PlayerControlsState keyboardHeld;
+        PlayerControlsState gamepadHeld;
 
         /// @brief Last known left-stick axis values, updated on SDL_EVENT_GAMEPAD_AXIS_MOTION.
         Sint16 axisX = 0;
@@ -335,20 +352,34 @@ class Controllers {
 
     /// @brief Builds a PlayerSlot by parsing all bindings in a PlayerConfiguration.
     ///
-    /// Unrecognised binding strings are logged and skipped.
+    /// Unrecognised binding strings are logged and skipped. The gamepad is not
+    /// opened here; call resolveGamepadsLocked() afterwards.
     static PlayerSlot buildSlot(const PlayerConfiguration &cfg);
 
-    /// @brief Scans connected gamepads and opens the one matching slot.gamepadGuid.
+    /// @brief Resolves and opens @p slot's gamepad, coordinating with @p other.
     ///
-    /// Does nothing when no matching gamepad is found or the device type is Keyboard.
-    static void tryOpenGamepad(PlayerSlot &slot);
+    /// Does nothing when @p slot has gamepad input disabled. Otherwise: if
+    /// slot.gamepadGuid names a currently connected gamepad (and it is not
+    /// the one already open on @p other), that device is opened. Otherwise —
+    /// no GUID recorded, or the recorded device is not connected — the first
+    /// still-unclaimed gamepad is opened instead, so a player is never left
+    /// without input for lack of an exact match. Any gamepad already open on
+    /// @p slot is closed first.
+    ///
+    /// Calling this for player 1 before player 2 (with the other slot passed
+    /// in each time) gives player 1 priority when gamepads must be shared out
+    /// automatically.
+    static void resolveGamepadsLocked(PlayerSlot &slot, const PlayerSlot &other);
 
     /// @brief Closes the currently open gamepad for @p slot, if any.
     static void closeGamepad(PlayerSlot &slot);
 
     /// @brief Rebuilds a player slot and returns the cleared physical state.
-    PlayerControlsState applyPlayerConfigurationLocked(PlayerSlot               &slot,
-                                                       const PlayerConfiguration &configuration);
+    /// @param other  The other player's current slot, so gamepad resolution
+    ///               does not claim a device already open on it.
+    static PlayerControlsState applyPlayerConfigurationLocked(PlayerSlot                &slot,
+                                                               const PlayerConfiguration &configuration,
+                                                               const PlayerSlot          &other);
 
     /// @brief Starts timing @p input as a capture candidate when capture is pending.
     void beginCapturedInputHoldLocked(CapturedInput input);
@@ -368,15 +399,21 @@ class Controllers {
     /// mutex internally; must not be called while the mutex is held.
     void handleEvent(const SDL_Event &event);
 
-    /// @brief Handles a key-down or key-up event for a keyboard slot.
+    /// @brief Handles a key-down or key-up event for a keyboard-enabled slot.
     ///
-    /// @param slot     Player slot to update (must use Keyboard device).
+    /// Updates slot.keyboardHeld from keyboard-sourced bindings only, then
+    /// writes the slot's merged (keyboard OR gamepad) state into @p state.
+    ///
+    /// @param slot     Player slot to update.
     /// @param scancode Scancode of the key that changed.
     /// @param pressed  True on key-down, false on key-up.
     /// @param state    State struct to update in place.
-    static void handleKeyEvent(const PlayerSlot &slot, SDL_Scancode scancode, bool pressed, PlayerControlsState &state);
+    static void handleKeyEvent(PlayerSlot &slot, SDL_Scancode scancode, bool pressed, PlayerControlsState &state);
 
     /// @brief Handles a gamepad button-down or button-up event.
+    ///
+    /// Updates slot.gamepadHeld from gamepad-sourced bindings only, then
+    /// writes the slot's merged (keyboard OR gamepad) state into @p state.
     ///
     /// @param slot    Player slot to update (must own the gamepad that fired the event).
     /// @param button  Button that changed.
@@ -387,12 +424,27 @@ class Controllers {
 
     /// @brief Handles a gamepad axis-motion event and recomputes axis-bound directions.
     ///
+    /// Updates slot.gamepadHeld's directions from the analogue stick and D-pad
+    /// combined, then writes the slot's merged (keyboard OR gamepad) state
+    /// into @p state.
+    ///
     /// @param slot  Player slot to update (axis values are stored here).
     /// @param axis  Axis that moved.
     /// @param value New axis value.
     /// @param state State struct to update in place.
     static void
     handleGamepadAxisEvent(PlayerSlot &slot, SDL_GamepadAxis axis, Sint16 value, PlayerControlsState &state);
+
+    /// @brief Writes the OR of slot.keyboardHeld and slot.gamepadHeld into @p state.
+    ///
+    /// Leaves state.connected untouched; only the 12 button/direction fields
+    /// are overwritten.
+    static void applyMergedButtonsLocked(const PlayerSlot &slot, PlayerControlsState &state);
+
+    /// @brief Computes the effective "connected" flag for a slot: enabled and
+    /// backed by at least one live input source (keyboard is always live when
+    /// enabled; gamepad requires an actually open device).
+    static bool computeConnectedLocked(const PlayerSlot &slot);
 
     /// @brief Recomputes effective TH level and advances the 6-button sequence on low-to-high pulses.
     static void updateTHState(PlayerSlot &slot);

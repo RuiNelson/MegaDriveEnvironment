@@ -494,25 +494,36 @@ sprite tables without hiding entries behind the per-line limit.
   <img src="docs/ninja.webp" height="300">
 </p>
 
-`Controllers` loads `controls.yaml` during construction. If the file is missing
-or malformed, Player 1 uses the defaults below and Player 2 is disabled. The
-configuration can also be changed while the game is running with
+`Controllers` loads `controls.yaml` during construction. Keyboard and gamepad
+are independent per player and may both be enabled at once: either device
+then drives the same Mega Drive buttons, so a player can keep a gamepad
+configured while also using the keyboard, or fall back to the keyboard
+whenever the usual gamepad is not plugged in. If the file is missing, or a
+player's configuration does not record a gamepad, that player is assigned the
+first gamepad available on the host (the second for player 2), giving
+priority to player 1; an explicitly configured gamepad that is not currently
+connected falls back the same way rather than leaving the player without
+input. The configuration can also be changed while the game is running with
 `controllers().setConfiguration(...)` or
 `controllers().setPlayerConfiguration(...)`; call
 `controllers().saveConfiguration()` or `setConfigurationAndSave(...)` to make
 the active bindings permanent in `controls.yaml`.
 
-| Mega Drive input | Default keyboard input |
-| --- | --- |
-| D-pad | Arrow keys |
-| A | `Z` |
-| B | `X` |
-| C | `C` |
-| Start | `V` |
-| X | `A` |
-| Y | `S` |
-| Z | `D` |
-| Mode | `F` |
+By default Player 1 has both keyboard and gamepad enabled; Player 2 has only
+gamepad enabled (add a keyboard binding set to let a second player share the
+keyboard).
+
+| Mega Drive input | Default keyboard input | Default gamepad input |
+| --- | --- | --- |
+| D-pad | Arrow keys | D-pad / left stick |
+| A | `Z` | Left shoulder |
+| B | `X` | West (X on an Xbox pad) |
+| C | `C` | South (A on an Xbox pad) |
+| Start | `V` | Start |
+| X | `A` | Right shoulder |
+| Y | `S` | North (Y on an Xbox pad) |
+| Z | `D` | East (B on an Xbox pad) |
+| Mode | `F` | *(unbound by default)* |
 
 Games intended for real hardware should read the active-low controller data
 ports and drive the TH line exactly as they would on the console. The
@@ -523,7 +534,27 @@ ports and drive the TH line exactly as they would on the console. The
 currently connected gamepads: runtime joystick ID, stable GUID string, display
 name, and whether SDL already has the device open. Use the GUID when filling
 `PlayerConfiguration::gamepadGuid`; SDL joystick IDs are session-local and
-should not be persisted.
+should not be persisted. Leave `gamepadGuid` empty to keep automatic
+assignment.
+
+`controls.yaml` keeps a separate binding list per device:
+
+```yaml
+player1:
+  enabled: true
+  keyboard_enabled: true
+  keyboard_bindings: ["Up@Up", "Down@Down", "A@Z", "..."]
+  gamepad_enabled: true
+  gamepad_guid: ""            # empty = automatic assignment
+  gamepad_name: ""
+  gamepad_bindings: ["Up@auto", "A@leftshoulder", "..."]
+```
+
+Files written by earlier versions of this library (a single `device` plus one
+`bindings` list per player) are migrated automatically on load: the recorded
+bindings become that device's list, and the other device is backfilled with
+its own built-in defaults, so the player ends up with both a keyboard and a
+gamepad configuration the first time the file is loaded with this version.
 
 For in-game binding screens, `beginInputCapture(minimumHoldTimeMS)` records the
 next keyboard or gamepad button press held for at least that many milliseconds.

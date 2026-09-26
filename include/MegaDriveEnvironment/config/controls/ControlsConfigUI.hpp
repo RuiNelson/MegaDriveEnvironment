@@ -8,13 +8,15 @@
 ///
 /// The UI flow:
 /// 1. MainMenuScreen: User selects Player 1, Player 2, or Exit
-/// 2. PlayerConfigScreen: Configure device type (keyboard or gamepad) and connection state
-/// 3. KeyBindScreen: Bind individual buttons, then test bindings
+/// 2. PlayerConfigScreen: Toggle keyboard/gamepad independently, pick a
+///    specific gamepad (or automatic), and set connection state
+/// 3. KeyBindScreen: Bind individual keys/buttons for each active device,
+///    then test bindings
 /// 4. Return to step 2 or exit
 ///
 /// @note The function blocks until the user exits the UI or closes the window.
 /// @note Configuration changes are stored in-memory; the caller must serialize
 ///       PlayerConfig structures if persistence is needed.
 /// @note Font system must be initialized before calling (for UIRenderer text rendering).
-/// @see PlayerConfig, setDefaultConfigs()
+/// @see PlayerConfig
 void runControlsConfig();
