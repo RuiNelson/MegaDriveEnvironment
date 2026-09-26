@@ -67,6 +67,8 @@ class Sound {
         int32_t  peakLeft            = 0;
         int32_t  peakRight           = 0;
         size_t   ringBufferedFrames  = 0;
+        /// Always 0: the PSG now renders inline with FM. Kept for source
+        /// compatibility with callers of the former PSG worker ring.
         size_t   psgRingBufferedFrames = 0;
         uint32_t fmSourceSampleRate  = 0;
     };
@@ -104,41 +106,70 @@ class Sound {
         bool                    syncingTimers_        = false;
     };
 
-    /// SN76489A-compatible PSG matching Mega Drive integrated (ASIC) behaviour.
-    /// Cycle-accurate on the master-clock timeline with sample-period integration
-    /// (band-limiting equivalent to a box filter per output sample).
-    /// In realtime mode the chip state is owned exclusively by the PSG thread.
+    /// SN76489A-compatible PSG modelled on the Mega Drive integrated (ASIC)
+    /// clone, following Genesis Plus GX: generators advance on the master-clock
+    /// timeline in PSG clock ticks ((master / 15) / 16), register writes take
+    /// effect on the first tick at or after their timestamp, and every output
+    /// transition is band-limited to the host rate with a windowed-sinc step
+    /// (the role blip_buf plays in GPX). The chip belongs to whichever thread
+    /// renders audio: the SDL callback while streaming, the caller otherwise.
     struct PSG {
         /// Master cycles per tone/noise half-period unit: (MD master/15)/16.
         static constexpr int kTickCycles = 15 * 16;
         /// Default host preamp (GPX ~1.5x PSG vs FM balance on VA4 MD1).
         static constexpr int kDefaultPreamp = 150;
+        /// Output samples on each side of a band-limited transition. The
+        /// output trails the chip by this many samples (~0.33 ms at 48 kHz).
+        static constexpr int kStepHalfWidth = 16;
 
         void               reset();
-        /// Snap the chip timeline to `masterCycle` without emitting audio
-        /// (used after reset or host-clock resync).
+        /// Snap the chip timeline to `masterCycle` without dropping output
+        /// transitions (used after reset or host-clock resync).
         void               resync(uint64_t masterCycle);
-        void               write(m_byte value);
-        /// Advance chip from its current time to `masterCycle` and return the
-        /// average stereo level over that span (anti-aliased square/noise).
-        std::array<int, 2> renderUntil(uint64_t masterCycle);
+        /// Register write issued at `masterCycle`. A write stamped before the
+        /// chip's current time is applied at the current time instead.
+        void               write(uint64_t masterCycle, m_byte value);
+        /// Advance the chip to `masterCycle` and return the band-limited stereo
+        /// output sample for that instant. Consecutive calls must be one host
+        /// sample apart for the band limiting to hold.
+        std::array<int, 2> renderUntil(double masterCycle);
         void               setPanning(uint8_t mask);
         void               setPreamp(int percent);
 
+        /// Every generator edge before this master cycle has been processed.
         uint64_t time() const {
-            return time_;
+            return clock_;
         }
 
         private:
+        struct Transition {
+            uint64_t masterCycle = 0;
+            int32_t  left        = 0;
+            int32_t  right       = 0;
+        };
+
+        /// Output samples between compactions of the step buffers.
+        static constexpr size_t   kStepBlock      = 512;
+        static constexpr size_t   kStepBufferSize = kStepBlock + (2 * kStepHalfWidth);
+        /// Bound on queued transitions when nobody renders (headless writes).
+        static constexpr size_t   kMaxTransitions = 4096;
+
+        uint64_t           tickAtOrAfter(uint64_t masterCycle) const;
+        void               runUntil(uint64_t masterCycle);
+        void               runTone(int channel, uint64_t masterCycle);
+        void               runNoise(uint64_t masterCycle);
+        void               addTransition(uint64_t masterCycle, int left, int right);
+        void               flushTransitions(double masterCycle);
+        void               addStep(double fraction, int left, int right);
+        std::array<int, 2> emitSample();
+        bool               channelHigh(int channel) const;
+        void               updateChannelOut(int channel);
         void               updateToneFreq(int channel, int period);
         void               updateNoiseFreq();
-        void               setChannelVolume(int channel, int attenuation);
-        void               recomputeChannelOut(int channel);
-        std::array<int, 2> mixedLevel() const;
-        uint64_t           integrateTone(int channel, uint64_t masterCycle);
-        uint64_t           integrateNoise(uint64_t masterCycle);
 
-        uint64_t time_ = 0; ///< last committed master-cycle time
+        uint64_t clock_      = 0;   ///< generator edges before this are processed
+        uint64_t tickOrigin_ = 0;   ///< PSG clock phase reference (master cycles)
+        double   sampleTime_ = 0.0; ///< master cycle of the last output sample
 
         int latch_           = 3;           ///< power-on: tone #2 attenuation (315-5313A)
         int zeroFreqInc_     = kTickCycles; ///< integrated ASIC: period 0 ≡ 1
@@ -149,7 +180,6 @@ class Sound {
         std::array<int, 4>      freqInc_{};  ///< master cycles between polarity flips
         std::array<uint64_t, 4> nextEdge_{}; ///< absolute master cycle of next flip
         std::array<int, 4>      polarity_{}; ///< ±1 square generators
-        std::array<int, 4>      volume_{};   ///< linear amplitude from 4-bit atten
         std::array<int, 4>      chanAmpL_{}; ///< left amp percent (preamp × pan)
         std::array<int, 4>      chanAmpR_{}; ///< right amp percent
         std::array<int, 4>      chanOutL_{}; ///< volume × left amp
@@ -157,6 +187,17 @@ class Sound {
         int                     noiseShift_ = 0x8000;
         int                     preamp_     = kDefaultPreamp;
         uint8_t                 panMask_    = 0xFF;
+
+        /// Output transitions not yet placed on the host sample grid.
+        std::vector<Transition> transitions_;
+        /// Band-limited step differences awaiting output, kept as left + right
+        /// and left - right: the Mega Drive PSG is mono, so centred transitions
+        /// only touch the sum buffer. Entry stepRead_ is the next output sample.
+        std::array<double, kStepBufferSize> stepSum_{};
+        std::array<double, kStepBufferSize> stepDifference_{};
+        double                              levelSum_        = 0.0; ///< integrated output
+        double                              levelDifference_ = 0.0;
+        size_t                              stepRead_        = 0;
     };
 
     enum class EventType : uint8_t {
@@ -198,17 +239,12 @@ class Sound {
     };
 
     static void        audioCallback(void *userdata, SDL_AudioStream *stream, int additionalAmount, int totalAmount);
-    static int         psgThreadEntry(void *userdata);
-    void               psgThreadMain();
-    void               startPsgThread();
-    void               stopPsgThread();
     void               resetChipState();
     void               renderToStream(SDL_AudioStream *stream, int bytesRequested);
     void               ensureRingFrames(int frames);
     void               pushRingFrames(const int16_t *src, int frames);
     void               popRingFrames(int16_t *dst, int frames);
     void               renderSamples(int16_t *dst, int frames);
-    void               renderPsgChunk(int frames);
     bool               enqueueYMEvent(TimedEvent event);
     bool               enqueuePSGEvent(TimedEvent event);
     void               prepareYMEvent(TimedEvent &event);
@@ -218,7 +254,7 @@ class Sound {
                                        std::vector<TimedEvent> &out);
     void               processEventsUntil(uint64_t masterCycle);
     void               applyYMEvent(const TimedEvent &event);
-    void               applyPSGEvent(const TimedEvent &event);
+    void               applyPSGEvent(const TimedEvent &event, bool immediate);
     std::array<int, 2> renderFM();
     std::array<int, 2> filterOutput(std::array<int, 2> sample);
     int16_t            clampMixedSample(int value, size_t channel);
@@ -227,21 +263,18 @@ class Sound {
 
     // Threading model while streaming:
     // - Gameplay producers never wait: realtime writes use bounded MPSC queues.
-    // - YM2612 chip state + FM render live on the SDL audio callback thread.
-    // - PSG chip state + PSG render live on a dedicated "md-psg" worker thread
-    //   that fills a SPSC ring; the audio callback only pops and mixes.
+    // - YM2612 and PSG chip state live on the SDL audio callback thread and
+    //   render on one master-cycle timeline, so FM and PSG stay sample-aligned
+    //   (GPX mixes both chips into a single blip buffer for the same reason).
     // - Before start() (headless diagnostics), both chips stay synchronous on
     //   the calling thread for deterministic tests.
     MegaDriveEnvironment *env_              = nullptr;
-    SDL_Mutex            *mutex_            = nullptr; ///< YM event queue
-    SDL_Mutex            *psgMutex_         = nullptr; ///< PSG event queue
-    SDL_Thread           *psgThread_        = nullptr;
+    SDL_Mutex            *mutex_            = nullptr; ///< headless YM + PSG event queues
     SDL_AudioStream      *stream_           = nullptr;
     bool                  audioInitialized_ = false;
     std::atomic<bool>     disabled_{false};
     std::atomic<bool>     realtimeMode_{false};
-    std::atomic<bool>     consumerAvailable_{false}; ///< SDL audio callback is draining YM + mix
-    std::atomic<bool>     psgThreadRun_{false};      ///< dedicated PSG worker is live
+    std::atomic<bool>     consumerAvailable_{false}; ///< SDL audio callback is draining YM + PSG
     std::atomic<uint8_t>  cachedStatus_{0};
 
     YMInterface                         ymInterface_;
@@ -252,10 +285,8 @@ class Sound {
     ymfm::ym2612::output_data           nextFM_{};
     double                              fmAccumulator_        = 1.0;
     uint32_t                            fmSampleRate_         = 0;
-    double                              renderMasterCycle_    = 0.0; ///< FM/audio timeline
-    double                              psgRenderMasterCycle_ = 0.0; ///< PSG worker timeline
-    std::atomic<uint64_t>               lastYMRenderedMasterCycle_{0};
-    std::atomic<uint64_t>               lastPSGRenderedMasterCycle_{0};
+    double                              renderMasterCycle_    = 0.0; ///< FM + PSG audio timeline
+    std::atomic<uint64_t>               lastRenderedMasterCycle_{0};
     uint64_t                            baseTimeNS_      = 0;
     std::atomic<uint8_t>                queuedYMAddress_{0};
     std::atomic<uint64_t>               lateEventCount_{0};
@@ -275,7 +306,6 @@ class Sound {
     RealtimeEventQueue                  realtimeYMEvents_;
     RealtimeEventQueue                  realtimePSGEvents_;
     std::vector<TimedEvent>             renderEvents_;
-    std::vector<TimedEvent>             psgRenderEvents_;
     std::vector<int16_t>                callbackBuffer_;
     std::vector<int16_t>                renderBuffer_;
     std::vector<int16_t>                ringBuffer_;
@@ -283,14 +313,6 @@ class Sound {
     size_t                              ringWriteFrame_     = 0;
     size_t                              ringBufferedFrames_ = 0;
     std::atomic<size_t>                 ringBufferedFramesSnapshot_{0};
-    // SPSC PSG sample ring: written by PSG thread, read by audio callback.
-    std::vector<int>                    psgRing_;
-    size_t                              psgRingReadFrame_  = 0;
-    size_t                              psgRingWriteFrame_ = 0;
-    std::atomic<size_t>                 psgRingBuffered_{0};
-    std::atomic<size_t>                 psgRingBufferedSnapshot_{0};
-    std::atomic<uint64_t>               psgUnderrunCount_{0};
-    std::atomic<uint64_t>               psgOverrunCount_{0};
     std::atomic<uint64_t>               audioFramesRendered_{0};
     std::atomic<uint64_t>               underrunCount_{0};
     std::atomic<uint64_t>               overrunCount_{0};
