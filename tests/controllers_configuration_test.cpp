@@ -3,6 +3,8 @@
 #include <SDL3/SDL.h>
 
 #include <cassert>
+#include <cstdio>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <utility>
@@ -11,9 +13,9 @@ namespace {
 
 PlayerConfiguration keyboardPlayer(std::string binding) {
     PlayerConfiguration player;
-    player.enabled = true;
-    player.deviceType = InputDevice::Keyboard;
-    player.bindings.push_back(std::move(binding));
+    player.enabled         = true;
+    player.keyboardEnabled = true;
+    player.keyboardBindings.push_back(std::move(binding));
     return player;
 }
 
@@ -30,6 +32,70 @@ void pushKey(SDL_Keycode key, SDL_Scancode scancode, bool pressed) {
     while (SDL_PollEvent(&event)) {
     }
 }
+
+/// Drains the SDL event queue, pumping a few times so any pending virtual
+/// joystick state change (button, connect, disconnect) is turned into a real
+/// event and delivered to registered event watches (e.g. Controllers).
+void pumpEvents() {
+    SDL_Event event;
+    for (int i = 0; i < 10; ++i) {
+        while (SDL_PollEvent(&event)) {
+        }
+        SDL_Delay(2);
+    }
+}
+
+/// RAII wrapper around an SDL virtual joystick presented as a gamepad, used
+/// to exercise real gamepad event delivery without physical hardware.
+class VirtualGamepad {
+    public:
+    explicit VirtualGamepad(const char *name) {
+        SDL_VirtualJoystickDesc desc;
+        SDL_INIT_INTERFACE(&desc);
+        desc.type     = SDL_JOYSTICK_TYPE_GAMEPAD;
+        desc.naxes    = SDL_GAMEPAD_AXIS_COUNT;
+        desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+        desc.name     = name;
+
+        id_ = SDL_AttachVirtualJoystick(&desc);
+        assert(id_ != 0);
+        joystick_ = SDL_OpenJoystick(id_);
+        assert(joystick_ != nullptr);
+        pumpEvents();
+    }
+
+    ~VirtualGamepad() {
+        detach();
+    }
+
+    VirtualGamepad(const VirtualGamepad &)            = delete;
+    VirtualGamepad &operator=(const VirtualGamepad &) = delete;
+
+    SDL_JoystickID id() const {
+        return id_;
+    }
+
+    void press(SDL_GamepadButton button, bool down) {
+        SDL_SetJoystickVirtualButton(joystick_, button, down);
+        pumpEvents();
+    }
+
+    void detach() {
+        if (joystick_) {
+            SDL_CloseJoystick(joystick_);
+            joystick_ = nullptr;
+        }
+        if (id_ != 0) {
+            SDL_DetachVirtualJoystick(id_);
+            id_ = 0;
+            pumpEvents();
+        }
+    }
+
+    private:
+    SDL_JoystickID id_       = 0;
+    SDL_Joystick  *joystick_ = nullptr;
+};
 
 void testRuntimeReconfiguration() {
     ControlsConfigStore configuration;
@@ -60,11 +126,72 @@ void testConfigurationPersistence() {
 
     ControlsConfigStore loaded;
     assert(loaded.player1.enabled);
-    assert(loaded.player1.bindings.size() == 1);
-    assert(loaded.player1.bindings[0] == "Start@Return");
+    assert(loaded.player1.keyboardBindings.size() == 1);
+    assert(loaded.player1.keyboardBindings[0] == "Start@Return");
     assert(loaded.player2.enabled);
-    assert(loaded.player2.bindings.size() == 1);
-    assert(loaded.player2.bindings[0] == "B@Space");
+    assert(loaded.player2.keyboardBindings.size() == 1);
+    assert(loaded.player2.keyboardBindings[0] == "B@Space");
+}
+
+void testDefaultsEnableKeyboardAndGamepadForBothPlayers() {
+    std::remove("controls.yaml"); // guarantee the "file missing" fallback path
+
+    ControlsConfigStore configuration;
+
+    assert(configuration.player1.enabled);
+    assert(configuration.player1.keyboardEnabled);
+    assert(!configuration.player1.keyboardBindings.empty());
+    assert(configuration.player1.gamepadEnabled);
+    assert(!configuration.player1.gamepadBindings.empty());
+    assert(configuration.player1.gamepadGuid.empty()); // automatic: first gamepad found
+
+    assert(configuration.player2.enabled);
+    assert(!configuration.player2.keyboardEnabled);
+    assert(configuration.player2.gamepadEnabled);
+    assert(!configuration.player2.gamepadBindings.empty());
+    assert(configuration.player2.gamepadGuid.empty()); // automatic: second gamepad found
+}
+
+void testLegacyYamlIsMigratedToDualDeviceSchema() {
+    {
+        std::ofstream out("controls.yaml");
+        out << "player1:\n"
+               "  enabled: true\n"
+               "  device: 1\n"
+               "  gamepad_guid: \"deadbeef\"\n"
+               "  gamepad_name: \"Old Pad\"\n"
+               "  bindings:\n"
+               "    - \"A@a\"\n"
+               "player2:\n"
+               "  enabled: false\n"
+               "  device: 0\n"
+               "  bindings:\n"
+               "    - \"A@Z\"\n";
+    }
+
+    ControlsConfigStore configuration;
+
+    // Legacy Gamepad device: recorded binding and GUID are kept, keyboard is
+    // backfilled with the built-in defaults.
+    assert(configuration.player1.enabled);
+    assert(configuration.player1.gamepadEnabled);
+    assert(configuration.player1.gamepadGuid == "deadbeef");
+    assert(configuration.player1.gamepadBindings.size() == 1);
+    assert(configuration.player1.gamepadBindings[0] == "A@a");
+    assert(configuration.player1.keyboardEnabled);
+    assert(!configuration.player1.keyboardBindings.empty());
+
+    // Legacy Keyboard device: recorded binding is kept, gamepad is backfilled
+    // with the built-in defaults and automatic assignment (no GUID).
+    assert(!configuration.player2.enabled); // the legacy "enabled" flag itself is preserved as-is
+    assert(configuration.player2.keyboardEnabled);
+    assert(configuration.player2.keyboardBindings.size() == 1);
+    assert(configuration.player2.keyboardBindings[0] == "A@Z");
+    assert(configuration.player2.gamepadEnabled);
+    assert(configuration.player2.gamepadGuid.empty());
+    assert(!configuration.player2.gamepadBindings.empty());
+
+    std::remove("controls.yaml");
 }
 
 void testKeyboardInputCapture() {
@@ -117,6 +244,122 @@ void testAvailableGamepadsWrapper() {
     }
 }
 
+void testKeyboardAndGamepadDriveTheSameButtonIndependently() {
+    VirtualGamepad pad("Test Pad");
+
+    PlayerConfiguration player;
+    player.enabled           = true;
+    player.keyboardEnabled   = true;
+    player.keyboardBindings  = {"A@Z"};
+    player.gamepadEnabled    = true;
+    player.gamepadBindings   = {"A@a"}; // "a" is SDL's canonical name for SDL_GAMEPAD_BUTTON_SOUTH
+
+    ControlsConfigStore configuration;
+    configuration.player1 = player;
+    configuration.player2 = {};
+
+    Controllers controllers(nullptr, configuration);
+
+    pushKey(SDLK_Z, SDL_SCANCODE_Z, true);
+    assert(controllers.getCurrentState().player1.a);
+
+    pad.press(SDL_GAMEPAD_BUTTON_SOUTH, true);
+    assert(controllers.getCurrentState().player1.a);
+
+    // Releasing one device must not clear a button the other device still holds.
+    pushKey(SDLK_Z, SDL_SCANCODE_Z, false);
+    assert(controllers.getCurrentState().player1.a);
+
+    pad.press(SDL_GAMEPAD_BUTTON_SOUTH, false);
+    assert(!controllers.getCurrentState().player1.a);
+}
+
+void testGamepadDisconnectPreservesKeyboardInput() {
+    VirtualGamepad pad("Test Pad");
+
+    PlayerConfiguration player;
+    player.enabled          = true;
+    player.keyboardEnabled  = true;
+    player.keyboardBindings = {"A@Z"};
+    player.gamepadEnabled   = true;
+    player.gamepadBindings  = {"A@a"};
+
+    ControlsConfigStore configuration;
+    configuration.player1 = player;
+    configuration.player2 = {};
+
+    Controllers controllers(nullptr, configuration);
+
+    pushKey(SDLK_Z, SDL_SCANCODE_Z, true);
+    pad.press(SDL_GAMEPAD_BUTTON_SOUTH, true);
+    assert(controllers.getCurrentState().player1.a);
+    assert(controllers.getCurrentState().player1.connected);
+
+    pad.detach();
+    assert(controllers.getCurrentState().player1.a);         // keyboard Z is still held
+    assert(controllers.getCurrentState().player1.connected); // keyboard alone keeps the player connected
+
+    pushKey(SDLK_Z, SDL_SCANCODE_Z, false);
+}
+
+void testAutomaticGamepadAssignmentPrefersPlayerOne() {
+    VirtualGamepad pad("Test Pad");
+
+    PlayerConfiguration player;
+    player.enabled         = true;
+    player.gamepadEnabled  = true;
+    player.gamepadBindings = {"A@a"};
+    // gamepadGuid left empty on both players: automatic assignment.
+
+    ControlsConfigStore configuration;
+    configuration.player1 = player;
+    configuration.player2 = player;
+
+    Controllers controllers(nullptr, configuration);
+
+    pad.press(SDL_GAMEPAD_BUTTON_SOUTH, true);
+    const auto state = controllers.getCurrentState();
+    assert(state.player1.a);
+    assert(!state.player2.a); // the only gamepad is claimed by player 1, not shared
+
+    pad.press(SDL_GAMEPAD_BUTTON_SOUTH, false);
+}
+
+void testAutomaticGamepadAssignmentGivesEachPlayerADifferentDevice() {
+    VirtualGamepad padA("Test Pad A");
+    VirtualGamepad padB("Test Pad B");
+
+    // Enumeration order determines automatic-assignment priority (player 1
+    // gets the first entry); resolve it here instead of assuming attach order.
+    const auto avail = Controllers::availableGamepads();
+    assert(avail.size() == 2);
+    VirtualGamepad &first  = (avail[0].id == padA.id()) ? padA : padB;
+    VirtualGamepad &second = (avail[0].id == padA.id()) ? padB : padA;
+
+    PlayerConfiguration player;
+    player.enabled         = true;
+    player.gamepadEnabled  = true;
+    player.gamepadBindings = {"A@a"};
+
+    ControlsConfigStore configuration;
+    configuration.player1 = player;
+    configuration.player2 = player;
+
+    Controllers controllers(nullptr, configuration);
+
+    first.press(SDL_GAMEPAD_BUTTON_SOUTH, true);
+    auto state = controllers.getCurrentState();
+    assert(state.player1.a);
+    assert(!state.player2.a);
+    first.press(SDL_GAMEPAD_BUTTON_SOUTH, false);
+
+    second.press(SDL_GAMEPAD_BUTTON_SOUTH, true);
+    state = controllers.getCurrentState();
+    assert(!state.player1.a);
+    assert(state.player2.a);
+    second.press(SDL_GAMEPAD_BUTTON_SOUTH, false);
+}
+
 } // namespace
 
 int main() {
@@ -124,6 +367,12 @@ int main() {
 
     testRuntimeReconfiguration();
     testConfigurationPersistence();
+    testDefaultsEnableKeyboardAndGamepadForBothPlayers();
+    testLegacyYamlIsMigratedToDualDeviceSchema();
     testKeyboardInputCapture();
     testAvailableGamepadsWrapper();
+    testKeyboardAndGamepadDriveTheSameButtonIndependently();
+    testGamepadDisconnectPreservesKeyboardInput();
+    testAutomaticGamepadAssignmentPrefersPlayerOne();
+    testAutomaticGamepadAssignmentGivesEachPlayerADifferentDevice();
 }

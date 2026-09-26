@@ -45,60 +45,91 @@ static SDL_JoystickID resolveGamepadByGuid(const std::string &guidStr) {
     return found;
 }
 
-static PlayerConfig toRuntime(const PlayerConfiguration &cfg) {
-    PlayerConfig pc;
-    pc.connected   = cfg.enabled;
-    pc.deviceType  = (cfg.deviceType == InputDevice::Gamepad) ? DeviceType::Gamepad : DeviceType::Keyboard;
-    pc.gamepadName = cfg.gamepadName;
-    pc.gamepadId   = resolveGamepadByGuid(cfg.gamepadGuid);
+/// Returns the first connected gamepad other than @p excludeId. Used to
+/// preview "automatic" gamepad assignment in this UI; the actual game
+/// session resolves both players' gamepads jointly the same way.
+static SDL_JoystickID firstAvailableGamepad(SDL_JoystickID excludeId) {
+    int             count = 0;
+    SDL_JoystickID *ids   = SDL_GetGamepads(&count);
+    if (!ids)
+        return 0;
+    SDL_JoystickID found = 0;
+    for (int i = 0; i < count; ++i) {
+        if (ids[i] != excludeId) {
+            found = ids[i];
+            break;
+        }
+    }
+    SDL_free(ids);
+    return found;
+}
 
-    for (const auto &s : cfg.bindings) {
+/// @param excludeId  A gamepad already claimed by the other player (0 if none),
+///                    skipped when resolving an automatic ("no GUID") assignment.
+static PlayerConfig toRuntime(const PlayerConfiguration &cfg, SDL_JoystickID excludeId) {
+    PlayerConfig pc;
+    pc.connected       = cfg.enabled;
+    pc.keyboardEnabled = cfg.keyboardEnabled;
+    pc.gamepadEnabled  = cfg.gamepadEnabled;
+    pc.gamepadGuid     = cfg.gamepadGuid;
+    pc.gamepadName     = cfg.gamepadName;
+
+    if (cfg.gamepadEnabled) {
+        pc.gamepadId = resolveGamepadByGuid(cfg.gamepadGuid);
+        if (pc.gamepadId == 0)
+            pc.gamepadId = firstAvailableGamepad(excludeId);
+    }
+
+    for (const auto &s : cfg.keyboardBindings) {
         auto at = s.find('@');
         if (at == std::string::npos)
             continue;
-        std::string mdPart  = s.substr(0, at);
-        std::string sdlPart = s.substr(at + 1);
-        int         idx     = mdButtonIndex(mdPart);
+        int idx = mdButtonIndex(s.substr(0, at));
         if (idx < 0)
             continue;
-        if (sdlPart == "auto") {
+        pc.bindings[idx].key = SDL_GetKeyFromName(s.substr(at + 1).c_str());
+    }
+    for (const auto &s : cfg.gamepadBindings) {
+        auto at = s.find('@');
+        if (at == std::string::npos)
+            continue;
+        std::string sdlPart = s.substr(at + 1);
+        int         idx     = mdButtonIndex(s.substr(0, at));
+        if (idx < 0)
+            continue;
+        if (sdlPart == "auto")
             pc.bindings[idx].isAutoDir = true;
-        } else if (pc.deviceType == DeviceType::Keyboard) {
-            pc.bindings[idx].key = SDL_GetKeyFromName(sdlPart.c_str());
-        } else {
+        else
             pc.bindings[idx].gpButton = SDL_GetGamepadButtonFromString(sdlPart.c_str());
-        }
     }
     return pc;
 }
 
 static PlayerConfiguration fromRuntime(const PlayerConfig &pc) {
     PlayerConfiguration cfg;
-    cfg.enabled     = pc.connected;
-    cfg.deviceType  = (pc.deviceType == DeviceType::Gamepad) ? InputDevice::Gamepad : InputDevice::Keyboard;
-    cfg.gamepadName = pc.gamepadName;
-
-    if (pc.deviceType == DeviceType::Gamepad && pc.gamepadId != 0) {
-        SDL_GUID g = SDL_GetJoystickGUIDForID(pc.gamepadId);
-        char     buf[33];
-        SDL_GUIDToString(g, buf, sizeof(buf));
-        cfg.gamepadGuid = buf;
-    }
+    cfg.enabled         = pc.connected;
+    cfg.keyboardEnabled = pc.keyboardEnabled;
+    cfg.gamepadEnabled  = pc.gamepadEnabled;
+    cfg.gamepadGuid     = pc.gamepadGuid; // preserves an explicit choice; empty stays automatic
+    cfg.gamepadName     = pc.gamepadName;
 
     for (int i = 0; i < static_cast<int>(MDButton::COUNT); ++i) {
         const auto &b = pc.bindings[i];
-        std::string s = MD_BUTTON_NAMES[i];
-        s += '@';
+        if (b.key == SDLK_UNKNOWN)
+            continue;
+        const char *kn = SDL_GetKeyName(b.key);
+        if (kn && kn[0] != '\0')
+            cfg.keyboardBindings.push_back(std::string(MD_BUTTON_NAMES[i]) + '@' + kn);
+    }
+    for (int i = 0; i < static_cast<int>(MDButton::COUNT); ++i) {
+        const auto &b = pc.bindings[i];
         if (b.isAutoDir) {
-            s += "auto";
-        } else if (pc.deviceType == DeviceType::Keyboard) {
-            const char *kn = SDL_GetKeyName(b.key);
-            s += kn ? kn : "";
-        } else {
+            cfg.gamepadBindings.push_back(std::string(MD_BUTTON_NAMES[i]) + "@auto");
+        } else if (b.gpButton != SDL_GAMEPAD_BUTTON_INVALID) {
             const char *gn = SDL_GetGamepadStringForButton(b.gpButton);
-            s += gn ? gn : "";
+            if (gn && gn[0] != '\0')
+                cfg.gamepadBindings.push_back(std::string(MD_BUTTON_NAMES[i]) + '@' + gn);
         }
-        cfg.bindings.push_back(s);
     }
     return cfg;
 }
@@ -149,8 +180,10 @@ void runControlsConfig() {
 
     // ── Load persisted config ─────────────────────────────────────────────────
     ControlsConfigStore store;
-    PlayerConfig        p1 = toRuntime(store.player1);
-    PlayerConfig        p2 = toRuntime(store.player2);
+    // Player 1 resolves first so it keeps priority over an automatic
+    // assignment; player 2 excludes whatever gamepad player 1 just claimed.
+    PlayerConfig p1 = toRuntime(store.player1, 0);
+    PlayerConfig p2 = toRuntime(store.player2, p1.gamepadId);
 
     // ── Screens ───────────────────────────────────────────────────────────────
     UIRenderer         ui(renderer);
@@ -220,8 +253,12 @@ void runControlsConfig() {
                         p1Bind.resetToTest();
                         state   = UIState::Player1KeyBind;
                         current = &p1Bind;
+                    } else if (r == PlayerConfigResult::BindKeyboard) {
+                        p1Bind.reset(KeyBindScreen::BindMode::Keyboard);
+                        state   = UIState::Player1KeyBind;
+                        current = &p1Bind;
                     } else {
-                        p1Bind.reset();
+                        p1Bind.reset(KeyBindScreen::BindMode::Gamepad);
                         state   = UIState::Player1KeyBind;
                         current = &p1Bind;
                     }
@@ -239,8 +276,12 @@ void runControlsConfig() {
                         p2Bind.resetToTest();
                         state   = UIState::Player2KeyBind;
                         current = &p2Bind;
+                    } else if (r == PlayerConfigResult::BindKeyboard) {
+                        p2Bind.reset(KeyBindScreen::BindMode::Keyboard);
+                        state   = UIState::Player2KeyBind;
+                        current = &p2Bind;
                     } else {
-                        p2Bind.reset();
+                        p2Bind.reset(KeyBindScreen::BindMode::Gamepad);
                         state   = UIState::Player2KeyBind;
                         current = &p2Bind;
                     }

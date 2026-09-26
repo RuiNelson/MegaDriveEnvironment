@@ -97,94 +97,64 @@ inline const char *mdButtonName(MDButton b) {
     }
 }
 
-/// @brief Input device type selection for a player.
-/// @see PlayerConfig::deviceType
-enum class DeviceType {
-    Keyboard, ///< Player uses keyboard input
-    Gamepad   ///< Player uses gamepad/joystick input
-};
-
-/// @brief Maps a single Mega Drive button to a physical input source.
+/// @brief Maps a single Mega Drive button to its physical input sources.
 ///
-/// Each button in a PlayerConfig::bindings array is a DeviceBinding,
-/// specifying either a keyboard key or gamepad button (mutually exclusive).
-/// Directional buttons on gamepads may be auto-mapped from analog sticks.
+/// Each button in a PlayerConfig::bindings array is a DeviceBinding. Unlike
+/// earlier revisions of this UI, the keyboard and gamepad sides are
+/// independent and may both be set at once: when a player has both devices
+/// enabled, either input drives the same Mega Drive button.
 /// @see PlayerConfig
 struct DeviceBinding {
     /// @brief Keyboard input for this button (SDL_Keycode).
-    /// Valid only when parent PlayerConfig::deviceType is Keyboard.
+    /// Meaningful only when the parent PlayerConfig::keyboardEnabled is true.
     /// Example values: SDLK_UP, SDLK_Z, SDLK_SPACE.
     SDL_Keycode key = SDLK_UNKNOWN;
 
     /// @brief Gamepad button for this button (SDL_GamepadButton).
-    /// Valid only when parent PlayerConfig::deviceType is Gamepad.
+    /// Meaningful only when the parent PlayerConfig::gamepadEnabled is true.
     /// Ignored if isAutoDir is true (directional buttons auto-mapped).
-    /// Can be any SDL gamepad button.
     SDL_GamepadButton gpButton = SDL_GAMEPAD_BUTTON_INVALID;
 
     /// @brief Auto-direction flag for gamepad Up/Down/Left/Right buttons.
     /// When true, this direction button is automatically mapped to:
     /// - D-Pad buttons (SDL_GAMEPAD_BUTTON_DPAD_UP, etc.), OR
     /// - Analog stick axes (AXIS_LEFTX, AXIS_LEFTY) with ±8000 threshold.
-    /// Fields @c key and @c gpButton are unused when this flag is set.
+    /// Field @c gpButton is unused when this flag is set; @c key is unaffected.
     bool isAutoDir = false;
 };
-;
 
 /// @brief Complete input configuration for a single player.
 ///
-/// Holds the device type (keyboard or gamepad), connection state, and an array
-/// of DeviceBindings mapping each Mega Drive button to a physical input.
+/// Holds the connection state, which devices are active, and an array of
+/// DeviceBindings mapping each Mega Drive button to its physical input(s).
 /// Used by KeyBindScreen and the main application to poll and configure input.
 struct PlayerConfig {
     /// @brief Whether this player is active/connected.
     /// When false, device selection and key binding are disabled in the UI.
     bool connected = false;
 
-    /// @brief Input device type (keyboard or gamepad).
-    /// Determines which fields in each DeviceBinding are used.
-    DeviceType deviceType = DeviceType::Keyboard;
+    /// @brief Whether the keyboard side of DeviceBinding::key is active.
+    bool keyboardEnabled = false;
+
+    /// @brief Whether the gamepad side of DeviceBinding is active.
+    bool gamepadEnabled = false;
 
     /// @brief SDL joystick ID for the assigned gamepad.
-    /// Valid only when deviceType is Gamepad. Zero means no gamepad.
+    /// Valid only when gamepadEnabled is true. Zero means no gamepad
+    /// currently resolved (not connected, or not yet assigned).
     SDL_JoystickID gamepadId = 0;
 
-    /// @brief Human-readable name of the assigned gamepad.
-    /// Retrieved from SDL_GetGamepadNameForID(). Empty if deviceType is Keyboard.
+    /// @brief Persistent GUID of the assigned gamepad; empty means automatic
+    /// (the first gamepad available, resolved with player 1 given priority).
+    std::string gamepadGuid;
+
+    /// @brief Human-readable name of the assigned gamepad, for display only.
+    /// Empty when automatic or when gamepadEnabled is false.
     std::string gamepadName;
 
     /// @brief Array of button bindings, indexed by MDButton enum values.
     /// Example: bindings[static_cast<int>(MDButton::A)] is the binding for the A button.
     std::array<DeviceBinding, static_cast<int>(MDButton::COUNT)> bindings{};
 };
-
-/// @brief Initializes two PlayerConfig structures with default key bindings.
-/// @param p1 (output) Player 1 configuration.
-///           Set to connected, keyboard device, with arrow keys + ZXCV/ASDF binding.
-/// @param p2 (output) Player 2 configuration.
-///           Set to not connected (disabled until configured).
-/// @note Default bindings for P1:
-///       Up->Up, Down->Down, Left->Left, Right->Right,
-///       A->Z, B->X, C->C, Start->V, X->A, Y->S, Z->D, Mode->F
-/// @see PlayerConfig
-inline void setDefaultConfigs(PlayerConfig &p1, PlayerConfig &p2) {
-    p1.connected                          = true;
-    p1.deviceType                         = DeviceType::Keyboard;
-    p1.bindings[int(MDButton::Up)].key    = SDLK_UP;
-    p1.bindings[int(MDButton::Down)].key  = SDLK_DOWN;
-    p1.bindings[int(MDButton::Left)].key  = SDLK_LEFT;
-    p1.bindings[int(MDButton::Right)].key = SDLK_RIGHT;
-    p1.bindings[int(MDButton::A)].key     = SDLK_Z;
-    p1.bindings[int(MDButton::B)].key     = SDLK_X;
-    p1.bindings[int(MDButton::C)].key     = SDLK_C;
-    p1.bindings[int(MDButton::Start)].key = SDLK_V;
-    p1.bindings[int(MDButton::X)].key     = SDLK_A;
-    p1.bindings[int(MDButton::Y)].key     = SDLK_S;
-    p1.bindings[int(MDButton::Z)].key     = SDLK_D;
-    p1.bindings[int(MDButton::Mode)].key  = SDLK_F;
-
-    p2.connected  = false;
-    p2.deviceType = DeviceType::Keyboard;
-}
 
 /// @}  // end of Controls group
