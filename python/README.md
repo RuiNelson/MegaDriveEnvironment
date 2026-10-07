@@ -79,7 +79,7 @@ with MegaDriveClient("127.0.0.1", 6969) as mega_drive:
 - `get_game_uptime_frames()`;
 - `get_execution_data()` and `set_execution_data()`;
 - `trigger_option_hotkey()` for game-defined host debug actions;
-- `press_buttons()` and `release_buttons()`;
+- `press_buttons()` (waits for the release), `queue_press_buttons()` (returns at once with the release frame), `hold_buttons()`, and `release_buttons()`;
 - `set_lockstep()` and `step_input()`;
 - `read_memory()`, `write_memory()`, `read_value()`, and `write_value()`;
 - `wait_memory_changed()` and `wait_memory_equals()`;

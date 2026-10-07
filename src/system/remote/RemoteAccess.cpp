@@ -61,6 +61,10 @@ enum class Command : std::uint8_t {
     // Latch remote buttons until HOLD_BUTTONS again, PRESS_BUTTONS, RELEASE_BUTTONS,
     // disconnect, restart, or lockstep clear. Does not wait on VSync.
     HoldButtons = 0x14,
+    // Queue one player's timed press and reply at once with the frame it is
+    // released on; it runs from the next VSync in place of that player's
+    // hold latch (Controllers::queueRemotePress).
+    QueuePressButtons = 0x15,
     ReadMemory = 0x20,
     WriteMemory = 0x21,
     WaitMemoryChanged = 0x22,
@@ -437,6 +441,8 @@ class RemoteAccess::Impl {
                 return {};
             case Command::HoldButtons:
                 return holdButtons(payload);
+            case Command::QueuePressButtons:
+                return queuePressButtons(payload);
             case Command::SetLockstep:
                 return setLockstep(payload);
             case Command::StepInput:
@@ -514,6 +520,7 @@ class RemoteAccess::Impl {
             return Result::failure(Error::Timeout, "timed out before initial VSync");
 
         PlayersControlState state{decodeButtons(player1Mask), decodeButtons(player2Mask)};
+        environment_->controllers().clearRemoteState();
         environment_->controllers().setRemoteState(state);
         struct ReleaseGuard {
             Controllers &controllers;
@@ -541,6 +548,24 @@ class RemoteAccess::Impl {
         environment_->controllers().setRemoteState(
             PlayersControlState{decodeButtons(player1Mask), decodeButtons(player2Mask)});
         return {};
+    }
+
+    Result queuePressButtons(std::span<const std::uint8_t> payload) {
+        if (payload.size() != 8 || payload[1] != 0)
+            return Result::failure(Error::MalformedPayload,
+                                   "QUEUE_PRESS_BUTTONS requires player:u8, reserved:u8, mask:u16, frames:u32");
+        const std::uint8_t player = payload[0];
+        const std::uint16_t mask = readU16(payload, 2);
+        const std::uint32_t frames = readU32(payload, 4);
+        if (player != 1 && player != 2)
+            return Result::failure(Error::InvalidArgument, "player must be 1 or 2");
+        if ((mask & 0xF000u) != 0)
+            return Result::failure(Error::InvalidArgument, "button mask must fit the 12-button controller mask");
+        if (frames == 0)
+            return Result::failure(Error::InvalidArgument, "frames must be non-zero");
+        Result result;
+        appendU64(result.payload, environment_->controllers().queueRemotePress(player, decodeButtons(mask), frames));
+        return result;
     }
 
     Result setLockstep(std::span<const std::uint8_t> payload) {
@@ -599,6 +624,7 @@ class RemoteAccess::Impl {
 
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
         const PlayersControlState pressed{decodeButtons(player1Mask), decodeButtons(player2Mask)};
+        environment_->controllers().clearRemoteState();
         environment_->controllers().setRemoteState(heldFrames == 0 ? PlayersControlState{} : pressed);
         for (std::uint32_t frame = 0; frame < totalFrames; ++frame) {
             if (frame == heldFrames)

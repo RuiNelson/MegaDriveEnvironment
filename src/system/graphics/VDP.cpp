@@ -697,6 +697,10 @@ int VDP::renderLoop() {
         state_.status_ |= 0x0088; // VBlank + VINT flags
         SDL_UnlockMutex(mutex_);
 
+        // Queued remote presses change state at the frame boundary, before
+        // the VBlank handler can sample the pads.
+        if (env_ != nullptr)
+            env_->controllers().advanceRemotePresses(env_->gameUptimeFrames() + 1);
         scheduleInterrupt(Interrupt::VSync, 0);
         signalVSync();
 

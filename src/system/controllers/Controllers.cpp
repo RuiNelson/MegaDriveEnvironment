@@ -1,5 +1,7 @@
 #include "Controllers.hpp"
+#include "system/MegaDriveEnvironment.hpp"
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -91,7 +93,8 @@ Controllers::~Controllers() {
 
 PlayersControlState Controllers::getCurrentState() const {
     SDL_LockMutex(stateMutex_);
-    PlayersControlState snapshot{combinedState(state1_, remoteState1_), combinedState(state2_, remoteState2_)};
+    PlayersControlState snapshot{combinedState(state1_, remoteOverlay(remoteState1_, remotePress1_)),
+                                 combinedState(state2_, remoteOverlay(remoteState2_, remotePress2_))};
     SDL_UnlockMutex(stateMutex_);
     return snapshot;
 }
@@ -261,13 +264,63 @@ void Controllers::setRemoteState(const PlayersControlState &state) {
 }
 
 void Controllers::clearRemoteState() {
-    setRemoteState({});
+    SDL_LockMutex(stateMutex_);
+    remoteState1_ = {};
+    remoteState2_ = {};
+    remotePress1_ = {};
+    remotePress2_ = {};
+    remotePressFrame_ = 0; // restart resets gameUptimeFrames() too
+    SDL_UnlockMutex(stateMutex_);
+}
+
+std::uint64_t Controllers::queueRemotePress(int player, const PlayerControlsState &buttons, std::uint32_t frames) {
+    if ((player != 1 && player != 2) || frames == 0)
+        return 0;
+    SDL_LockMutex(stateMutex_);
+    const std::uint64_t now =
+        std::max(remotePressFrame_, env_ != nullptr ? env_->gameUptimeFrames() : remotePressFrame_);
+    RemotePressQueue &queue = player == 1 ? remotePress1_ : remotePress2_;
+    queue.waiting = RemotePressQueue::Press{buttons, frames};
+    // A running press ends at the boundary that takes its last frame; the
+    // next one starts a released frame later.
+    const std::uint64_t start = queue.active ? now + queue.active->frames + 1 : now + 1;
+    SDL_UnlockMutex(stateMutex_);
+    return start + frames;
+}
+
+void Controllers::advanceRemotePresses(std::uint64_t frame) {
+    SDL_LockMutex(stateMutex_);
+    remotePressFrame_ = frame;
+    advanceRemotePress(remotePress1_);
+    advanceRemotePress(remotePress2_);
+    SDL_UnlockMutex(stateMutex_);
+}
+
+void Controllers::advanceRemotePress(RemotePressQueue &queue) {
+    if (queue.active) {
+        // Ending a press never starts the next one at the same boundary: the
+        // frame after it plays released, so the next press is a fresh edge.
+        if (--queue.active->frames == 0)
+            queue.active.reset();
+        return;
+    }
+    if (queue.waiting) {
+        queue.active = queue.waiting;
+        queue.waiting.reset();
+    }
+}
+
+PlayerControlsState Controllers::remoteOverlay(const PlayerControlsState &latch, const RemotePressQueue &queue) {
+    return queue.active ? queue.active->buttons : latch;
 }
 
 void Controllers::reset() {
     SDL_LockMutex(stateMutex_);
     remoteState1_ = {};
     remoteState2_ = {};
+    remotePress1_ = {};
+    remotePress2_ = {};
+    remotePressFrame_ = 0;
     player1Slot_.controlPort = 0x00;
     player2Slot_.controlPort = 0x00;
     player1Slot_.dataPortOut = 0x40;
@@ -305,7 +358,9 @@ m_byte Controllers::readPlayer1DataPort() {
     SDL_LockMutex(stateMutex_);
     refreshSixButtonTimeout(player1Slot_);
     const m_byte result =
-        encodeDataPort(combinedState(state1_, remoteState1_), player1Slot_.thHigh, player1Slot_.sixButtonCounter);
+        encodeDataPort(combinedState(state1_, remoteOverlay(remoteState1_, remotePress1_)),
+                       player1Slot_.thHigh,
+                       player1Slot_.sixButtonCounter);
     SDL_UnlockMutex(stateMutex_);
     return result;
 }
@@ -314,7 +369,9 @@ m_byte Controllers::readPlayer2DataPort() {
     SDL_LockMutex(stateMutex_);
     refreshSixButtonTimeout(player2Slot_);
     const m_byte result =
-        encodeDataPort(combinedState(state2_, remoteState2_), player2Slot_.thHigh, player2Slot_.sixButtonCounter);
+        encodeDataPort(combinedState(state2_, remoteOverlay(remoteState2_, remotePress2_)),
+                       player2Slot_.thHigh,
+                       player2Slot_.sixButtonCounter);
     SDL_UnlockMutex(stateMutex_);
     return result;
 }

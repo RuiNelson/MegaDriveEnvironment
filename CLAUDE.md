@@ -139,6 +139,11 @@ consumer after this repository's tests pass.
   `docs/remote-access-protocol.md`, the C++ tests, and the Python client
   together.
 - Add or update a focused regression test for observable behavior changes.
+- A test that runs the VDP thread must keep the main thread pumping SDL
+  events (`SDL_PumpEvents`) while it waits on frames, and set the `dummy`
+  video driver: the VDP presents each frame through `SDL_RunOnMainThread`,
+  so on a host with a display it otherwise stalls on the first frame
+  (`tests/remote_access_protocol_test.cpp`'s `whilePumpingEvents`).
 - Do not weaken warnings or tests globally to accommodate one implementation.
 - Do not commit build output, fetched dependencies, caches, generated images,
   local control files, or transient captures.

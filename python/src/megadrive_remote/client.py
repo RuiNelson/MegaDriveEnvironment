@@ -291,6 +291,35 @@ class MegaDriveClient:
         payload = pack(">HHII", int(player1), int(player2), frames, timeout_ms)
         self._request(Command.PRESS_BUTTONS, payload, operation_timeout_ms=timeout_ms)
 
+    def queue_press_buttons(
+        self,
+        *,
+        player: int,
+        buttons: Buttons | int,
+        frames: int = 1,
+    ) -> int:
+        """Press one player's buttons from the next VSync for ``frames`` frames,
+        without waiting for it.
+
+        Returns as soon as the host has queued the press, with the
+        :meth:`get_game_uptime_frames` value from which it has been released.
+        While it plays it replaces that player's :meth:`hold_buttons` latch;
+        a hold sent meanwhile takes effect once it ends. A press queued while
+        the previous one is still held follows it after one released frame,
+        and only the newest waiting press is kept.
+        """
+
+        if player not in (1, 2):
+            raise ValueError("player must be 1 or 2")
+        frames = self._positive(frames, "frames")
+        if not 0 <= int(buttons) <= 0x0FFF:
+            raise ValueError("button mask must fit the 12-button controller mask")
+        payload = pack(">BBHI", player, 0, int(buttons), frames)
+        response = self._request(Command.QUEUE_PRESS_BUTTONS, payload)
+        if len(response) != 8:
+            raise ProtocolError(f"QUEUE_PRESS_BUTTONS response has {len(response)} bytes; expected 8")
+        return unpack(">Q", response)[0]
+
     def hold_buttons(
         self,
         *,

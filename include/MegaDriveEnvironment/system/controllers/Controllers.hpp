@@ -226,8 +226,27 @@ class Controllers {
     /// data ports are read. Intended for deterministic automation tools.
     void setRemoteState(const PlayersControlState &state);
 
-    /// Releases every remotely-held button without changing physical input.
+    /// Releases every remotely-held button, including queued presses,
+    /// without changing physical input.
     void clearRemoteState();
+
+    /// Queues a timed press for one player (@p player 1 or 2) without
+    /// blocking the caller. The press starts at the next VSync and lasts
+    /// exactly @p frames frame intervals; while it plays it *replaces* that
+    /// player's remote hold latch, which a later setRemoteState() still
+    /// updates and which resumes when the press ends. A press queued while
+    /// that player's previous one is still running waits for it and for one
+    /// released frame after it (a fresh edge); only the newest waiting press
+    /// is kept. clearRemoteState() and reset() cancel both.
+    ///
+    /// @return the game-uptime frame count (MegaDriveEnvironment::
+    ///         gameUptimeFrames()) from which the press has been released.
+    std::uint64_t queueRemotePress(int player, const PlayerControlsState &buttons, std::uint32_t frames);
+
+    /// Advances queued remote presses across one VSync boundary. Called by
+    /// the VDP render thread once per VSync, before the VBlank interrupt is
+    /// raised, with the game-uptime frame count the boundary completes.
+    void advanceRemotePresses(std::uint64_t frame);
 
     /// Restores emulated port registers and releases remote input while
     /// preserving physical keyboard/gamepad state and open devices.
@@ -467,6 +486,22 @@ class Controllers {
     static PlayerControlsState combinedState(const PlayerControlsState &physical,
                                              const PlayerControlsState &remote);
 
+    /// One player's queued remote presses (queueRemotePress()).
+    struct RemotePressQueue {
+        struct Press {
+            PlayerControlsState buttons = {};
+            std::uint32_t       frames  = 0;
+        };
+        std::optional<Press> active;  ///< Held now; frames counts down.
+        std::optional<Press> waiting; ///< Starts one released frame after active ends.
+    };
+
+    /// Steps one player's queue across a VSync boundary.
+    static void advanceRemotePress(RemotePressQueue &queue);
+
+    /// The running queued press if any, else the remote hold latch.
+    static PlayerControlsState remoteOverlay(const PlayerControlsState &latch, const RemotePressQueue &queue);
+
     /// @brief SDL event watch callback — delegates to handleEvent().
     static bool sdlEventFilter(void *userdata, SDL_Event *event);
 
@@ -486,6 +521,11 @@ class Controllers {
     PlayerControlsState state2_     = {};
     PlayerControlsState remoteState1_ = {};
     PlayerControlsState remoteState2_ = {};
+    RemotePressQueue    remotePress1_ = {};
+    RemotePressQueue    remotePress2_ = {};
+    /// Frame count of the last boundary advanceRemotePresses() handled; it
+    /// can run ahead of gameUptimeFrames() by one until the VDP records it.
+    std::uint64_t       remotePressFrame_ = 0;
     bool                         capturePending_ = false;
     std::optional<CapturedInput> capturedInput_;
     std::optional<CapturedInput> heldCaptureInput_;

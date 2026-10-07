@@ -117,9 +117,26 @@ std::vector<std::uint8_t> request(int socketFd,
     return response;
 }
 
+// The VDP presents each frame on the main thread (SDL_RunOnMainThread), so
+// whatever waits on frames runs on a worker while this thread pumps events.
+template <typename Body>
+void whilePumpingEvents(Body body) {
+    std::atomic<bool> done{false};
+    std::thread worker([&] {
+        body();
+        done.store(true, std::memory_order_release);
+    });
+    while (!done.load(std::memory_order_acquire)) {
+        SDL_PumpEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    worker.join();
+}
+
 } // namespace
 
 int main() {
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
     const auto port = reservePort();
     TestEnvironment environment(port);
     assert(environment.vdpInternalFrequencyHz() == 60);
@@ -201,6 +218,7 @@ int main() {
     assert(request(socketFd, 0x35, 15, {0}).size() == 12u + 32u * 32u * 8u);
 
     environment.vdp().start();
+    whilePumpingEvents([&] {
     std::vector<std::uint8_t> lockstepPayload{1, 0, 0, 0};
     appendU32(lockstepPayload, 1'000);
     assert(request(socketFd, 0x12, 16, lockstepPayload).empty());
@@ -220,9 +238,52 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(40));
     assert(environment.gameUptimeFrames() == pausedAt + 3);
 
+    // QUEUE_PRESS_BUTTONS replies at once with the frame it is released on,
+    // and plays at the frame boundaries in place of the hold latch.
+    const auto queuePress = [&](std::uint32_t id, std::uint8_t player, std::uint16_t mask, std::uint32_t frames) {
+        std::vector<std::uint8_t> payload{
+            player, 0, static_cast<std::uint8_t>(mask >> 8), static_cast<std::uint8_t>(mask)};
+        appendU32(payload, frames);
+        return readU64(request(socketFd, 0x15, id, payload));
+    };
+    const auto advance = [&] { assert(environment.vdp().advanceRemoteLockstepFrame(1'000)); };
+    const auto player1 = [&] { return environment.controllers().getCurrentState().player1; };
+    const auto player2 = [&] { return environment.controllers().getCurrentState().player2; };
+    const auto now = [&] { return environment.gameUptimeFrames(); };
+    const auto queuedAt = now();
+    assert(request(socketFd, 0x14, 19, {0x00, 0x04, 0x00, 0x00}).empty()); // hold Left
+    assert(queuePress(20, 1, 0x0020, 2) == queuedAt + 3);                  // B, two frames
+    assert(now() == queuedAt);                                             // nothing waited on
+    assert(!player1().b && player1().left);
+    advance();
+    assert(player1().b && !player1().left); // the press replaces the latch
+    // C waits for B and one released frame; player 2's queue is independent.
+    assert(queuePress(21, 1, 0x0040, 1) == now() + 4);
+    assert(queuePress(22, 2, 0x0010, 1) == now() + 2);
+    advance();
+    assert(player1().b && !player1().c && player2().a);
+    advance();
+    assert(now() == queuedAt + 3);
+    assert(!player1().b && !player1().c && player1().left && !player2().a);
+    advance();
+    assert(player1().c && !player1().b);
+    advance();
+    assert(!player1().c && player1().left);
+    // A new hold neither cancels nor shortens a press, and resumes after it;
+    // RELEASE_BUTTONS cancels it.
+    queuePress(23, 1, 0x0020, 5);
+    advance();
+    assert(request(socketFd, 0x14, 24, {0x00, 0x08, 0x00, 0x00}).empty()); // hold Right
+    assert(player1().b && !player1().right);
+    assert(request(socketFd, 0x11, 25, {}).empty());
+    assert(!player1().b && !player1().right);
+    advance();
+    assert(!player1().b);
+
     lockstepPayload[0] = 0;
     assert(request(socketFd, 0x12, 18, lockstepPayload).empty());
     assert(environment.vdp().waitForVSyncCount(2, 1'000));
+    });
     environment.vdp().stop();
 
     close(socketFd);
@@ -230,15 +291,19 @@ int main() {
 
     environment.setVDPTurboMultiplier(0);
     environment.vdp().start();
-    const auto normalStart = std::chrono::steady_clock::now();
-    assert(environment.vdp().waitForVSyncCount(12, 1'000));
-    const auto normalDuration = std::chrono::steady_clock::now() - normalStart;
+    std::chrono::steady_clock::duration normalDuration{};
+    std::chrono::steady_clock::duration turboDuration{};
+    whilePumpingEvents([&] {
+        const auto normalStart = std::chrono::steady_clock::now();
+        assert(environment.vdp().waitForVSyncCount(12, 1'000));
+        normalDuration = std::chrono::steady_clock::now() - normalStart;
 
-    environment.setVDPTurboMultiplier(10);
-    assert(environment.vdp().waitForVSyncCount(1, 1'000)); // let the new deadline take effect
-    const auto turboStart = std::chrono::steady_clock::now();
-    assert(environment.vdp().waitForVSyncCount(12, 1'000));
-    const auto turboDuration = std::chrono::steady_clock::now() - turboStart;
+        environment.setVDPTurboMultiplier(10);
+        assert(environment.vdp().waitForVSyncCount(1, 1'000)); // let the new deadline take effect
+        const auto turboStart = std::chrono::steady_clock::now();
+        assert(environment.vdp().waitForVSyncCount(12, 1'000));
+        turboDuration = std::chrono::steady_clock::now() - turboStart;
+    });
     environment.vdp().stop();
 
     assert(turboDuration * 2 < normalDuration);

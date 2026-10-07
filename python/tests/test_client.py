@@ -188,6 +188,23 @@ class MegaDriveClientTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             MegaDriveClient().trigger_option_hotkey("ll")
 
+    def test_queue_press_buttons_payload_and_validation(self) -> None:
+        def queued(command: int, payload: bytes) -> tuple[int, bytes]:
+            self.assertEqual(command, 0x15)
+            self.assertEqual(payload, pack(">BBHI", 2, 0, Buttons.B | Buttons.LEFT, 4))
+            return ACK, pack(">Q", 1_234)
+
+        with ClientHarness(queued) as client:
+            self.assertEqual(
+                client.queue_press_buttons(player=2, buttons=Buttons.B | Buttons.LEFT, frames=4), 1_234
+            )
+            with self.assertRaises(ValueError):
+                client.queue_press_buttons(player=3, buttons=Buttons.B)
+            with self.assertRaises(ValueError):
+                client.queue_press_buttons(player=1, buttons=0x1000)
+            with self.assertRaises(ValueError):
+                client.queue_press_buttons(player=1, buttons=Buttons.B, frames=0)
+
     def test_vram_controller_release_and_sync_payloads(self) -> None:
         expected = (
             (0x32, pack(">HI", 0x1200, 3), b"abc"),

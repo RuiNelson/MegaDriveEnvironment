@@ -55,6 +55,7 @@ are 32-bit fields but must fit the Mega Drive's 24-bit address space.
 | `12` | `SET_LOCKSTEP` | enabled:u8, reserved:3, timeout-ms:u32 | empty at a complete-frame boundary |
 | `13` | `STEP_INPUT` | P1 mask:u16, P2 mask:u16, reserved:2, held-frames:u32, total-frames:u32, timeout-ms:u32 | final frame:u64, complete 64 KiB work RAM |
 | `14` | `HOLD_BUTTONS` | P1 mask:u16, P2 mask:u16 (or legacy P1:u8, P2:u8) | empty immediately; masks stay latched |
+| `15` | `QUEUE_PRESS_BUTTONS` | player:u8 (`1` or `2`), reserved:u8, mask:u16, frames:u32 | immediately: release frame:u64 |
 | `20` | `READ_MEMORY` | address:u32, length:u32 | raw bytes |
 | `21` | `WRITE_MEMORY` | address:u32, raw bytes | empty |
 | `22` | `WAIT_MEMORY_CHANGED` | address:u32, width:u8, reserved:3, timeout-ms:u32 | observed value:u32 |
@@ -84,6 +85,24 @@ auto-releases after its frames), `RELEASE_BUTTONS`, disconnect, restart, or
 lockstep entry. Use this for continuous walking and other held directions;
 pulse face buttons by including them for one hold update and omitting them on
 the next. Legacy 2-byte `P1:u8, P2:u8` payloads are accepted.
+
+`QUEUE_PRESS_BUTTONS` is `PRESS_BUTTONS` without the wait, for one player. It
+replies at once with the `GET_GAME_UPTIME_FRAMES` value from which the press
+has been released. The render thread applies the mask at the next VSync
+boundary (before the VBlank interrupt is raised) and keeps it for exactly
+`frames` complete frame intervals. While it plays, the press *replaces* that
+player's `HOLD_BUTTONS` latch, as `PRESS_BUTTONS` does: a `HOLD_BUTTONS` sent
+meanwhile neither cancels nor shortens it, and takes effect when it ends, so
+"press, then hold" sent back to back plays in that order. The other player's
+latch and presses are untouched. A press queued while the same player's
+previous press is still held waits for it to end and for one released frame
+after it, so every queued press is a fresh edge; only the newest waiting press
+is kept (it replaces an older waiting one, never the one being held).
+`PRESS_BUTTONS`, `RELEASE_BUTTONS`, `SET_LOCKSTEP`, `STEP_INPUT`, disconnect
+and restart cancel queued presses. Use it when the caller must keep observing
+while the button is down -- an automation loop that blocked on
+`PRESS_BUTTONS` went blind for the whole press -- and compare the release
+frame with `GET_GAME_UPTIME_FRAMES` to know when the press has played out.
 
 `TRIGGER_OPTION_HOTKEY` delivers its key to the same host-only callback as an
 Alt/Option keyboard chord, lowercasing ASCII letters first. It is intended for
