@@ -103,6 +103,12 @@ class VDP {
     void setWidescreen(bool enabled);
     bool widescreen() const;
 
+    /// Mode 48 only: makes window plane pixels of one CRAM entry (@p palette 0-3, @p colorIndex 1-15)
+    /// transparent, and, in Mode 48, a transparent window pixel (this one or colour 0) shows Plane A instead of
+    /// hiding it. A negative @p palette removes the key. Lets a game draw its window HUD without plate or
+    /// border while keeping its art.
+    void setWidescreenWindowColorKey(int palette, int colorIndex);
+
     // ── Threading ────────────────────────────────────────────────────────────
 
     /// Spawns the render thread. Safe to call once; no-op if already running.

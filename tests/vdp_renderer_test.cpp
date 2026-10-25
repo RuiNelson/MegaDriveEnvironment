@@ -323,6 +323,31 @@ void testWidescreenWindowIsCentered() {
     assert(isPixel(framebuffer, 32, row, 7, 0, 0));
     assert(isPixel(framebuffer, 111, row, 7, 0, 0));
     assert(isPixel(framebuffer, 112, row, 0, 7, 0));
+
+    // A transparent window entry (tile 0) leaves Plane A visible in Mode 48...
+    for (int cell = 0; cell < 4; ++cell) {
+        state.vram_[0xD000 + (12 * 64 + cell + 4) * 2]     = 0;
+        state.vram_[0xD000 + (12 * 64 + cell + 4) * 2 + 1] = 0;
+    }
+    renderer.renderScanline(100);
+    assert(isPixel(framebuffer, 32 + 8 * 3 + 7, row, 7, 0, 0));
+    assert(isPixel(framebuffer, 32 + 8 * 4, row, 0, 7, 0));
+    assert(isPixel(framebuffer, 32 + 8 * 7 + 7, row, 0, 7, 0));
+    assert(isPixel(framebuffer, 32 + 8 * 8, row, 7, 0, 0));
+
+    // ...and so does the colour key: palette 0 colour 1 (blue) becomes transparent.
+    state.widescreenWindowKeyEnabled_ = true;
+    state.widescreenWindowKey_        = 1;
+    renderer.renderScanline(100);
+    assert(isPixel(framebuffer, 32, row, 0, 7, 0));
+    assert(isPixel(framebuffer, 111, row, 0, 7, 0));
+
+    // Without Mode 48 the window still hides Plane A.
+    state.widescreen_ = false;
+    framebuffer.clear();
+    renderer.renderScanline(100);
+    assert(isPixel(framebuffer, 0, 100, 7, 0, 0));
+    assert(isPixel(framebuffer, 79, 100, 7, 0, 0));
 }
 
 void testWidescreenSprites() {

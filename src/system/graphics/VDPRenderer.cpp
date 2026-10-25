@@ -306,6 +306,11 @@ void VDPRenderer::overlayWindowLine(
     const int cellY = line >> tileShift;
     const int windowBase = s.windowBase();
 
+    // Mode 48: a transparent window pixel (colour 0, or the colour key) leaves Plane A visible instead of
+    // replacing it, so a window HUD can float over the playfield.
+    const bool overlay = s.widescreenActive();
+    const bool keyed   = overlay && s.widescreenWindowKeyEnabled_;
+
     int    cachedCellX     = -1;
     m_word cachedEntry     = 0;
     int    cachedRowAddress = 0;
@@ -332,9 +337,12 @@ void VDPRenderer::overlayWindowLine(
         const int pixelX = windowX & 7;
         const int tilePixelX = (cachedEntry & 0x0800) != 0 ? 7 - pixelX : pixelX;
         const m_byte colorIndex = readTileRowPixel(s.vram_, cachedRowAddress, tilePixelX);
+        const m_byte palette    = static_cast<m_byte>((cachedEntry >> 13) & 0x03);
+        if (overlay && (colorIndex == 0 || (keyed && palette * 16 + colorIndex == s.widescreenWindowKey_)))
+            continue;
         destination[x] = {
             colorIndex,
-            static_cast<m_byte>((cachedEntry >> 13) & 0x03),
+            palette,
             (cachedEntry & 0x8000) != 0,
             colorIndex != 0,
         };
