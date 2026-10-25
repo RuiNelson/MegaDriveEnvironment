@@ -67,7 +67,7 @@ class VDP {
     enum Scaling : int {
         Integer = 0,  ///< Max integer scale that fits the usable display area
         Fit     = -1, ///< Fit window with bilinear filtering
-        Scale1x = 1,  ///< 1x scaling (320×224)
+        Scale1x = 1,  ///< 1x scaling (320×224, or 384×216 in Mode 48)
         Scale2x = 2,  ///< 2x scaling (640×448)
         Scale3x = 3,  ///< 3x scaling (960×672)
     };
@@ -89,6 +89,19 @@ class VDP {
 
     /// Shuts down render thread and releases all resources.
     ~VDP();
+
+    // ── Mode 48 ──────────────────────────────────────────────────────────────
+
+    /// Enables Mode 48, a host-only 48×27-tile widescreen mode that real hardware does not have. It applies
+    /// whenever the game selects H40 and produces a 384×216 picture:
+    ///  - Layers A and B show 8 more tiles on the right (plane columns 0-47);
+    ///  - the window plane keeps its 40 columns, centred (output columns 32-351);
+    ///  - sprites span X 96-480 instead of 128-448, so X=128 lands at output column 32;
+    ///  - the first tile row of every layer is not displayed;
+    ///  - timing, sprite limits and the emulated registers stay H40.
+    /// Resizes the window to match; call before boot().
+    void setWidescreen(bool enabled);
+    bool widescreen() const;
 
     // ── Threading ────────────────────────────────────────────────────────────
 
@@ -225,7 +238,7 @@ class VDP {
     VDPRenderer renderer_;
     /// Debug PNG export helper.
     VDPRendererDebug rendererDebug_;
-    /// Output framebuffer (up to 320×480, 3 bits per channel).
+    /// Output framebuffer (up to 384×480, 3 bits per channel).
     Framebuffer framebuffer_;
 
     /// SDL window handle for display.
@@ -321,4 +334,7 @@ class VDP {
 
     /// Updates the SDL window title with the rolling average frame time.
     void updateWindowTitle();
+
+    /// Window size for the current scaling mode and picture size.
+    void windowSize(int &winW, int &winH) const;
 };

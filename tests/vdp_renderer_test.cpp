@@ -76,7 +76,8 @@ void expectRenderedLine(VDPState &state,
     framebuffer.clear();
     renderer.renderScanline(line);
 
-    const int outputY = state.interlaced() ? line * 2 : line;
+    const int outputLine = line - state.topCropLines();
+    const int outputY = state.interlaced() ? outputLine * 2 : outputLine;
     const auto *actual =
         static_cast<const m_byte *>(framebuffer.getRawPointer()) + outputY * Framebuffer::PITCH;
     for (std::size_t index = 0; index < expected.size(); ++index) {
@@ -204,9 +205,175 @@ void testSpriteLineAgainstReference() {
     expectRenderedLine(state, framebuffer, renderer, highlightExpected, spriteY + 3);
 }
 
+bool isPixel(const Framebuffer &framebuffer, int x, int y, m_byte b, m_byte g, m_byte r) {
+    m_byte actualB = 0;
+    m_byte actualG = 0;
+    m_byte actualR = 0;
+    framebuffer.getPixel(x, y, actualB, actualG, actualR);
+    return actualB == b && actualG == g && actualR == r;
+}
+
+void setSprite(VDPState &state, int index, int xRaw, int yRaw, int link, m_word tileWord) {
+    state.sat_[index * 8 + 0] = static_cast<m_byte>(yRaw >> 8);
+    state.sat_[index * 8 + 1] = static_cast<m_byte>(yRaw);
+    state.sat_[index * 8 + 2] = 0;
+    state.sat_[index * 8 + 3] = static_cast<m_byte>(link);
+    const int address = state.satBase() + index * 8;
+    state.vram_[address + 4] = static_cast<m_byte>(tileWord >> 8);
+    state.vram_[address + 5] = static_cast<m_byte>(tileWord);
+    state.vram_[address + 6] = static_cast<m_byte>(xRaw >> 8);
+    state.vram_[address + 7] = static_cast<m_byte>(xRaw);
+}
+
+/// Tile 1 is solid colour 1 (blue), tile 2 solid colour 2 (green), tile 3 solid colour 3 (red).
+void setupSolidTiles(VDPState &state) {
+    std::fill(std::begin(state.vram_) + 32, std::begin(state.vram_) + 64, 0x11);
+    std::fill(std::begin(state.vram_) + 64, std::begin(state.vram_) + 96, 0x22);
+    std::fill(std::begin(state.vram_) + 96, std::begin(state.vram_) + 128, 0x33);
+    state.cram_[1] = 0x0E00;
+    state.cram_[2] = 0x00E0;
+    state.cram_[3] = 0x000E;
+}
+
+void testModeDimensions() {
+    VDPState state;
+    state.regs_[0x0C] = 0x01;
+    assert(state.activeWidth() == 320 && state.activeOutputHeight() == 224 && state.topCropLines() == 0);
+    assert(state.spriteOriginX() == 128 && state.centerOffsetX() == 0);
+
+    state.widescreen_ = true;
+    assert(state.widescreenActive());
+    assert(state.activeWidth() == 384 && state.activeHeight() == 224 && state.activeOutputHeight() == 216);
+    assert(state.hardwareWidth() == 320 && state.topCropLines() == 8);
+    assert(state.spriteOriginX() == 96 && state.centerOffsetX() == 32);
+
+    // Mode 48 only replaces H40: H32 stays untouched.
+    state.regs_[0x0C] = 0x00;
+    assert(!state.widescreenActive());
+    assert(state.activeWidth() == 256 && state.activeOutputHeight() == 224);
+}
+
+void testWidescreenPlanes() {
+    VDPState state;
+    Framebuffer framebuffer;
+    VDPTile tile(state);
+    VDPRenderer renderer(state, tile, framebuffer);
+    fillDeterministicState(state);
+
+    state.widescreen_ = true;
+    state.regs_[0x00] = 0x04;
+    state.regs_[0x01] = 0x40;
+    state.regs_[0x02] = 0x30;
+    state.regs_[0x04] = 0x07;
+    state.regs_[0x05] = 0x50;
+    state.regs_[0x07] = 0x21;
+    state.regs_[0x0B] = 0x07;
+    state.regs_[0x0C] = 0x01;
+    state.regs_[0x0D] = 0x2C;
+    state.regs_[0x10] = 0x01;
+    for (int line : {8, 9, 73, 150, 223}) {
+        const auto expected = referenceScanline(state, tile, renderer, line, false);
+        assert(expected.size() == static_cast<std::size_t>(384 * Framebuffer::BPP));
+        expectRenderedLine(state, framebuffer, renderer, expected, line);
+    }
+
+    // The first tile row is not output.
+    framebuffer.clear();
+    for (int line = 0; line < 8; ++line)
+        renderer.renderScanline(line);
+    const auto *pixels = static_cast<const m_byte *>(framebuffer.getRawPointer());
+    assert(std::all_of(pixels, pixels + Framebuffer::SIZE, [](m_byte value) { return value == 0; }));
+}
+
+void testWidescreenWindowIsCentered() {
+    VDPState state;
+    Framebuffer framebuffer;
+    VDPTile tile(state);
+    VDPRenderer renderer(state, tile, framebuffer);
+
+    state.widescreen_ = true;
+    state.regs_[0x00] = 0x04; // full-colour palette
+    state.regs_[0x01] = 0x40;
+    state.regs_[0x02] = 0x30; // Plane A at $C000
+    state.regs_[0x03] = 0x34; // window at $D000
+    state.regs_[0x04] = 0x07;
+    state.regs_[0x0C] = 0x01;
+    state.regs_[0x10] = 0x01; // 64x32
+    state.regs_[0x12] = 0x1F; // window covers the whole height
+    setupSolidTiles(state);
+    for (int cell = 0; cell < 64 * 32; ++cell) {
+        state.vram_[0xC000 + cell * 2 + 1] = 2;
+        state.vram_[0xD000 + cell * 2 + 1] = 1;
+    }
+
+    renderer.renderScanline(100);
+    const int row = 100 - 8;
+    assert(isPixel(framebuffer, 0, row, 0, 7, 0));
+    assert(isPixel(framebuffer, 31, row, 0, 7, 0));
+    assert(isPixel(framebuffer, 32, row, 7, 0, 0));
+    assert(isPixel(framebuffer, 351, row, 7, 0, 0));
+    assert(isPixel(framebuffer, 352, row, 0, 7, 0));
+    assert(isPixel(framebuffer, 383, row, 0, 7, 0));
+
+    // Horizontal split: window columns 0-9 of the original picture, i.e. output columns 32-111.
+    state.regs_[0x11] = 0x05;
+    state.regs_[0x12] = 0x00;
+    renderer.renderScanline(100);
+    assert(isPixel(framebuffer, 31, row, 0, 7, 0));
+    assert(isPixel(framebuffer, 32, row, 7, 0, 0));
+    assert(isPixel(framebuffer, 111, row, 7, 0, 0));
+    assert(isPixel(framebuffer, 112, row, 0, 7, 0));
+}
+
+void testWidescreenSprites() {
+    VDPState state;
+    Framebuffer framebuffer;
+    VDPTile tile(state);
+    VDPRenderer renderer(state, tile, framebuffer);
+
+    state.regs_[0x00] = 0x04; // full-colour palette
+    state.regs_[0x01] = 0x40;
+    state.regs_[0x02] = 0x30;
+    state.regs_[0x04] = 0x07;
+    state.regs_[0x05] = 0x70; // SAT at $E000
+    state.regs_[0x0C] = 0x01;
+    setupSolidTiles(state);
+
+    const int yRaw = 128 + 40;
+    // Sprite X 128 is screen column 0 on hardware and column 32 in Mode 48; X 100 and X 472 only exist in Mode 48.
+    setSprite(state, 0, 128, yRaw, 1, 3);
+    setSprite(state, 1, 100, yRaw, 2, 3);
+    setSprite(state, 2, 472, yRaw, 0, 3);
+
+    renderer.renderScanline(44);
+    assert(isPixel(framebuffer, 0, 44, 0, 0, 7));
+    assert(isPixel(framebuffer, 7, 44, 0, 0, 7));
+    assert(isPixel(framebuffer, 8, 44, 0, 0, 0));
+
+    state.widescreen_ = true;
+    framebuffer.clear();
+    renderer.renderScanline(44);
+    const int row = 44 - 8;
+    assert(isPixel(framebuffer, 31, row, 0, 0, 0));
+    assert(isPixel(framebuffer, 32, row, 0, 0, 7));
+    assert(isPixel(framebuffer, 39, row, 0, 0, 7));
+    assert(isPixel(framebuffer, 40, row, 0, 0, 0));
+    assert(isPixel(framebuffer, 3, row, 0, 0, 0));
+    assert(isPixel(framebuffer, 4, row, 0, 0, 7));
+    assert(isPixel(framebuffer, 11, row, 0, 0, 7));
+    assert(isPixel(framebuffer, 12, row, 0, 0, 0));
+    assert(isPixel(framebuffer, 375, row, 0, 0, 0));
+    assert(isPixel(framebuffer, 376, row, 0, 0, 7));
+    assert(isPixel(framebuffer, 383, row, 0, 0, 7));
+}
+
 } // namespace
 
 int main() {
     testPlanesAndWindowAgainstReference();
     testSpriteLineAgainstReference();
+    testModeDimensions();
+    testWidescreenPlanes();
+    testWidescreenWindowIsCentered();
+    testWidescreenSprites();
 }

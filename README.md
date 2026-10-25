@@ -488,6 +488,25 @@ multipliers.
 reporting overflow state. `VDP::QuasiUnlimitedSprites` is useful for debugging
 sprite tables without hiding entries behind the per-line limit.
 
+### Mode 48 (widescreen)
+
+`VDP::setWidescreen(true)` (or `MegaDriveEnvironment::setWidescreen`, before
+`boot()`) enables Mode 48, a host-only mode that real hardware does not have. It
+replaces H40 whenever the game selects H40; H32 is unaffected. Registers,
+timing, DMA slots and sprite limits stay H40. The output is 48×27 tiles
+(384×216):
+
+- Layers A and B render plane columns 0-47 (8 more tiles on the right);
+- the window plane keeps its 40 columns, centred at output columns 32-351;
+- sprite X 96-480 is visible instead of 128-448, so sprite X 128 lands at
+  output column 32 while background pixel 0 stays at output column 0;
+- the first tile row (8 lines) of every layer is not output. The VDP still
+  evaluates those lines for the sprite overflow/collision flags.
+
+The framebuffer, SDL texture, remote-access snapshots and debug PNGs all use the
+384×216 output. `VDPState::widescreen_` holds the setting; `widescreenActive()`
+is true only while H40 is selected.
+
 ## Controllers and configuration
 
 <p align="center">

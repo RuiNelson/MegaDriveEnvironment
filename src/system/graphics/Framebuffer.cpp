@@ -1,6 +1,6 @@
 /**
  * @file Framebuffer.cpp
- * @brief 320×480 BGR framebuffer for the VDP emulator.
+ * @brief 384×480 BGR framebuffer for the VDP emulator.
  */
 
 #include "Framebuffer.hpp"
@@ -63,7 +63,7 @@ Framebuffer Framebuffer::convertTo8BitsPerPixel() const {
 
 /// Uploads native pixels after expanding 3-bit channels directly into the locked streaming texture.
 /// Only the active image is converted: progressive H40 output is 320×224 rather than the framebuffer's
-/// interlace-capable 320×480 allocation. This also avoids constructing and clearing a 450 KiB temporary.
+/// interlace-capable 384×480 allocation. This also avoids constructing and clearing a 450 KiB temporary.
 void Framebuffer::uploadToTexture(SDL_Texture *tex, int width, int height) const {
     if (tex == nullptr)
         return;

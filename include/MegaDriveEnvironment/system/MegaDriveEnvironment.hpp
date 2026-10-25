@@ -186,6 +186,10 @@ class MegaDriveEnvironment {
     bool isPal50Hz() const {
         return videoStandard() == VideoStandard::Hz50;
     }
+    /// Enables the host-only Mode 48 widescreen VDP mode (see VDP::setWidescreen). Call before boot().
+    void setWidescreen(bool enabled) {
+        vdp_.setWidescreen(enabled);
+    }
     /// Sets the host-only VDP turbo multiplier. Zero disables turbo and uses
     /// the selected region's normal 50/60 Hz rate; N > 0 forces 60 * N Hz.
     void setVDPTurboMultiplier(std::uint32_t multiplier) {

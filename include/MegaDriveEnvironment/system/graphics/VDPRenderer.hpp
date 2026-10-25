@@ -78,11 +78,13 @@ class VDPRenderer {
                         int          planeHeightCells,
                         bool         interlace2) const;
 
-    /// Replaces the active portion of Plane A with pixels from the window plane.
+    /// Replaces the output columns [xStart, xEnd) of Plane A with pixels from the window plane. The window
+    /// plane's own column 0 sits at output column @p xOffset (non-zero only in Mode 48, where it is centred).
     void overlayWindowLine(PixelResult *destination,
                            int          line,
                            int          xStart,
                            int          xEnd,
+                           int          xOffset,
                            bool         interlace2) const;
 
     /// Evaluates the whole sprite layer for one scanline into spriteLine_. Walks the SAT link chain a single
@@ -98,10 +100,10 @@ class VDPRenderer {
 
     /// Sprite layer for the scanline currently being rendered, filled by buildSpriteLine() and read by the
     /// per-pixel composite loop. Transparent (opaque=false) where no sprite covers the pixel.
-    PixelResult spriteLine_[VDPState::SCREEN_W];
+    PixelResult spriteLine_[VDPState::MAX_SCREEN_W];
 
     /// Scrolling planes for the current scanline. Building them in tile-row runs avoids repeating nametable
     /// decoding, division/modulo, and cross-translation-unit accessor calls for every output pixel.
-    PixelResult planeALine_[VDPState::SCREEN_W];
-    PixelResult planeBLine_[VDPState::SCREEN_W];
+    PixelResult planeALine_[VDPState::MAX_SCREEN_W];
+    PixelResult planeBLine_[VDPState::MAX_SCREEN_W];
 };

@@ -26,8 +26,36 @@ VDP::VDP(MegaDriveEnvironment *env, Synchronization synchronization, Scaling sca
     renderer_.setHardwareSpriteLimits(spriteLimitMode == HardwareSpriteLimit);
     state_.reset();
 
-    int winW = VDPState::SCREEN_W;
-    int winH = VDPState::SCREEN_H;
+    int winW = 0;
+    int winH = 0;
+    windowSize(winW, winH);
+
+    window_ = SDL_CreateWindow("VDP", winW, winH, SDL_WINDOW_RESIZABLE);
+    if (window_) {
+        sdlRenderer_ = SDL_CreateRenderer(window_, nullptr);
+        if (sdlRenderer_) {
+            if (syncMode_ != InternalTimer) {
+                SDL_SetRenderVSync(sdlRenderer_, 1);
+            }
+            texture_ = SDL_CreateTexture(sdlRenderer_,
+                                         SDL_PIXELFORMAT_BGR24,
+                                         SDL_TEXTUREACCESS_STREAMING,
+                                         VDPState::MAX_SCREEN_W,
+                                         VDPState::MAX_SCREEN_H);
+            if (texture_) {
+                SDL_SetTextureScaleMode(texture_, (scalingMode_ == Fit) ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+            }
+        }
+    }
+}
+
+/// Picks the window size for the current scaling mode: the active picture (320×224, or 384×216 in Mode 48)
+/// times the fixed factor, or the largest integer factor that fits the usable display area.
+void VDP::windowSize(int &winW, int &winH) const {
+    const int baseW = widescreen() ? VDPState::WIDESCREEN_W : VDPState::SCREEN_W;
+    const int baseH = widescreen() ? VDPState::WIDESCREEN_H : VDPState::SCREEN_H;
+    winW            = baseW;
+    winH            = baseH;
     if (scalingMode_ > 0) {
         winW *= scalingMode_;
         winH *= scalingMode_;
@@ -35,8 +63,8 @@ VDP::VDP(MegaDriveEnvironment *env, Synchronization synchronization, Scaling sca
         SDL_Rect      usable{};
         SDL_DisplayID display = SDL_GetPrimaryDisplay();
         if (display && SDL_GetDisplayUsableBounds(display, &usable)) {
-            int scaleX = usable.w / VDPState::SCREEN_W;
-            int scaleY = usable.h / VDPState::SCREEN_H;
+            int scaleX = usable.w / baseW;
+            int scaleY = usable.h / baseH;
             int scale  = std::max(1, std::min(scaleX, scaleY));
             winW *= scale;
             winH *= scale;
@@ -57,24 +85,22 @@ VDP::VDP(MegaDriveEnvironment *env, Synchronization synchronization, Scaling sca
         winW *= 3;
         winH *= 3;
     }
+}
 
-    window_ = SDL_CreateWindow("VDP", winW, winH, SDL_WINDOW_RESIZABLE);
+void VDP::setWidescreen(bool enabled) {
+    SDL_LockMutex(mutex_);
+    state_.widescreen_ = enabled;
+    SDL_UnlockMutex(mutex_);
     if (window_) {
-        sdlRenderer_ = SDL_CreateRenderer(window_, nullptr);
-        if (sdlRenderer_) {
-            if (syncMode_ != InternalTimer) {
-                SDL_SetRenderVSync(sdlRenderer_, 1);
-            }
-            texture_ = SDL_CreateTexture(sdlRenderer_,
-                                         SDL_PIXELFORMAT_BGR24,
-                                         SDL_TEXTUREACCESS_STREAMING,
-                                         VDPState::MAX_SCREEN_W,
-                                         VDPState::MAX_SCREEN_H);
-            if (texture_) {
-                SDL_SetTextureScaleMode(texture_, (scalingMode_ == Fit) ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
-            }
-        }
+        int winW = 0;
+        int winH = 0;
+        windowSize(winW, winH);
+        SDL_SetWindowSize(window_, winW, winH);
     }
+}
+
+bool VDP::widescreen() const {
+    return state_.widescreen_;
 }
 
 VDP::~VDP() {

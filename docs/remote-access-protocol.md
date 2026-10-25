@@ -172,7 +172,10 @@ occurrence of that zero-based line.
 
 The response starts with width:u16, height:u16, pitch:u16, format:u8, and one
 reserved byte. Format `1` is tightly packed BGR: each channel occupies one byte
-whose value is in `0-7`. Pixel data contains `height * pitch` bytes.
+whose value is in `0-7`. Pixel data contains `height * pitch` bytes. The size
+is the output size: 320×224 in H40, 256×224 in H32, and 384×216 in Mode 48 (the
+host-only widescreen mode; `active width` and `output height` in the raw VDP
+state report the same).
 
 ### Raw VDP state
 

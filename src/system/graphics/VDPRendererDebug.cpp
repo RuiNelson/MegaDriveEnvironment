@@ -141,12 +141,13 @@ Image VDPRendererDebug::renderPlaneLayer(int planeBase, int scrollIndex, bool fu
     // a stepped or wavy outline rather than a rectangle.
     const int screenWidth  = state_.activeWidth();
     const int screenHeight = state_.activeHeight();
+    const int firstLine    = state_.topCropLines();
     const int scrollXMask  = planeWidth - 1;
     // VDPRenderer wraps plane Y at ph * 8 even in interlace mode 2; match it.
     const int scrollYMask  = ph * 8 - 1;
-    for (int line = 0; line < screenHeight; ++line) {
+    for (int line = firstLine; line < screenHeight; ++line) {
         const int  hscroll = planeHScroll(scrollIndex, line);
-        const bool edgeRow = line == 0 || line == screenHeight - 1;
+        const bool edgeRow = line == firstLine || line == screenHeight - 1;
         for (int x = 0; x < screenWidth; x += edgeRow ? 1 : screenWidth - 1) {
             const int planeX = (x - hscroll) & scrollXMask;
             const int planeY = (line + planeVScroll(scrollIndex, x)) & scrollYMask;
@@ -154,7 +155,7 @@ Image VDPRendererDebug::renderPlaneLayer(int planeBase, int scrollIndex, bool fu
         }
     }
 
-    const int viewX = (-planeHScroll(scrollIndex, 0)) & scrollXMask;
+    const int viewX = (-planeHScroll(scrollIndex, firstLine)) & scrollXMask;
     const int viewY = planeVScroll(scrollIndex, 0) & scrollYMask;
 
     std::ostringstream base;
@@ -331,7 +332,8 @@ Image VDPRendererDebug::renderSpritePlane(bool fullRange) const {
     const int logicalHeight = state_.interlaceMode() == 2 ? state_.activeOutputHeight() / 2
                                                           : state_.activeOutputHeight();
 
-    for (int screenY = 0; screenY < logicalHeight; ++screenY) {
+    const int firstLine = state_.topCropLines();
+    for (int screenY = firstLine; screenY < firstLine + logicalHeight; ++screenY) {
         int  spriteIdx     = 0;
         int  spritesOnLine = 0;
         bool masked       = false;
@@ -354,7 +356,7 @@ Image VDPRendererDebug::renderSpritePlane(bool fullRange) const {
             int sizeH     = (state_.sat_[satShadow + 2] & 0x03) + 1;
             m_word tileWord = static_cast<m_word>((state_.vram_[satAddr + 4] << 8) | state_.vram_[satAddr + 5]);
             int xRaw = ((state_.vram_[satAddr + 6] & 0x01) << 8) | state_.vram_[satAddr + 7];
-            int spriteX = xRaw - 128;
+            int spriteX = xRaw - state_.spriteOriginX();
             int spriteY = yRaw - 128;
             int spriteW = sizeW * 8;
             int spriteH = sizeH * 8;
@@ -398,7 +400,8 @@ Image VDPRendererDebug::renderSpritePlane(bool fullRange) const {
                             tile_.cramToRGB_FullRange(palette, colorIdx, r8, g8, b8);
                         else
                             tile_.cramToRGB(palette, colorIdx, r8, g8, b8);
-                        int outputY = state_.interlaceMode() == 2 ? screenY * 2 : screenY;
+                        const int outputLine = screenY - firstLine;
+                        int outputY = state_.interlaceMode() == 2 ? outputLine * 2 : outputLine;
                         setImagePixel(result, screenX, outputY, b8, g8, r8);
                         if (state_.interlaceMode() == 2)
                             setImagePixel(result, screenX, outputY + 1, b8, g8, r8);
@@ -421,10 +424,15 @@ Image VDPRendererDebug::renderWindowLayer(bool fullRange) const {
     int wBase  = state_.windowBase();
     int wWidth = state_.h40Mode() ? 64 : 32;
 
+    // Mode 48 centres the window plane and crops its first tile row; map output pixels back to window ones.
     for (int y = 0; y < state_.activeOutputHeight(); ++y) {
         for (int x = 0; x < state_.activeWidth(); ++x) {
-            int cellX = x / 8;
-            int cellY = y / (state_.interlaceMode() == 2 ? 16 : 8);
+            const int windowX = x - state_.centerOffsetX();
+            const int windowY = y + state_.topCropLines();
+            if (windowX < 0 || windowX >= state_.hardwareWidth())
+                continue;
+            int cellX = windowX / 8;
+            int cellY = windowY / (state_.interlaceMode() == 2 ? 16 : 8);
 
             int  hpos   = state_.windowHPos() * 2;
             int  vpos   = state_.windowVPos();
@@ -451,8 +459,8 @@ Image VDPRendererDebug::renderWindowLayer(bool fullRange) const {
             }
 
             if (active) {
-                int pixelInTileX = x % 8;
-                int pixelInTileY = y % (state_.interlaceMode() == 2 ? 16 : 8);
+                int pixelInTileX = windowX % 8;
+                int pixelInTileY = windowY % (state_.interlaceMode() == 2 ? 16 : 8);
 
                 int    entryAddr = (wBase + (cellY * wWidth + cellX) * 2) & 0xFFFF;
                 m_word entry     = static_cast<m_word>((state_.vram_[entryAddr] << 8) | state_.vram_[entryAddr + 1]);

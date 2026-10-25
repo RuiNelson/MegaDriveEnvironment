@@ -6,16 +6,16 @@
 #include <cstring>
 
 /**
- * @brief 320×480 BGR framebuffer (3 bytes per pixel).
+ * @brief 384×480 BGR framebuffer (3 bytes per pixel).
  *
- * Holds the largest Mega Drive VDP output used here: H40 plus 240-line interlace.
+ * Holds the largest VDP output used here: Mode 48 (384 wide) plus 240-line interlace.
  * The VDP outputs 3 bits per colour channel (9-bit colour).
  * The framebuffer stores these native values; conversion to 8-bit-per-channel
  * is done on demand for display or PNG export.
  */
 class Framebuffer {
     public:
-    /// Framebuffer width (pixels). Mega Drive H40 mode.
+    /// Framebuffer width (pixels). Mode 48.
     static constexpr int WIDTH = VDPState::MAX_SCREEN_W;
     /// Framebuffer height (pixels). 240-line interlaced output.
     static constexpr int HEIGHT = VDPState::MAX_SCREEN_H;

@@ -48,6 +48,14 @@ void VDPRenderer::renderScanline(int line) {
     if (line < 0 || line >= s.activeHeight())
         return;
 
+    // Mode 48 does not display the first tile row. Those lines are still evaluated for the sprite status
+    // flags (SOVR/SCOL) but produce no output.
+    const int outputLine = line - s.topCropLines();
+    if (outputLine < 0) {
+        buildSpriteLine(line);
+        return;
+    }
+
     int hsBase = s.hscrollBase();
 
     // ── Read HScroll values ─────────────────────────────────────────────
@@ -131,6 +139,8 @@ void VDPRenderer::renderScanline(int line) {
     // Window activation is constant vertically and has at most one horizontal
     // boundary, so calculate its span once rather than testing every pixel.
     const int  screenCellY    = line / 8;
+    const int  hardwareWidth  = s.hardwareWidth();
+    const int  windowOffsetX  = s.centerOffsetX();
     const int  windowCellX    = s.windowHPos() * 2;
     const int  windowCellY    = s.windowVPos();
     const bool windowVertical = windowCellY > 0
@@ -138,24 +148,25 @@ void VDPRenderer::renderScanline(int line) {
     int windowStart = 0;
     int windowEnd   = 0;
     if (windowVertical) {
-        windowEnd = activeWidth;
+        windowEnd = hardwareWidth;
     } else if (windowCellX > 0) {
-        const int boundary = std::min(activeWidth, windowCellX * 8);
+        const int boundary = std::min(hardwareWidth, windowCellX * 8);
         if (s.windowRight()) {
             windowStart = boundary;
-            windowEnd   = activeWidth;
+            windowEnd   = hardwareWidth;
         } else {
             windowEnd = boundary;
         }
     }
     if (windowStart < windowEnd)
-        overlayWindowLine(planeALine_, line, windowStart, windowEnd, interlace2);
+        overlayWindowLine(
+            planeALine_, line, windowStart + windowOffsetX, windowEnd + windowOffsetX, windowOffsetX, interlace2);
 
     // ── Sprite layer (evaluated once for the whole scanline) ─────────────
     buildSpriteLine(line);
 
     // ── Per-pixel priority resolution and direct framebuffer write ───────
-    const int outputY = interlaced ? line * 2 : line;
+    const int outputY = interlaced ? outputLine * 2 : outputLine;
     auto *output = static_cast<m_byte *>(fb_.getRawPointer()) + outputY * Framebuffer::PITCH;
     const bool shadowHighlight = s.shadowHighlightEnabled();
 
@@ -287,7 +298,7 @@ void VDPRenderer::buildPlaneLine(PixelResult *destination,
 }
 
 void VDPRenderer::overlayWindowLine(
-    PixelResult *destination, int line, int xStart, int xEnd, bool interlace2) const {
+    PixelResult *destination, int line, int xStart, int xEnd, int xOffset, bool interlace2) const {
     const VDPState &s = state_;
     const int windowWidth = s.h40Mode() ? 64 : 32;
     const int tileShift = interlace2 ? 4 : 3;
@@ -300,7 +311,8 @@ void VDPRenderer::overlayWindowLine(
     int    cachedRowAddress = 0;
 
     for (int x = xStart; x < xEnd; ++x) {
-        const int cellX = x >> 3;
+        const int windowX = x - xOffset;
+        const int cellX = windowX >> 3;
         if (cellX != cachedCellX) {
             const int address = (windowBase + (cellY * windowWidth + cellX) * 2) & 0xFFFF;
             cachedEntry = static_cast<m_word>((s.vram_[address] << 8) | s.vram_[(address + 1) & 0xFFFF]);
@@ -317,7 +329,7 @@ void VDPRenderer::overlayWindowLine(
             cachedCellX = cellX;
         }
 
-        const int pixelX = x & 7;
+        const int pixelX = windowX & 7;
         const int tilePixelX = (cachedEntry & 0x0800) != 0 ? 7 - pixelX : pixelX;
         const m_byte colorIndex = readTileRowPixel(s.vram_, cachedRowAddress, tilePixelX);
         destination[x] = {
@@ -459,7 +471,7 @@ VDPRenderer::PixelResult VDPRenderer::getSpritePixel(int screenX, int screenY) {
 
         int xRaw = ((s.vram_[satAddr + 6] & 0x01) << 8) | s.vram_[satAddr + 7];
 
-        int spriteX      = xRaw - 128;
+        int spriteX      = xRaw - s.spriteOriginX();
         int spriteY      = yRaw - 128;
         int spritePixelW = sizeW * 8;
         int spritePixelH = sizeH * 8;
@@ -544,7 +556,7 @@ void VDPRenderer::buildSpriteLine(int line) {
     const int            hwSpritesPerLine     = s.h40Mode() ? 20 : 16;
     const int            maxSpritesPerLine    = hardwareSpriteLimits_ ? hwSpritesPerLine : 1000;
     const int            activeWidth          = s.activeWidth();
-    const int            maxSpritePixels      = hardwareSpriteLimits_ ? activeWidth : 1000000;
+    const int            maxSpritePixels      = hardwareSpriteLimits_ ? s.hardwareWidth() : 1000000;
     const bool           interlace2           = s.interlaceMode() == 2;
     const int            spriteTileHeight     = interlace2 ? 16 : 8;
     int                  spritePixelsOnLine   = 0;
@@ -574,7 +586,7 @@ void VDPRenderer::buildSpriteLine(int line) {
         m_word tileWord = static_cast<m_word>((s.vram_[satAddr + 4] << 8) | s.vram_[satAddr + 5]);
         int    xRaw     = ((s.vram_[satAddr + 6] & 0x01) << 8) | s.vram_[satAddr + 7];
 
-        int spriteX      = xRaw - 128;
+        int spriteX      = xRaw - s.spriteOriginX();
         int spriteY      = yRaw - 128;
         int spritePixelW = sizeW * 8;
         int spritePixelH = sizeH * 8;

@@ -160,8 +160,28 @@ bool VDPState::h40Mode() const {
     return (regs_[0x0C] & 0x01) != 0;
 }
 
+bool VDPState::widescreenActive() const {
+    return widescreen_ && h40Mode();
+}
+
+int VDPState::hardwareWidth() const {
+    return h40Mode() ? SCREEN_W : 256;
+}
+
 int VDPState::activeWidth() const {
-    return h40Mode() ? 320 : 256;
+    return widescreenActive() ? WIDESCREEN_W : hardwareWidth();
+}
+
+int VDPState::centerOffsetX() const {
+    return widescreenActive() ? WIDESCREEN_CENTER_X : 0;
+}
+
+int VDPState::spriteOriginX() const {
+    return widescreenActive() ? WIDESCREEN_SPRITE_ORIGIN_X : SPRITE_ORIGIN_X;
+}
+
+int VDPState::topCropLines() const {
+    return widescreenActive() ? WIDESCREEN_TOP_CROP : 0;
 }
 
 int VDPState::activeHeight() const {
@@ -169,7 +189,7 @@ int VDPState::activeHeight() const {
 }
 
 int VDPState::activeOutputHeight() const {
-    return activeHeight() * (interlaced() ? 2 : 1);
+    return (activeHeight() - topCropLines()) * (interlaced() ? 2 : 1);
 }
 
 int VDPState::interlaceMode() const {

@@ -15,8 +15,20 @@ class VDPState {
     static constexpr int SCREEN_W = 320;
     /// Default screen height in pixels (NTSC visible area).
     static constexpr int SCREEN_H = 224;
-    /// Maximum framebuffer width in pixels (H40 mode).
-    static constexpr int MAX_SCREEN_W = 320;
+    /// Mode 48 (host-only widescreen) output width in pixels: 48 tiles.
+    static constexpr int WIDESCREEN_W = 384;
+    /// Mode 48 output height in pixels: 27 tiles (the first of the 28 tile rows is not displayed).
+    static constexpr int WIDESCREEN_H = 216;
+    /// Mode 48 pixel offset of the original 320-pixel H40 picture, used to centre the window plane.
+    static constexpr int WIDESCREEN_CENTER_X = (WIDESCREEN_W - SCREEN_W) / 2;
+    /// Mode 48 scan lines (from the top of the 28-tile image) that are not displayed.
+    static constexpr int WIDESCREEN_TOP_CROP = 8;
+    /// Sprite X coordinate that maps to screen column 0 on hardware.
+    static constexpr int SPRITE_ORIGIN_X = 128;
+    /// Mode 48 sprite X coordinate that maps to screen column 0 (4 tiles further left than hardware).
+    static constexpr int WIDESCREEN_SPRITE_ORIGIN_X = SPRITE_ORIGIN_X - WIDESCREEN_CENTER_X;
+    /// Maximum framebuffer width in pixels (Mode 48).
+    static constexpr int MAX_SCREEN_W = WIDESCREEN_W;
     /// Maximum progressive framebuffer height in pixels (PAL/240-line mode).
     static constexpr int MAX_PROGRESSIVE_H = 240;
     /// Maximum output height, including interlaced output.
@@ -90,6 +102,11 @@ class VDPState {
     /// Current interlace field. Toggled once per rendered frame in interlace modes.
     bool oddFrame_ = false;
 
+    // ── Host-only widescreen ────────────────────────────────────────────────
+    /// Host setting for Mode 48. Not a register and not cleared by reset(): it takes effect whenever the
+    /// game selects H40.
+    bool widescreen_ = false;
+
     // ── Register accessors ──────────────────────────────────────────────────
 
     /// Plane A base address in VRAM (bits 13–10 of register $02).
@@ -162,13 +179,29 @@ class VDPState {
     /// True in H40 mode (320 pixels); false in H32 mode (256 pixels). From register $0C bit 0.
     bool h40Mode() const;
 
-    /// Active display width in pixels (256 or 320).
+    /// True when Mode 48 is in effect: the widescreen host setting is on and the game selected H40.
+    bool widescreenActive() const;
+
+    /// Width in pixels of the hardware display (256 or 320), also in Mode 48. Sprite limits and the window
+    /// plane follow this width.
+    int hardwareWidth() const;
+
+    /// Output width in pixels (256, 320, or 384 in Mode 48).
     int activeWidth() const;
+
+    /// Output pixel column of the original picture's left edge (0, or 32 in Mode 48).
+    int centerOffsetX() const;
+
+    /// Sprite X coordinate that maps to output column 0 (128, or 96 in Mode 48).
+    int spriteOriginX() const;
+
+    /// Scan lines at the top of the rendered image that are not output (0, or 8 in Mode 48).
+    int topCropLines() const;
 
     /// Active progressive display height in pixels (224 or 240 for Mega Drive mode 5).
     int activeHeight() const;
 
-    /// Active output height, doubled for interlaced output.
+    /// Active output height after cropping, doubled for interlaced output.
     int activeOutputHeight() const;
 
     /// Interlace mode from register $0C bits 2–1 (0=off, 1=interlace 1, 2=interlace 2).
