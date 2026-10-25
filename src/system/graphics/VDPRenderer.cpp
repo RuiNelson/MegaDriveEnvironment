@@ -332,6 +332,9 @@ void VDPRenderer::overlayWindowLine(
         const int pixelX = windowX & 7;
         const int tilePixelX = (cachedEntry & 0x0800) != 0 ? 7 - pixelX : pixelX;
         const m_byte colorIndex = readTileRowPixel(s.vram_, cachedRowAddress, tilePixelX);
+        // Mode 48 only: a transparent window pixel leaves plane A visible instead of replacing it.
+        if (colorIndex == 0 && s.widescreenActive())
+            continue;
         destination[x] = {
             colorIndex,
             static_cast<m_byte>((cachedEntry >> 13) & 0x03),

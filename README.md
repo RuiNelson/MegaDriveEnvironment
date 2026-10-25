@@ -497,7 +497,8 @@ timing, DMA slots and sprite limits stay H40. The output is 48×27 tiles
 (384×216):
 
 - Layers A and B render plane columns 0-47 (8 more tiles on the right);
-- the window plane keeps its 40 columns, centred at output columns 32-351;
+- the window plane keeps its 40 columns, centred at output columns 32-351; its colour-0 pixels are
+  transparent over plane A (on hardware they replace it), so a window HUD without a backdrop shows the level;
 - sprite X 96-480 is visible instead of 128-448, so sprite X 128 lands at
   output column 32 while background pixel 0 stays at output column 0;
 - the first tile row (8 lines) of every layer is not output. The VDP still

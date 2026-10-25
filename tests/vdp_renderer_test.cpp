@@ -323,6 +323,14 @@ void testWidescreenWindowIsCentered() {
     assert(isPixel(framebuffer, 32, row, 7, 0, 0));
     assert(isPixel(framebuffer, 111, row, 7, 0, 0));
     assert(isPixel(framebuffer, 112, row, 0, 7, 0));
+
+    // A transparent (colour 0) window pixel shows plane A in Mode 48 and replaces it in Mode 40.
+    state.regs_[0x11] = 0x00;
+    state.regs_[0x12] = 0x1F;
+    for (int cell = 0; cell < 64 * 32; ++cell)
+        state.vram_[0xD000 + cell * 2 + 1] = 0;
+    renderer.renderScanline(100);
+    assert(isPixel(framebuffer, 100, row, 0, 7, 0));
 }
 
 void testWidescreenSprites() {
