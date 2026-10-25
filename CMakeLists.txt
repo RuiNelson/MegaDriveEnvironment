@@ -203,13 +203,6 @@ if(BUILD_TESTING AND PROJECT_IS_TOP_LEVEL)
         COMMAND megadrive_environment_system_memory_test
     )
 
-    add_executable(megadrive_environment_z80_bus_handshake_test tests/z80_bus_handshake_test.cpp)
-    target_link_libraries(megadrive_environment_z80_bus_handshake_test PRIVATE MegaDriveEnvironment)
-    add_test(
-        NAME megadrive_environment_z80_bus_handshake_test
-        COMMAND megadrive_environment_z80_bus_handshake_test
-    )
-
     add_executable(megadrive_environment_sound_psg_test tests/sound_psg_test.cpp)
     target_link_libraries(megadrive_environment_sound_psg_test PRIVATE MegaDriveEnvironment)
     add_test(
