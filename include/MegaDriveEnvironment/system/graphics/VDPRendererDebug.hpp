@@ -37,10 +37,10 @@ class VDPRendererDebug {
     /// Creates a screen-sized image containing only the visible sprite plane.
     Image makeSpriteLayerImage(bool fullRange) const;
 
-    /// Creates image showing only plane B (background layer).
+    /// Creates image of the whole plane B name table, with the visible screen area outlined.
     Image makeBackgroundLayerImage(bool fullRange) const;
 
-    /// Creates image showing only plane A (foreground layer).
+    /// Creates image of the whole plane A name table, with the visible screen area outlined.
     Image makeForegroundLayerImage(bool fullRange) const;
 
     /// Creates grid showing all VRAM tiles (16×8 pixel each).
@@ -73,8 +73,14 @@ class VDPRendererDebug {
     /// Renders a single palette row (16 colors) as a horizontal strip.
     Image renderPaletteRow(int paletteIdx, bool fullRange) const;
 
-    /// Renders a plane layer (Plane A or Plane B) to an image.
-    Image renderPlaneLayer(int planeBase, bool fullRange) const;
+    /// Horizontal scroll the renderer uses for a plane (0 = A, 1 = B) on a screen line.
+    int planeHScroll(int scrollIndex, int line) const;
+
+    /// Vertical scroll the renderer uses for a plane (0 = A, 1 = B) at a screen column.
+    int planeVScroll(int scrollIndex, int screenX) const;
+
+    /// Renders a whole plane name table (Plane A or Plane B) and outlines the screen area it shows.
+    Image renderPlaneLayer(int planeBase, int scrollIndex, bool fullRange) const;
 
     /// Renders the sprite layer to an image.
     Image renderSpriteLayer(bool fullRange) const;

@@ -180,6 +180,13 @@ if(BUILD_TESTING AND PROJECT_IS_TOP_LEVEL)
         COMMAND megadrive_environment_vdp_renderer_test
     )
 
+    add_executable(megadrive_environment_vdp_debug_plane_test tests/vdp_debug_plane_test.cpp)
+    target_link_libraries(megadrive_environment_vdp_debug_plane_test PRIVATE MegaDriveEnvironment)
+    add_test(
+        NAME megadrive_environment_vdp_debug_plane_test
+        COMMAND megadrive_environment_vdp_debug_plane_test
+    )
+
     add_executable(megadrive_environment_cooperative_hsync_test
         tests/cooperative_hsync_test.cpp
     )

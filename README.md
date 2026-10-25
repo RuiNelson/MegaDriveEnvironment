@@ -673,8 +673,10 @@ Built-in host shortcuts:
 | `Ctrl+S` | Save the full VDP diagnostic sheet as `vdp_NNN.png` |
 | `Alt/Option` + key or gamepad button | Call `handleOptionHotkey()` without changing emulated joypad state |
 
-The full VDP sheet contains the frame, tile sheets, plane name tables, palette,
-VSRAM, window/sprite views and registers. The mouse cursor is hidden while the
+The full VDP sheet contains the frame, tile sheets, palette, VSRAM, window/sprite
+views and registers. Plane A and Plane B are drawn as whole name tables, with
+the area the screen currently shows outlined in magenta from the h-/v-scroll
+values (stepped or wavy under per-cell, per-line or two-cell scrolling). The mouse cursor is hidden while the
 VDP window is fullscreen and restored on exit.
 
 ### Remote access and automation

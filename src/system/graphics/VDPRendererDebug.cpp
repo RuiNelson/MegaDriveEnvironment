@@ -52,40 +52,73 @@ Image VDPRendererDebug::renderPaletteRow(int paletteIdx, bool fullRange) const {
     return colors.addLabelOnBottom(label.str(), 0, black, Color{255, 255, 0, 255});
 }
 
-Image VDPRendererDebug::renderPlaneLayer(int planeBase, bool fullRange) const {
-    Color black = {0, 0, 0, 255};
+int VDPRendererDebug::planeHScroll(int scrollIndex, int line) const {
+    // Same table lookup as VDPRenderer::renderScanline: full screen, per 8 lines, or per line.
+    int address = state_.hscrollBase();
+    switch (state_.hscrollMode()) {
+        case 2:
+            address += (line / 8) * 8 * 4;
+            break;
+        case 3:
+            address += line * 4;
+            break;
+        case 0:
+            break;
+        default:
+            return 0;
+    }
+    address = (address + scrollIndex * 2) & 0xFFFF;
+    return static_cast<int16_t>((state_.vram_[address] << 8) | state_.vram_[(address + 1) & 0xFFFF]);
+}
 
-    Image result(ImageSize{state_.activeWidth(), state_.activeOutputHeight()}, black);
+int VDPRendererDebug::planeVScroll(int scrollIndex, int screenX) const {
+    // Same VSRAM selection as VDPRenderer::buildPlaneLine: one word per plane, or one per 2-cell column.
+    int index = scrollIndex;
+    if (state_.vscrollMode() == 1) {
+        const int columnIndex = (screenX >> 4) * 2 + scrollIndex;
+        if (columnIndex < VDPState::VSRAM_ENTRIES)
+            index = columnIndex;
+    }
+    return static_cast<int16_t>(state_.vsram_[index]);
+}
 
-    int pw = state_.planeWidthCells();
-    int ph = state_.planeHeightCells();
+Image VDPRendererDebug::renderPlaneLayer(int planeBase, int scrollIndex, bool fullRange) const {
+    Color black   = {0, 0, 0, 255};
+    Color outline = {255, 0, 255, 255};
+
+    const bool interlace2  = state_.interlaceMode() == 2;
+    const int  cellHeight  = interlace2 ? 16 : 8;
+    const int  pw          = state_.planeWidthCells();
+    const int  ph          = state_.planeHeightCells();
+    const int  planeWidth  = pw * 8;
+    const int  planeHeight = ph * cellHeight;
+
+    // The whole name table, not just the screen-sized corner at cell (0, 0).
+    Image result(ImageSize{planeWidth, planeHeight}, black);
 
     int nonZero = 0;
     for (int i = 0; i < pw * ph; ++i) {
         int    ea = (planeBase + i * 2) & 0xFFFF;
-        m_word e  = static_cast<m_word>((state_.vram_[ea] << 8) | state_.vram_[ea + 1]);
+        m_word e  = static_cast<m_word>((state_.vram_[ea] << 8) | state_.vram_[(ea + 1) & 0xFFFF]);
         if (e != 0)
             nonZero++;
     }
 
-    for (int y = 0; y < state_.activeOutputHeight(); ++y) {
-        for (int x = 0; x < state_.activeWidth(); ++x) {
-            int planeX = x % (pw * 8);
-            int planeY = y % (ph * 8);
-
+    for (int planeY = 0; planeY < planeHeight; ++planeY) {
+        for (int planeX = 0; planeX < planeWidth; ++planeX) {
             int cellX        = planeX / 8;
-            int cellY        = planeY / (state_.interlaceMode() == 2 ? 16 : 8);
+            int cellY        = planeY / cellHeight;
             int pixelInTileX = planeX % 8;
-            int pixelInTileY = planeY % (state_.interlaceMode() == 2 ? 16 : 8);
+            int pixelInTileY = planeY % cellHeight;
 
             int    entryAddr = (planeBase + (cellY * pw + cellX) * 2) & 0xFFFF;
-            m_word entry     = static_cast<m_word>((state_.vram_[entryAddr] << 8) | state_.vram_[entryAddr + 1]);
+            m_word entry     = static_cast<m_word>((state_.vram_[entryAddr] << 8) | state_.vram_[(entryAddr + 1) & 0xFFFF]);
 
             m_byte palette   = static_cast<m_byte>((entry >> 13) & 0x03);
             bool   vflip     = (entry & 0x1000) != 0;
             bool   hflip     = (entry & 0x0800) != 0;
             int tileIndex = entry & 0x07FF;
-            if (state_.interlaceMode() == 2) {
+            if (interlace2) {
                 tileIndex = ((entry & 0x03FF) << 1) | (pixelInTileY >> 3);
                 pixelInTileY &= 0x07;
             }
@@ -98,14 +131,38 @@ Image VDPRendererDebug::renderPlaneLayer(int planeBase, bool fullRange) const {
                     tile_.cramToRGB_FullRange(palette, colorIdx, r8, g8, b8);
                 else
                     tile_.cramToRGB(palette, colorIdx, r8, g8, b8);
-                setImagePixel(result, x, y, b8, g8, r8);
+                setImagePixel(result, planeX, planeY, b8, g8, r8);
             }
         }
     }
 
-    Image info = Image("$" + std::to_string(planeBase), black, Color{255, 255, 0, 255});
+    // Outline the screen's border pixels where the renderer samples them, using
+    // its scroll math (and plane wrap), so per-line and per-column scroll show as
+    // a stepped or wavy outline rather than a rectangle.
+    const int screenWidth  = state_.activeWidth();
+    const int screenHeight = state_.activeHeight();
+    const int scrollXMask  = planeWidth - 1;
+    // VDPRenderer wraps plane Y at ph * 8 even in interlace mode 2; match it.
+    const int scrollYMask  = ph * 8 - 1;
+    for (int line = 0; line < screenHeight; ++line) {
+        const int  hscroll = planeHScroll(scrollIndex, line);
+        const bool edgeRow = line == 0 || line == screenHeight - 1;
+        for (int x = 0; x < screenWidth; x += edgeRow ? 1 : screenWidth - 1) {
+            const int planeX = (x - hscroll) & scrollXMask;
+            const int planeY = (line + planeVScroll(scrollIndex, x)) & scrollYMask;
+            setImagePixel(result, planeX, planeY, outline.b, outline.g, outline.r);
+        }
+    }
+
+    const int viewX = (-planeHScroll(scrollIndex, 0)) & scrollXMask;
+    const int viewY = planeVScroll(scrollIndex, 0) & scrollYMask;
+
+    std::ostringstream base;
+    base << "$" << std::hex << std::uppercase << std::setfill('0') << std::setw(4) << planeBase;
+    Image info = Image(base.str(), black, Color{255, 255, 0, 255});
     info.addOnRight(Image(std::to_string(pw) + "x" + std::to_string(ph), black, Color{200, 200, 200, 255}), 4, black);
     info.addOnRight(Image(std::to_string(nonZero) + " tiles", black, Color{0, 200, 255, 255}), 4, black);
+    info.addOnRight(Image("view " + std::to_string(viewX) + "," + std::to_string(viewY), black, outline), 4, black);
     result.addOnTop(info, 0, black);
 
     return result;
@@ -498,11 +555,11 @@ Image VDPRendererDebug::makeSpriteLayerImage(bool fullRange) const {
 }
 
 Image VDPRendererDebug::makeBackgroundLayerImage(bool fullRange) const {
-    return renderPlaneLayer(state_.planeBBase(), fullRange);
+    return renderPlaneLayer(state_.planeBBase(), 1, fullRange);
 }
 
 Image VDPRendererDebug::makeForegroundLayerImage(bool fullRange) const {
-    return renderPlaneLayer(state_.planeABase(), fullRange);
+    return renderPlaneLayer(state_.planeABase(), 0, fullRange);
 }
 
 Image VDPRendererDebug::makeVramTilesImage(bool /*fullRange*/) const {
@@ -623,16 +680,16 @@ void VDPRendererDebug::dumpEverythingToPNG(const std::string &path, bool fullRan
     Image spriteTables    = makeSpriteTablesImage(fullRange);
     Image spriteLayer     = makeSpriteLayerImage(fullRange);
 
-    finalOutput.addLabelOnTop("FinalOutput", 2, black, green);
-    vramTiles.addLabelOnTop("VRAM Tiles", 2, black, green);
-    colorRAM.addLabelOnTop("CRAM Palettes", 2, black, green);
-    vsRAM.addLabelOnTop("VSRAM", 2, black, green);
-    registers.addLabelOnTop("Registers", 2, black, green);
-    backgroundLayer.addLabelOnTop("Plane B", 2, black, green);
-    foregroundLayer.addLabelOnTop("Plane A", 2, black, green);
-    windowLayer.addLabelOnTop("Window", 2, black, green);
-    spriteTables.addLabelOnTop("SAT Sprites", 2, black, green);
-    spriteLayer.addLabelOnTop("Sprite Plane", 2, black, green);
+    finalOutput = finalOutput.addLabelOnTop("FinalOutput", 2, black, green);
+    vramTiles = vramTiles.addLabelOnTop("VRAM Tiles", 2, black, green);
+    colorRAM = colorRAM.addLabelOnTop("CRAM Palettes", 2, black, green);
+    vsRAM = vsRAM.addLabelOnTop("VSRAM", 2, black, green);
+    registers = registers.addLabelOnTop("Registers", 2, black, green);
+    backgroundLayer = backgroundLayer.addLabelOnTop("Plane B", 2, black, green);
+    foregroundLayer = foregroundLayer.addLabelOnTop("Plane A", 2, black, green);
+    windowLayer = windowLayer.addLabelOnTop("Window", 2, black, green);
+    spriteTables = spriteTables.addLabelOnTop("SAT Sprites", 2, black, green);
+    spriteLayer = spriteLayer.addLabelOnTop("Sprite Plane", 2, black, green);
 
     Image col0 = registers;
 
