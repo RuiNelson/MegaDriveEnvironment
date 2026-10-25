@@ -106,10 +106,6 @@ class VDPState {
     /// Host setting for Mode 48. Not a register and not cleared by reset(): it takes effect whenever the
     /// game selects H40.
     bool widescreen_ = false;
-    /// Mode 48 window colour key: a window pixel with this CRAM entry (palette * 16 + colour index) is
-    /// transparent, like colour 0. Valid while @c widescreenWindowKeyEnabled_ is set; also survives reset().
-    bool   widescreenWindowKeyEnabled_ = false;
-    m_byte widescreenWindowKey_        = 0;
 
     // ── Register accessors ──────────────────────────────────────────────────
 

@@ -99,15 +99,6 @@ void VDP::setWidescreen(bool enabled) {
     }
 }
 
-void VDP::setWidescreenWindowColorKey(int palette, int colorIndex) {
-    SDL_LockMutex(mutex_);
-    state_.widescreenWindowKeyEnabled_ = palette >= 0 && palette < 4 && colorIndex > 0 && colorIndex < 16;
-    state_.widescreenWindowKey_        = state_.widescreenWindowKeyEnabled_
-        ? static_cast<m_byte>(palette * 16 + colorIndex)
-        : static_cast<m_byte>(0);
-    SDL_UnlockMutex(mutex_);
-}
-
 bool VDP::widescreen() const {
     return state_.widescreen_;
 }

@@ -501,10 +501,7 @@ timing, DMA slots and sprite limits stay H40. The output is 48×27 tiles
 - sprite X 96-480 is visible instead of 128-448, so sprite X 128 lands at
   output column 32 while background pixel 0 stays at output column 0;
 - the first tile row (8 lines) of every layer is not output. The VDP still
-  evaluates those lines for the sprite overflow/collision flags;
-- a transparent window pixel (colour 0, or the colour set with
-  `VDP::setWidescreenWindowColorKey(palette, colorIndex)`) leaves Plane A
-  visible instead of hiding it, so a window HUD can float over the playfield.
+  evaluates those lines for the sprite overflow/collision flags.
 
 The framebuffer, SDL texture, remote-access snapshots and debug PNGs all use the
 384×216 output. `VDPState::widescreen_` holds the setting; `widescreenActive()`
