@@ -135,6 +135,12 @@ consumer after this repository's tests pass.
 - The Z80 thread must ACK `$A11100` promptly when the 68K requests the bus.
   After a run slice, skip the 100 µs pacing delay if `BUSREQ` is already
   asserted. Sleeping first stalls `sound_ym2612_acquire` during DAC voices.
+  `Z80::setBusRequest(true)` also acks itself when it wins `mutex_` (every
+  slice runs under it, so the core is provably stopped); only when a slice is
+  in flight does the ack wait for the thread. Never ack without that proof,
+  and keep `tests/z80_bus_handshake_test.cpp` green (issue #5: the thread
+  rendezvous cost ~0.55 ms per retry on Windows and collapsed the game loop
+  to ~42 fps while PCM was playing).
 - Keep remote-access protocol changes backward-aware and update
   `docs/remote-access-protocol.md`, the C++ tests, and the Python client
   together.

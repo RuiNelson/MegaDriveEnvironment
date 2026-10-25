@@ -114,12 +114,25 @@ void Z80::reset() {
 void Z80::setBusRequest(bool requested) {
     busRequested_.store(requested, std::memory_order_release);
     if (requested) {
-        // The ack must come from the Z80 thread once it actually stops between
-        // run chunks: acking here would let the 68K touch the YM2612 while the
-        // core is still executing (SOR's 68K driver serializes its FM writes
-        // against the Z80's DAC writes through busreq + a Z80-RAM flag).
-        if (resetHeld_.load(std::memory_order_acquire) || !running_.load(std::memory_order_acquire))
+        // The ack must not come while the core is still executing: the 68K
+        // would touch the YM2612 mid-slice (SOR's 68K driver serializes its FM
+        // writes against the Z80's DAC writes through busreq + a Z80-RAM flag).
+        if (resetHeld_.load(std::memory_order_acquire) || !running_.load(std::memory_order_acquire)) {
             busAcked_.store(true, std::memory_order_release);
+            return;
+        }
+        // Every slice runs under mutex_, so winning it proves the core is
+        // stopped. Ack right here instead of waiting for the Z80 thread to
+        // wake from its pacing sleep: on hardware a re-raised BUSREQ is
+        // granted within a few cycles, while the thread rendezvous costs a
+        // host sleep (~0.5 ms on Windows) that sound_ym2612_acquire pays per
+        // retry while a DAC sample is playing. If a slice is in flight the
+        // trylock fails and the thread acks as soon as the slice ends.
+        if (SDL_TryLockMutex(mutex_)) {
+            if (busRequested_.load(std::memory_order_acquire))
+                busAcked_.store(true, std::memory_order_release);
+            SDL_UnlockMutex(mutex_);
+        }
     } else if (!resetHeld_.load(std::memory_order_acquire)) {
         busAcked_.store(false, std::memory_order_release);
         // Run the catch-up synchronously so the release window executes Z80
