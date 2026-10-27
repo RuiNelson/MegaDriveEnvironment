@@ -45,7 +45,7 @@ std::vector<m_byte> referenceScanline(
         int vscrollA = static_cast<int16_t>(state.vsram_[0]);
         int vscrollB = static_cast<int16_t>(state.vsram_[1]);
         if (state.vscrollMode() == 1) {
-            const int index = (x / 16) * 2;
+            const int index = (std::max(0, x - state.centerOffsetX()) / 16) * 2;
             if (index + 1 < VDPState::VSRAM_ENTRIES) {
                 vscrollA = static_cast<int16_t>(state.vsram_[index]);
                 vscrollB = static_cast<int16_t>(state.vsram_[index + 1]);
@@ -285,6 +285,54 @@ void testWidescreenPlanes() {
     assert(std::all_of(pixels, pixels + Framebuffer::SIZE, [](m_byte value) { return value == 0; }));
 }
 
+/// Mode 48 extends the hardware picture by 32 pixels on each side, so plane pixel 0 lands where sprite X 128
+/// does (output column 32) and the planes stay aligned with the sprites.
+void testWidescreenPlanesAreCentred() {
+    VDPState state;
+    Framebuffer framebuffer;
+    VDPTile tile(state);
+    VDPRenderer renderer(state, tile, framebuffer);
+
+    state.regs_[0x00] = 0x04; // full-colour palette
+    state.regs_[0x01] = 0x40;
+    state.regs_[0x02] = 0x30; // Plane A at $C000
+    state.regs_[0x04] = 0x07;
+    state.regs_[0x05] = 0x70; // SAT at $E000
+    state.regs_[0x0C] = 0x01;
+    state.regs_[0x0D] = 0x3E; // h-scroll table at $F800 (zero: no scroll)
+    state.regs_[0x10] = 0x01; // 64x32
+    setupSolidTiles(state);
+    // Plane A: cell 0 of every row is green, cell 63 red, the rest blue.
+    for (int row = 0; row < 32; ++row)
+        for (int cell = 0; cell < 64; ++cell)
+            state.vram_[0xC000 + (row * 64 + cell) * 2 + 1] = cell == 0 ? 2 : (cell == 63 ? 3 : 1);
+
+    renderer.renderScanline(100);
+    assert(isPixel(framebuffer, 0, 100, 0, 7, 0));
+    assert(isPixel(framebuffer, 8, 100, 7, 0, 0));
+
+    state.widescreen_ = true;
+    framebuffer.clear();
+    renderer.renderScanline(100);
+    const int row = 100 - 8;
+    // Plane pixels -32..-1 are the plane's last four cells (it wraps), then pixel 0 at output column 32.
+    assert(isPixel(framebuffer, 23, row, 7, 0, 0));
+    assert(isPixel(framebuffer, 24, row, 0, 0, 7));
+    assert(isPixel(framebuffer, 31, row, 0, 0, 7));
+    assert(isPixel(framebuffer, 32, row, 0, 7, 0));
+    assert(isPixel(framebuffer, 39, row, 0, 7, 0));
+    assert(isPixel(framebuffer, 40, row, 7, 0, 0));
+
+    // A sprite at X 128 covers the same output columns as plane pixels 0-7.
+    setSprite(state, 0, 128, 128 + 100, 0, 3);
+    framebuffer.clear();
+    renderer.renderScanline(100);
+    assert(isPixel(framebuffer, 23, row, 7, 0, 0));
+    assert(isPixel(framebuffer, 32, row, 0, 0, 7));
+    assert(isPixel(framebuffer, 39, row, 0, 0, 7));
+    assert(isPixel(framebuffer, 40, row, 7, 0, 0));
+}
+
 void testWidescreenWindowIsCentered() {
     VDPState state;
     Framebuffer framebuffer;
@@ -382,6 +430,7 @@ int main() {
     testSpriteLineAgainstReference();
     testModeDimensions();
     testWidescreenPlanes();
+    testWidescreenPlanesAreCentred();
     testWidescreenWindowIsCentered();
     testWidescreenSprites();
 }

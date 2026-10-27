@@ -496,11 +496,13 @@ replaces H40 whenever the game selects H40; H32 is unaffected. Registers,
 timing, DMA slots and sprite limits stay H40. The output is 48×27 tiles
 (384×216):
 
-- Layers A and B render plane columns 0-47 (8 more tiles on the right);
+- the hardware picture is centred and extended by 32 pixels (4 tiles) on each side, every layer alike, so
+  planes, sprites and window stay aligned exactly as in H40;
+- layers A and B render from plane pixel -32 (the scrolled plane's pixel 0 lands at output column 32); in
+  2-cell vertical scroll the extension columns use the edge columns' values;
 - the window plane keeps its 40 columns, centred at output columns 32-351; its colour-0 pixels are
   transparent over plane A (on hardware they replace it), so a window HUD without a backdrop shows the level;
-- sprite X 96-480 is visible instead of 128-448, so sprite X 128 lands at
-  output column 32 while background pixel 0 stays at output column 0;
+- sprite X 96-480 is visible instead of 128-448, so sprite X 128 lands at output column 32, over plane pixel 0;
 - the first tile row (8 lines) of every layer is not output. The VDP still
   evaluates those lines for the sprite overflow/collision flags.
 

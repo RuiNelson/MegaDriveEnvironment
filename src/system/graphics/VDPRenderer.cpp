@@ -245,7 +245,10 @@ void VDPRenderer::buildPlaneLine(PixelResult *destination,
     const int planeXMask = planeWidthCells * 8 - 1;
     const int planeYMask = planeHeightCells * 8 - 1;
     const int tileShift  = interlace2 ? 4 : 3;
-    int planeX = (-hscroll) & planeXMask;
+    // Output column 0 is plane pixel -centerOffsetX(): Mode 48 extends the hardware picture equally on both
+    // sides, like the window and the sprites.
+    const int offsetX    = s.centerOffsetX();
+    int planeX = (-hscroll - offsetX) & planeXMask;
 
     int    cachedEntryAddress = -1;
     int    cachedPixelY       = -1;
@@ -255,7 +258,9 @@ void VDPRenderer::buildPlaneLine(PixelResult *destination,
     for (int x = 0; x < activeWidth; ++x) {
         int vscroll = baseVscroll;
         if (twoCellVscroll) {
-            const int index = (x >> 4) * 2 + vsramOffset;
+            // 2-cell columns count from the hardware picture's left edge; the extension columns of Mode 48
+            // use the edge columns' values (the right ones fall past VSRAM, onto column 0's base value).
+            const int index = (std::max(0, x - offsetX) >> 4) * 2 + vsramOffset;
             if (index < VDPState::VSRAM_ENTRIES)
                 vscroll = static_cast<int16_t>(s.vsram_[index]);
         }
@@ -379,7 +384,7 @@ VDPRenderer::getPlanePixel(int planeBase, int hscroll, int vscroll, int screenX,
     int             pw = s.planeWidthCells();
     int             ph = s.planeHeightCells();
 
-    int planeX = (screenX - hscroll) % (pw * 8);
+    int planeX = (screenX - s.centerOffsetX() - hscroll) % (pw * 8);
     if (planeX < 0)
         planeX += pw * 8;
 

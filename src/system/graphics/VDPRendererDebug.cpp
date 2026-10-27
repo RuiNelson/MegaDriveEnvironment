@@ -75,7 +75,7 @@ int VDPRendererDebug::planeVScroll(int scrollIndex, int screenX) const {
     // Same VSRAM selection as VDPRenderer::buildPlaneLine: one word per plane, or one per 2-cell column.
     int index = scrollIndex;
     if (state_.vscrollMode() == 1) {
-        const int columnIndex = (screenX >> 4) * 2 + scrollIndex;
+        const int columnIndex = (std::max(0, screenX - state_.centerOffsetX()) >> 4) * 2 + scrollIndex;
         if (columnIndex < VDPState::VSRAM_ENTRIES)
             index = columnIndex;
     }
@@ -149,13 +149,13 @@ Image VDPRendererDebug::renderPlaneLayer(int planeBase, int scrollIndex, bool fu
         const int  hscroll = planeHScroll(scrollIndex, line);
         const bool edgeRow = line == firstLine || line == screenHeight - 1;
         for (int x = 0; x < screenWidth; x += edgeRow ? 1 : screenWidth - 1) {
-            const int planeX = (x - hscroll) & scrollXMask;
+            const int planeX = (x - state_.centerOffsetX() - hscroll) & scrollXMask;
             const int planeY = (line + planeVScroll(scrollIndex, x)) & scrollYMask;
             setImagePixel(result, planeX, planeY, outline.b, outline.g, outline.r);
         }
     }
 
-    const int viewX = (-planeHScroll(scrollIndex, firstLine)) & scrollXMask;
+    const int viewX = (-state_.centerOffsetX() - planeHScroll(scrollIndex, firstLine)) & scrollXMask;
     const int viewY = planeVScroll(scrollIndex, 0) & scrollYMask;
 
     std::ostringstream base;
