@@ -177,6 +177,30 @@ class MegaDriveClientTests(unittest.TestCase):
             client.set_execution_data(bytearray(replacement))
             client.set_execution_data(b"")
 
+    def test_get_flags_and_flag_set(self) -> None:
+        flags = bytearray(128)
+        flags[0] = 0b0000_0101
+        flags[127] = 0b1000_0000
+
+        def get_flags(command: int, payload: bytes) -> tuple[int, bytes]:
+            self.assertEqual((command, payload), (0x07, b""))
+            return ACK, bytes(flags)
+
+        def short(command: int, payload: bytes) -> tuple[int, bytes]:
+            return ACK, b"\x00" * 127
+
+        with ClientHarness(get_flags, short) as client:
+            snapshot = client.get_flags()
+            self.assertEqual(len(snapshot), 128)
+            self.assertEqual(
+                [index for index in range(1024) if client.flag_set(snapshot, index)], [0, 2, 1023]
+            )
+            with self.assertRaises(ProtocolError):
+                client.get_flags()
+
+        with self.assertRaises(ValueError):
+            MegaDriveClient.flag_set(bytes(128), 1024)
+
     def test_trigger_option_hotkey_normalizes_ascii_letters(self) -> None:
         def trigger(command: int, payload: bytes) -> tuple[int, bytes]:
             self.assertEqual((command, payload), (0x06, b"l"))

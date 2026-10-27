@@ -54,6 +54,7 @@ enum class Command : std::uint8_t {
     SetExecutionData = 0x04,
     GetGameUptimeFrames = 0x05,
     TriggerOptionHotkey = 0x06,
+    GetFlags = 0x07,
     PressButtons = 0x10,
     ReleaseButtons = 0x11,
     SetLockstep = 0x12,
@@ -280,6 +281,30 @@ class RemoteAccess::Impl {
         return true;
     }
 
+    bool setFlag(std::size_t index, bool value) {
+        if (index >= RemoteAccess::FLAG_COUNT)
+            return false;
+        const auto mask = static_cast<std::uint8_t>(1u << (index % 8));
+        std::lock_guard lock(flagsMutex_);
+        if (value)
+            flags_[index / 8] |= mask;
+        else
+            flags_[index / 8] &= static_cast<std::uint8_t>(~mask);
+        return true;
+    }
+
+    bool flag(std::size_t index) const {
+        if (index >= RemoteAccess::FLAG_COUNT)
+            return false;
+        std::lock_guard lock(flagsMutex_);
+        return (flags_[index / 8] >> (index % 8)) & 1u;
+    }
+
+    std::array<std::uint8_t, RemoteAccess::FLAG_BYTES> flags() const {
+        std::lock_guard lock(flagsMutex_);
+        return flags_;
+    }
+
     private:
     void serverLoop() {
 #if defined(_WIN32)
@@ -429,6 +454,12 @@ class RemoteAccess::Impl {
                 Result result;
                 appendU64(result.payload, environment_->gameUptimeFrames());
                 return result;
+            }
+            case Command::GetFlags: {
+                if (!payload.empty())
+                    return Result::failure(Error::MalformedPayload, "GET_FLAGS has no payload");
+                const auto snapshot = flags();
+                return Result{.payload = std::vector<std::uint8_t>(snapshot.begin(), snapshot.end())};
             }
             case Command::TriggerOptionHotkey:
                 return triggerOptionHotkey(payload);
@@ -937,6 +968,8 @@ class RemoteAccess::Impl {
     std::atomic<SocketHandle> clientSocket_{kInvalidSocket};
     mutable std::mutex executionDataMutex_;
     std::vector<std::uint8_t> executionData_;
+    mutable std::mutex flagsMutex_;
+    std::array<std::uint8_t, RemoteAccess::FLAG_BYTES> flags_{};
 #if defined(_WIN32)
     bool winsockReady_ = false;
 #endif
@@ -953,3 +986,6 @@ void RemoteAccess::stop() { impl_->stop(); }
 std::uint16_t RemoteAccess::port() const { return impl_->port(); }
 std::vector<std::uint8_t> RemoteAccess::executionData() const { return impl_->executionData(); }
 bool RemoteAccess::setExecutionData(std::span<const std::uint8_t> data) { return impl_->setExecutionData(data); }
+bool RemoteAccess::setFlag(std::size_t index, bool value) { return impl_->setFlag(index, value); }
+bool RemoteAccess::flag(std::size_t index) const { return impl_->flag(index); }
+std::array<std::uint8_t, RemoteAccess::FLAG_BYTES> RemoteAccess::flags() const { return impl_->flags(); }

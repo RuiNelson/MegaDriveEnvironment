@@ -185,6 +185,22 @@ int main() {
     assert(request(socketFd, 0x04, 6, {}).empty());
     assert(environment.remoteAccess().executionData().empty());
 
+    assert(request(socketFd, 0x07, 20, {}) == std::vector<std::uint8_t>(128, 0));
+    assert(environment.remoteAccess().setFlag(0, true));
+    assert(environment.remoteAccess().setFlag(10, true));
+    assert(environment.remoteAccess().setFlag(1023, true));
+    assert(!environment.remoteAccess().setFlag(1024, true));
+    assert(environment.remoteAccess().flag(10) && !environment.remoteAccess().flag(9));
+    {
+        const auto flags = request(socketFd, 0x07, 21, {});
+        assert(flags.size() == 128);
+        assert(flags[0] == 0x01 && flags[1] == 0x04 && flags[127] == 0x80);
+        for (std::size_t i = 2; i < 127; ++i)
+            assert(flags[i] == 0);
+    }
+    assert(environment.remoteAccess().setFlag(10, false));
+    assert(request(socketFd, 0x07, 22, {})[1] == 0);
+
     std::vector<std::uint8_t> writePayload;
     appendU32(writePayload, 0x000100);
     writePayload.insert(writePayload.end(), {0x12, 0x34, 0x56, 0x78});

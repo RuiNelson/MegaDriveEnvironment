@@ -50,6 +50,7 @@ are 32-bit fields but must fit the Mega Drive's 24-bit address space.
 | `04` | `SET_EXECUTION_DATA` | replacement buffer | empty |
 | `05` | `GET_GAME_UPTIME_FRAMES` | empty | complete VSync frames since the last start or cold reset:u64 |
 | `06` | `TRIGGER_OPTION_HOTKEY` | printable ASCII key:u8 | empty after the game's host debug-hotkey callback runs |
+| `07` | `GET_FLAGS` | empty | 128 bytes: 1024 game-defined flags |
 | `10` | `PRESS_BUTTONS` | P1 mask:u16, P2 mask:u16, frames:u32, timeout-ms:u32 | empty after buttons are released |
 | `11` | `RELEASE_BUTTONS` | empty | empty |
 | `12` | `SET_LOCKSTEP` | enabled:u8, reserved:3, timeout-ms:u32 | empty at a complete-frame boundary |
@@ -161,6 +162,13 @@ the same buffer through `RemoteAccess::executionData()` and
 `RemoteAccess::setExecutionData()`. It persists across cold resets, server
 restarts, and client reconnects until explicitly replaced. Its maximum size is
 the protocol payload limit of 16 MiB.
+
+`GET_FLAGS` returns a consistent snapshot of 1024 game-defined boolean flags
+packed into 128 bytes. Flag *n* is bit *n* mod 8 of byte *n* / 8, counting from
+the least significant bit. Their meaning depends entirely on the running game
+(for example a host option it was started with); the game sets them through
+`RemoteAccess::setFlag()`. All flags start cleared and persist across cold
+resets and client reconnects.
 
 HSync waits observe every active display line and do not depend on the game's
 HBlank interrupt-enable bit. `WAIT_HSYNC_REACH_LINE` waits for the next

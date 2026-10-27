@@ -43,6 +43,8 @@ from .models import (
 
 ClientT = TypeVar("ClientT", bound="MegaDriveClient")
 
+FLAG_BYTES = 128
+
 
 class MegaDriveClient:
     """One connection to a running ``MegaDriveEnvironment``.
@@ -256,6 +258,26 @@ class MegaDriveClient:
         """Replace the game-defined debugging buffer; empty data clears it."""
 
         self._request(Command.SET_EXECUTION_DATA, bytes(data))
+
+    def get_flags(self) -> bytes:
+        """Return the 128 bytes of game-defined flags (1024 bits).
+
+        Flag ``n`` is bit ``n % 8`` of byte ``n // 8``, least significant bit
+        first; see :meth:`flag_set`. Their meaning depends on the running game.
+        """
+
+        response = self._request(Command.GET_FLAGS)
+        if len(response) != FLAG_BYTES:
+            raise ProtocolError(f"flags response has {len(response)} bytes; expected {FLAG_BYTES}")
+        return response
+
+    @staticmethod
+    def flag_set(flags: bytes, index: int) -> bool:
+        """Whether flag ``index`` (0-1023) is set in a :meth:`get_flags` snapshot."""
+
+        if not isinstance(index, int) or not 0 <= index < FLAG_BYTES * 8:
+            raise ValueError("flag index must be in 0..1023")
+        return bool(flags[index // 8] >> (index % 8) & 1)
 
     def trigger_option_hotkey(self, key: str) -> None:
         """Trigger a printable host debug hotkey, as if Alt/Option+``key`` was pressed.
