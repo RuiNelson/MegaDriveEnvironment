@@ -1,4 +1,5 @@
 #include "system/graphics/Framebuffer.hpp"
+#include "system/graphics/VDP.hpp"
 #include "system/graphics/VDPRenderer.hpp"
 #include "system/graphics/VDPState.hpp"
 #include "system/graphics/VDPTile.hpp"
@@ -423,9 +424,28 @@ void testWidescreenSprites() {
     assert(isPixel(framebuffer, 383, row, 0, 0, 7));
 }
 
+void testPresentationRect() {
+    // 320x224 in 1920x1080: 4x (1280x896), centred, instead of filling the height.
+    SDL_FRect whole = VDP::presentationRect(1920, 1080, 320, 224, true);
+    assert(whole.w == 1280.0f && whole.h == 896.0f);
+    assert(whole.x == 320.0f && whole.y == 92.0f);
+
+    SDL_FRect fit = VDP::presentationRect(1920, 1080, 320, 224, false);
+    assert(fit.h == 1080.0f);
+
+    // Mode 48 (384x216) in 1920x1080 is an exact 5x either way.
+    SDL_FRect wide = VDP::presentationRect(1920, 1080, 384, 216, true);
+    assert(wide.x == 0.0f && wide.y == 0.0f && wide.w == 1920.0f && wide.h == 1080.0f);
+
+    // Smaller than 1x: still fitted.
+    SDL_FRect small = VDP::presentationRect(160, 112, 320, 224, true);
+    assert(small.w == 160.0f && small.h == 112.0f);
+}
+
 } // namespace
 
 int main() {
+    testPresentationRect();
     testPlanesAndWindowAgainstReference();
     testSpriteLineAgainstReference();
     testModeDimensions();

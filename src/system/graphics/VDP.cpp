@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <png.h>
@@ -103,6 +104,18 @@ void VDP::setWidescreen(bool enabled) {
 
 bool VDP::widescreen() const {
     return state_.widescreen_;
+}
+
+void VDP::setIntegerScaling(bool enabled) {
+    integerScaling_.store(enabled, std::memory_order_relaxed);
+    if (texture_) {
+        SDL_SetTextureScaleMode(texture_,
+                                (scalingMode_ == Fit && !enabled) ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+    }
+}
+
+bool VDP::integerScaling() const {
+    return integerScaling_.load(std::memory_order_relaxed);
 }
 
 VDP::~VDP() {
@@ -670,21 +683,30 @@ void VDP::renderTexture(int framebufferW, int framebufferH, m_byte bgR, m_byte b
     if (!SDL_GetRenderOutputSize(sdlRenderer_, &outputW, &outputH) || outputW <= 0 || outputH <= 0)
         return;
 
-    const float scale = std::min(static_cast<float>(outputW) / static_cast<float>(framebufferW),
-                                 static_cast<float>(outputH) / static_cast<float>(framebufferH));
-    const float viewportW = static_cast<float>(framebufferW) * scale;
-    const float viewportH = static_cast<float>(framebufferH) * scale;
-
     SDL_FRect src{0.0f,
                   0.0f,
                   static_cast<float>(framebufferW),
                   static_cast<float>(framebufferH)};
-    SDL_FRect dst{(static_cast<float>(outputW) - viewportW) * 0.5f,
-                  (static_cast<float>(outputH) - viewportH) * 0.5f,
-                  viewportW,
-                  viewportH};
+    SDL_FRect dst = presentationRect(outputW, outputH, framebufferW, framebufferH, integerScaling());
     SDL_RenderTexture(sdlRenderer_, texture_, &src, &dst);
     SDL_RenderPresent(sdlRenderer_);
+}
+
+SDL_FRect VDP::presentationRect(int outputW, int outputH, int framebufferW, int framebufferH, bool integerScaling) {
+    float scale = std::min(static_cast<float>(outputW) / static_cast<float>(framebufferW),
+                           static_cast<float>(outputH) / static_cast<float>(framebufferH));
+    if (integerScaling) {
+        const int whole = std::min(outputW / framebufferW, outputH / framebufferH);
+        if (whole >= 1)
+            scale = static_cast<float>(whole);
+    }
+    const float viewportW = static_cast<float>(framebufferW) * scale;
+    const float viewportH = static_cast<float>(framebufferH) * scale;
+    // Whole-pixel origin so integer-scaled pixels map onto output pixels exactly.
+    return SDL_FRect{std::floor((static_cast<float>(outputW) - viewportW) * 0.5f),
+                     std::floor((static_cast<float>(outputH) - viewportH) * 0.5f),
+                     viewportW,
+                     viewportH};
 }
 
 void VDP::updateWindowTitle() {

@@ -190,6 +190,10 @@ class MegaDriveEnvironment {
     void setWidescreen(bool enabled) {
         vdp_.setWidescreen(enabled);
     }
+    /// Presents the picture at whole-number scale factors only (see VDP::setIntegerScaling).
+    void setIntegerScaling(bool enabled) {
+        vdp_.setIntegerScaling(enabled);
+    }
     /// Sets the host-only VDP turbo multiplier. Zero disables turbo and uses
     /// the selected region's normal 50/60 Hz rate; N > 0 forces 60 * N Hz.
     void setVDPTurboMultiplier(std::uint32_t multiplier) {

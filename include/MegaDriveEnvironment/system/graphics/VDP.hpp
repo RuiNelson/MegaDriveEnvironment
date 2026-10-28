@@ -103,6 +103,19 @@ class VDP {
     void setWidescreen(bool enabled);
     bool widescreen() const;
 
+    // ── Presentation ─────────────────────────────────────────────────────────
+
+    /// Integer scaling: the picture is drawn at the largest whole multiple of its size that fits the window
+    /// (320×224 in a 1920×1080 output is drawn 4× at 1280×896, centred, with borders), with nearest-neighbour
+    /// sampling. Off (the default), it fills the window keeping the aspect ratio. An output smaller than the
+    /// picture is still fitted. Takes effect on the next presented frame.
+    void setIntegerScaling(bool enabled);
+    bool integerScaling() const;
+
+    /// Destination of a W×H picture in an outputW×outputH render output, centred; whole multiples only
+    /// when @p integerScaling is set and the picture fits at 1×.
+    static SDL_FRect presentationRect(int outputW, int outputH, int framebufferW, int framebufferH, bool integerScaling);
+
     // ── Threading ────────────────────────────────────────────────────────────
 
     /// Spawns the render thread. Safe to call once; no-op if already running.
@@ -300,6 +313,8 @@ class VDP {
     Synchronization syncMode_;
     /// Selected scaling mode.
     Scaling scalingMode_;
+    /// Presentation uses whole-number scale factors (see setIntegerScaling()).
+    std::atomic<bool> integerScaling_{false};
 
     /// Owning environment; provides system memory for DMA (via VDPPort).
     MegaDriveEnvironment *env_ = nullptr;
