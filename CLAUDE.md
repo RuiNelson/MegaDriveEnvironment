@@ -141,9 +141,20 @@ consumer after this repository's tests pass.
 - Add or update a focused regression test for observable behavior changes.
 - A test that runs the VDP thread must keep the main thread pumping SDL
   events (`SDL_PumpEvents`) while it waits on frames, and set the `dummy`
-  video driver: the VDP presents each frame through `SDL_RunOnMainThread`,
-  so on a host with a display it otherwise stalls on the first frame
+  video driver: the VDP presents through `SDL_RunOnMainThread`, so on a host
+  with a display it otherwise stalls on the first frame
   (`tests/remote_access_protocol_test.cpp`'s `whilePumpingEvents`).
+- Presentation must never pace `InternalTimer` mode. There the renderer's
+  vsync is off and, after the first frame, the VDP copies each finished
+  frame and queues it on the main thread without waiting, dropping frames
+  while one is still queued (`VDP::queueAsyncPresent`). Waiting on
+  `SDL_RenderPresent` capped every `--turbo` at the monitor's refresh (Metal
+  syncs to the display by default: `--turbo 4` ran at 120 fps on a 120 Hz
+  Mac). The first frame stays synchronous on purpose: it holds the render
+  thread until `boot()` pumps events, after the CPU thread exists, so no
+  VSync runs ahead of `run()` (`cooperative_hsync_test` depends on it). The
+  `VSync*` modes still present synchronously, since the display is their
+  clock.
 - Do not weaken warnings or tests globally to accommodate one implementation.
 - Do not commit build output, fetched dependencies, caches, generated images,
   local control files, or transient captures.

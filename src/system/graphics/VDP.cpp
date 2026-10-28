@@ -5,6 +5,7 @@
 
 #include "VDP.hpp"
 #include "system/MegaDriveEnvironment.hpp"
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdio>
@@ -34,9 +35,10 @@ VDP::VDP(MegaDriveEnvironment *env, Synchronization synchronization, Scaling sca
     if (window_) {
         sdlRenderer_ = SDL_CreateRenderer(window_, nullptr);
         if (sdlRenderer_) {
-            if (syncMode_ != InternalTimer) {
-                SDL_SetRenderVSync(sdlRenderer_, 1);
-            }
+            // InternalTimer paces frames itself: leave presentation unsynced,
+            // or the Metal layer's default display sync caps turbo at the
+            // monitor's refresh rate.
+            SDL_SetRenderVSync(sdlRenderer_, syncMode_ != InternalTimer ? 1 : 0);
             texture_ = SDL_CreateTexture(sdlRenderer_,
                                          SDL_PIXELFORMAT_BGR24,
                                          SDL_TEXTUREACCESS_STREAMING,
@@ -138,6 +140,12 @@ void VDP::stop() {
         }
         SDL_WaitThread(thread_, nullptr);
         thread_ = nullptr;
+        // An asynchronous present still queued on the main thread refers to
+        // this VDP; let it run (bounded, in case this is not the main thread).
+        for (int i = 0; i < 1000 && presentPending_.load(std::memory_order_acquire); ++i) {
+            SDL_PollEvent(&e);
+            SDL_Delay(1);
+        }
     }
 }
 
@@ -588,6 +596,40 @@ void VDP::sdlRepeatCallback(void *userdata) {
     }
 }
 
+/// Copies the finished frame for the main thread and queues its presentation without waiting. Drops the frame if
+/// the previous one is still queued, so the render thread runs at the internal timer's rate whatever the display does.
+void VDP::queueAsyncPresent() {
+    if (presentPending_.load(std::memory_order_acquire))
+        return;
+    SDL_LockMutex(mutex_);
+    presentWidth_  = state_.activeWidth();
+    presentHeight_ = state_.activeOutputHeight();
+    std::memcpy(presentFramebuffer_.getRawPointer(),
+                framebuffer_.getRawPointer(),
+                static_cast<size_t>(std::clamp(presentHeight_, 0, Framebuffer::HEIGHT)) * Framebuffer::PITCH);
+    tile_.cramToRGB_FullRange(static_cast<m_byte>(state_.bgColorPalette()),
+                              static_cast<m_byte>(state_.bgColorIndex()),
+                              presentBg_[0],
+                              presentBg_[1],
+                              presentBg_[2]);
+    SDL_UnlockMutex(mutex_);
+    presentPending_.store(true, std::memory_order_release);
+    if (!SDL_RunOnMainThread(sdlAsyncPresentCallback, this, /*wait=*/false))
+        presentPending_.store(false, std::memory_order_release);
+}
+
+/// SDL main-thread callback to present the frame copied by queueAsyncPresent().
+void VDP::sdlAsyncPresentCallback(void *userdata) {
+    auto *self = static_cast<VDP *>(userdata);
+    if (self->texture_) {
+        self->updateWindowTitle();
+        self->presentFramebuffer_.uploadToTexture(self->texture_, self->presentWidth_, self->presentHeight_);
+        self->renderTexture(
+            self->presentWidth_, self->presentHeight_, self->presentBg_[0], self->presentBg_[1], self->presentBg_[2]);
+    }
+    self->presentPending_.store(false, std::memory_order_release);
+}
+
 /// Uploads framebuffer to the long-lived texture and presents to window (must be called on SDL main thread).
 void VDP::presentToScreen() {
     if (!texture_)
@@ -613,7 +655,13 @@ void VDP::presentToScreen() {
                                   bgB);
         SDL_UnlockMutex(mutex_);
     }
+    renderTexture(framebufferW, framebufferH, bgR, bgG, bgB);
+}
 
+/// Clears to the background colour and draws the uploaded W×H texture area, centred and scaled to fit (main thread).
+void VDP::renderTexture(int framebufferW, int framebufferH, m_byte bgR, m_byte bgG, m_byte bgB) {
+    if (framebufferW <= 0 || framebufferH <= 0)
+        return;
     SDL_SetRenderDrawColor(sdlRenderer_, bgR, bgG, bgB, SDL_ALPHA_OPAQUE);
     SDL_RenderClear(sdlRenderer_);
 
@@ -665,6 +713,10 @@ int VDP::renderLoop() {
     size_t frameTimeIndex = 0;
     size_t framesSinceTitleUpdate = 0;
     uint64_t nextFrameDeadline = SDL_GetTicksNS();
+    // The first frame is always presented synchronously: it holds the render
+    // thread until boot() pumps events, which it does only once the CPU thread
+    // exists, so no frame (and no VSync count) runs ahead of run().
+    bool firstFrame = true;
 
     while (running_) {
         if (!remoteLockstepRenderCheckpoint())
@@ -742,7 +794,9 @@ int VDP::renderLoop() {
             }
         }
 
-        if (sdlRenderer_) {
+        if (sdlRenderer_ && syncMode_ == InternalTimer && !firstFrame) {
+            queueAsyncPresent();
+        } else if (sdlRenderer_) {
             SDL_RunOnMainThread(sdlPresentCallback, this, /*wait=*/true);
 
             // VSync2 / VSync3: hold the same frame for (N-1) extra monitor refreshes
@@ -756,6 +810,8 @@ int VDP::renderLoop() {
                 SDL_RunOnMainThread(sdlRepeatCallback, this, /*wait=*/true);
             }
         }
+
+        firstFrame = false;
 
         SDL_LockMutex(mutex_);
         state_.status_ &= ~0x0008;

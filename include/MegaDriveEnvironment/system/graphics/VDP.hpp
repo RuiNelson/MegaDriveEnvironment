@@ -241,6 +241,18 @@ class VDP {
     /// Output framebuffer (up to 384×480, 3 bits per channel).
     Framebuffer framebuffer_;
 
+    /// InternalTimer mode presents without blocking the render thread: a
+    /// finished frame is copied here and handed to the SDL main thread, and
+    /// frames finished while that copy is still being presented are dropped,
+    /// so the emulated frame rate never waits on the display (turbo).
+    Framebuffer presentFramebuffer_;
+    int presentWidth_ = 0;
+    int presentHeight_ = 0;
+    m_byte presentBg_[3] = {};
+    /// Set by the render thread when it fills presentFramebuffer_, cleared by
+    /// the main thread once that frame is on screen.
+    std::atomic<bool> presentPending_{false};
+
     /// SDL window handle for display.
     SDL_Window *window_ = nullptr;
     /// SDL renderer for texture presentation.
@@ -331,6 +343,16 @@ class VDP {
 
     /// Converts framebuffer to SDL texture and renders to window.
     void presentToScreen();
+
+    /// Copies the finished frame and queues it on the SDL main thread without
+    /// waiting, unless the previous copy is still pending (InternalTimer).
+    void queueAsyncPresent();
+
+    /// SDL main-thread callback that presents presentFramebuffer_.
+    static void sdlAsyncPresentCallback(void *userdata);
+
+    /// Draws the uploaded texture (W×H active area) over the background colour.
+    void renderTexture(int framebufferW, int framebufferH, m_byte bgR, m_byte bgG, m_byte bgB);
 
     /// Updates the SDL window title with the rolling average frame time.
     void updateWindowTitle();
