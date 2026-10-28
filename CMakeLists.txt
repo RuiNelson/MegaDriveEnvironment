@@ -29,10 +29,12 @@ option(MEGADRIVE_ENVIRONMENT_SHARED_DEPS
 # also needed for shared deps. Harmless for a pure static build.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-find_package(SDL3 REQUIRED)
 find_package(Threads REQUIRED)
 
 include(FetchContent)
+
+# Use an installed SDL3 when there is one (package manager, CMAKE_PREFIX_PATH).
+find_package(SDL3 QUIET)
 
 FetchContent_Declare(
     yaml-cpp
@@ -92,6 +94,31 @@ set(ZLIB_LIBRARY ${MEGADRIVE_ENVIRONMENT_ZLIB_TARGET} CACHE FILEPATH "" FORCE)
 set(ZLIB_LIBRARIES ${MEGADRIVE_ENVIRONMENT_ZLIB_TARGET})
 
 FetchContent_MakeAvailable(libpng)
+
+# Without an installed SDL3, download and build it so no manual install is
+# needed.
+if(NOT TARGET SDL3::SDL3)
+    message(STATUS "SDL3 not found; fetching it with FetchContent")
+    # SDL3_mixer links SDL3::SDL3 or SDL3::SDL3-shared following the
+    # shared/static choice of the other deps.
+    if(MEGADRIVE_ENVIRONMENT_SHARED_DEPS)
+        set(SDL_SHARED ON CACHE BOOL "" FORCE)
+        set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+    else()
+        set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+        set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    endif()
+    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+    set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        SDL3
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+        GIT_TAG        release-3.4.8
+    )
+    FetchContent_MakeAvailable(SDL3)
+endif()
 
 file(GLOB_RECURSE MEGADRIVE_ENVIRONMENT_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"

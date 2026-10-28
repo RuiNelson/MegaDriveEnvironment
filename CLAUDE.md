@@ -69,7 +69,7 @@ Requirements:
 
 - CMake 3.24 or newer;
 - a C++23 compiler;
-- SDL3 available through `find_package(SDL3 REQUIRED)`;
+- SDL3, via `find_package(SDL3)` or, when absent, a `FetchContent` of `release-3.4.8`;
 - threads from the host toolchain;
 - Git/network access on the first configuration.
 
