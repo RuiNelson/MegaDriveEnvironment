@@ -13,9 +13,16 @@ set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
 # Shared by default: consumers only re-link when their own objects change.
 # Implementation-only edits rebuild the dylib in place. Set OFF for a static .a.
+# MinGW defaults to static: the executable then carries the only copy of the C++
+# runtime, so it needs no toolchain DLLs next to it.
+if(MINGW)
+    set(MEGADRIVE_ENVIRONMENT_SHARED_DEFAULT OFF)
+else()
+    set(MEGADRIVE_ENVIRONMENT_SHARED_DEFAULT ON)
+endif()
 option(MEGADRIVE_ENVIRONMENT_BUILD_SHARED
     "Build MegaDriveEnvironment as a shared library"
-    ON
+    ${MEGADRIVE_ENVIRONMENT_SHARED_DEFAULT}
 )
 
 # Consumers (e.g. StreetsOfRageRecompilation) can request shared FetchContent
@@ -137,6 +144,12 @@ else()
     add_library(MegaDriveEnvironment STATIC ${MEGADRIVE_ENVIRONMENT_SOURCES})
 endif()
 add_library(MegaDriveEnvironment::MegaDriveEnvironment ALIAS MegaDriveEnvironment)
+
+if(MINGW)
+    # llvm-mingw's libc++ and libunwind are DLLs by default; link them into each
+    # executable instead of shipping them.
+    target_link_options(MegaDriveEnvironment PUBLIC -static-libgcc -static-libstdc++)
+endif()
 
 if(MEGADRIVE_ENVIRONMENT_SHARED_DEPS)
     # Runtime lookup for shared FetchContent deps (yaml-cpp, libpng, zlib).

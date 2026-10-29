@@ -85,7 +85,9 @@ Important options:
 | `BUILD_TESTING` | CTest default | Build tests when this is the top-level project |
 
 The default shared library lets consumers rebuild implementation-only changes
-without relinking their executable. Preserve position-independent code and
+without relinking their executable. Under MinGW (the Windows toolchain, llvm-mingw)
+the default is static and `-static-libgcc -static-libstdc++` propagate to
+consumers, so the executable carries the only C++ runtime. Preserve position-independent code and
 Windows symbol export behavior. SDL3 is a public dependency because SDL types
 appear in public headers; implementation dependencies should remain private
 when the shared build permits it.
