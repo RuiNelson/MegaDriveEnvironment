@@ -130,6 +130,8 @@ void Controllers::setConfiguration(const ControlsConfigStore &configuration) {
         state1_.connected  = computeConnectedLocked(player1Slot_);
         state2_            = PlayerControlsState{};
         state2_.connected  = computeConnectedLocked(player2Slot_);
+        if (!physicalInputEnabled_)
+            releasePhysicalInputLocked();
         newState1 = state1_;
         newState2 = state2_;
 
@@ -170,6 +172,10 @@ void Controllers::setPlayerConfiguration(int player, const PlayerConfiguration &
             currentConfiguration_.player2 = configuration;
             state2_ = applyPlayerConfigurationLocked(player2Slot_, currentConfiguration_.player2, player1Slot_);
             newState = state2_;
+        }
+        if (!physicalInputEnabled_) {
+            releasePhysicalInputLocked();
+            newState = player == 1 ? state1_ : state2_;
         }
         SDL_UnlockMutex(stateMutex_);
     }
@@ -332,6 +338,42 @@ void Controllers::reset() {
     player1Slot_.lastSixButtonPulseTicks = 0;
     player2Slot_.lastSixButtonPulseTicks = 0;
     SDL_UnlockMutex(stateMutex_);
+}
+
+void Controllers::setPhysicalInputEnabled(bool enabled) {
+    SDL_LockMutex(stateMutex_);
+    if (enabled != physicalInputEnabled_) {
+        physicalInputEnabled_ = enabled;
+        if (enabled) {
+            resolveGamepadsLocked(player1Slot_, player2Slot_);
+            resolveGamepadsLocked(player2Slot_, player1Slot_);
+            state1_.connected = computeConnectedLocked(player1Slot_);
+            state2_.connected = computeConnectedLocked(player2Slot_);
+        } else {
+            releasePhysicalInputLocked();
+        }
+    }
+    SDL_UnlockMutex(stateMutex_);
+}
+
+bool Controllers::physicalInputEnabled() const {
+    SDL_LockMutex(stateMutex_);
+    const bool enabled = physicalInputEnabled_;
+    SDL_UnlockMutex(stateMutex_);
+    return enabled;
+}
+
+void Controllers::releasePhysicalInputLocked() {
+    for (PlayerSlot *slot : {&player1Slot_, &player2Slot_}) {
+        closeGamepad(*slot);
+        slot->keyboardHeld = {};
+        slot->gamepadHeld  = {};
+        slot->axisX        = 0;
+        slot->axisY        = 0;
+        slot->dpadUp = slot->dpadDown = slot->dpadLeft = slot->dpadRight = false;
+    }
+    state1_ = {};
+    state2_ = {};
 }
 
 void Controllers::setDelegate(ControllersDelegate *delegate) {
@@ -601,6 +643,10 @@ void Controllers::handleEvent(const SDL_Event &event) {
 
     {
         SDL_LockMutex(stateMutex_);
+        if (!physicalInputEnabled_) {
+            SDL_UnlockMutex(stateMutex_);
+            return;
+        }
         oldState1 = state1_;
         oldState2 = state2_;
         newState1 = state1_;

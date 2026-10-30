@@ -59,6 +59,12 @@ Controller input defaults to a 6-button Mega Drive pad. Player 1's built-in
 keyboard defaults map X/Y/Z/Mode to A/S/D/F respectively, in addition to the
 existing D-pad, A/B/C, and Start bindings.
 
+A host that reads SDL input itself calls
+`Controllers::setPhysicalInputEnabled(false)`: the gamepads are closed, SDL
+key/gamepad events are ignored (also after `setConfiguration()`), and only the
+remote overlay (hold, queued presses, step input) reaches the ports.
+Streets of Rage does this; the sample game keeps the built-in mapping.
+
 Maintain the distinction between host facilities and console-visible hardware.
 Do not leak SDL, filesystem, sockets, or remote-control behavior into portable
 game logic unless the public API explicitly represents a host-only feature.

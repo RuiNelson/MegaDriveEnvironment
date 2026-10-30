@@ -360,6 +360,57 @@ void testAutomaticGamepadAssignmentGivesEachPlayerADifferentDevice() {
     second.press(SDL_GAMEPAD_BUTTON_SOUTH, false);
 }
 
+void testPhysicalInputCanBeTurnedOff() {
+    VirtualGamepad pad("Test Pad");
+
+    PlayerConfiguration player = keyboardPlayer("A@Z");
+    player.gamepadEnabled      = true;
+    player.gamepadBindings     = {"B@a"};
+
+    ControlsConfigStore configuration;
+    configuration.player1 = player;
+    configuration.player2 = {};
+
+    Controllers controllers(nullptr, configuration);
+    pushKey(SDLK_Z, SDL_SCANCODE_Z, true);
+    assert(controllers.getCurrentState().player1.a);
+
+    // Off: held input is released, the gamepad is closed and events are ignored.
+    controllers.setPhysicalInputEnabled(false);
+    assert(!controllers.physicalInputEnabled());
+    assert(!controllers.getCurrentState().player1.a);
+    assert(SDL_GetGamepadFromID(pad.id()) == nullptr);
+    pushKey(SDLK_Z, SDL_SCANCODE_Z, false);
+    pushKey(SDLK_Z, SDL_SCANCODE_Z, true);
+    pad.press(SDL_GAMEPAD_BUTTON_SOUTH, true);
+    assert(!controllers.getCurrentState().player1.a);
+    assert(!controllers.getCurrentState().player1.b);
+    pad.press(SDL_GAMEPAD_BUTTON_SOUTH, false);
+
+    // A runtime reconfiguration does not bring it back.
+    controllers.setConfiguration(configuration);
+    assert(SDL_GetGamepadFromID(pad.id()) == nullptr);
+    pushKey(SDLK_Z, SDL_SCANCODE_Z, false);
+    pushKey(SDLK_Z, SDL_SCANCODE_Z, true);
+    assert(!controllers.getCurrentState().player1.a);
+
+    // Remote input still reaches the game.
+    PlayersControlState remote{};
+    remote.player1.connected = true;
+    remote.player1.c         = true;
+    controllers.setRemoteState(remote);
+    assert(controllers.getCurrentState().player1.c);
+    controllers.clearRemoteState();
+
+    // On again: the gamepad is reopened and events count.
+    controllers.setPhysicalInputEnabled(true);
+    assert(SDL_GetGamepadFromID(pad.id()) != nullptr);
+    pad.press(SDL_GAMEPAD_BUTTON_SOUTH, true);
+    assert(controllers.getCurrentState().player1.b);
+    pad.press(SDL_GAMEPAD_BUTTON_SOUTH, false);
+    pushKey(SDLK_Z, SDL_SCANCODE_Z, false);
+}
+
 } // namespace
 
 int main() {
@@ -375,4 +426,5 @@ int main() {
     testGamepadDisconnectPreservesKeyboardInput();
     testAutomaticGamepadAssignmentPrefersPlayerOne();
     testAutomaticGamepadAssignmentGivesEachPlayerADifferentDevice();
+    testPhysicalInputCanBeTurnedOff();
 }

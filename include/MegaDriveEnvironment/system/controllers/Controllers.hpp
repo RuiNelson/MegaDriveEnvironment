@@ -261,6 +261,18 @@ class Controllers {
     ///                  Ownership is **not** transferred.
     void setDelegate(ControllersDelegate *delegate);
 
+    /// @brief Turns keyboard/gamepad reading on or off (on by default).
+    ///
+    /// A host that reads SDL input itself turns it off: both gamepads are
+    /// closed, SDL key and gamepad events are ignored, and the physical state
+    /// of both players is released (and stays released across
+    /// setConfiguration()). Remote input and the port emulation keep working.
+    /// Turning it back on re-resolves the configured gamepads.
+    void setPhysicalInputEnabled(bool enabled);
+
+    /// @brief True unless setPhysicalInputEnabled(false) was called.
+    bool physicalInputEnabled() const;
+
     // ── Mega Drive port emulation ─────────────────────────────────────────
 
     /// @brief Writes to Player 1's control (pin-direction) port — `$A10009`.
@@ -400,6 +412,9 @@ class Controllers {
                                                                const PlayerConfiguration &configuration,
                                                                const PlayerSlot          &other);
 
+    /// @brief Closes both gamepads and releases all physical input (state mutex held).
+    void releasePhysicalInputLocked();
+
     /// @brief Starts timing @p input as a capture candidate when capture is pending.
     void beginCapturedInputHoldLocked(CapturedInput input);
 
@@ -526,6 +541,7 @@ class Controllers {
     /// Frame count of the last boundary advanceRemotePresses() handled; it
     /// can run ahead of gameUptimeFrames() by one until the VDP records it.
     std::uint64_t       remotePressFrame_ = 0;
+    bool                physicalInputEnabled_ = true; ///< setPhysicalInputEnabled()
     bool                         capturePending_ = false;
     std::optional<CapturedInput> capturedInput_;
     std::optional<CapturedInput> heldCaptureInput_;
