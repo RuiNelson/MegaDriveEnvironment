@@ -159,13 +159,15 @@ consumer after this repository's tests pass.
   video driver: the VDP presents through `SDL_RunOnMainThread`, so on a host
   with a display it otherwise stalls on the first frame
   (`tests/remote_access_protocol_test.cpp`'s `whilePumpingEvents`).
-- Presentation must never pace `InternalTimer` mode. There the renderer's
-  vsync is off and, after the first frame, the VDP copies each finished
-  frame and queues it on the main thread without waiting, dropping frames
-  while one is still queued (`VDP::queueAsyncPresent`). Waiting on
-  `SDL_RenderPresent` capped every `--turbo` at the monitor's refresh (Metal
-  syncs to the display by default: `--turbo 4` ran at 120 fps on a 120 Hz
-  Mac). The first frame stays synchronous on purpose: it holds the render
+- Presentation must never pace `InternalTimer` mode, the automatic default
+  (user: no per-monitor setup, no tearing, VRR followed). The renderer's vsync
+  is on in every mode, so nothing tears, but the timer stays the clock: after
+  the first frame, the VDP copies each finished frame and queues it on the main
+  thread without waiting, dropping frames while one is still queued
+  (`VDP::queueAsyncPresent`), so only the main thread waits on the display.
+  Waiting on `SDL_RenderPresent` from the render thread capped every `--turbo`
+  at the monitor's refresh (`--turbo 4` ran at 120 fps on a 120 Hz Mac).
+  The first frame stays synchronous on purpose: it holds the render
   thread until `boot()` pumps events, after the CPU thread exists, so no
   VSync runs ahead of `run()` (`cooperative_hsync_test` depends on it). The
   `VSync*` modes still present synchronously, since the display is their

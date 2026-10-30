@@ -36,10 +36,12 @@ VDP::VDP(MegaDriveEnvironment *env, Synchronization synchronization, Scaling sca
     if (window_) {
         sdlRenderer_ = SDL_CreateRenderer(window_, nullptr);
         if (sdlRenderer_) {
-            // InternalTimer paces frames itself: leave presentation unsynced,
-            // or the Metal layer's default display sync caps turbo at the
-            // monitor's refresh rate.
-            SDL_SetRenderVSync(sdlRenderer_, syncMode_ != InternalTimer ? 1 : 0);
+            // Every mode presents in sync with the display, so nothing tears.
+            // InternalTimer still paces itself: it queues presents without
+            // waiting and drops frames while one is pending, so this neither
+            // caps turbo nor ties the game's speed to the monitor, and a VRR
+            // monitor follows the timer's rate.
+            SDL_SetRenderVSync(sdlRenderer_, 1);
             texture_ = SDL_CreateTexture(sdlRenderer_,
                                          SDL_PIXELFORMAT_BGR24,
                                          SDL_TEXTUREACCESS_STREAMING,

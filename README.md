@@ -450,7 +450,7 @@ for environment-specific tools and diagnostics.
 
 | Mode | Use |
 | --- | --- |
-| `VDP::InternalTimer` | Recommended for games. Runs from the selected region's internal 60 Hz or 50 Hz deadline and is independent of monitor refresh rate. |
+| `VDP::InternalTimer` | Recommended for games. Runs from the selected region's internal 60 Hz or 50 Hz deadline, so game speed is independent of the monitor. Frames are presented with display sync but never wait for it: on a fixed-refresh monitor a frame is occasionally repeated or dropped, and a VRR monitor can follow the timer's rate. |
 | `VDP::VSync` | Presents one emulated frame per monitor refresh. Useful when that refresh rate is already appropriate. |
 | `VDP::VSync2` | Holds each frame for two monitor refreshes. |
 | `VDP::VSync3` | Holds each frame for three monitor refreshes. |

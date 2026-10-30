@@ -57,7 +57,7 @@ class VDP {
     public:
     /// Render synchronization mode for framerate control.
     enum Synchronization : int {
-        InternalTimer = 0, ///< Use the environment's internal timer (regional rate or host turbo override)
+        InternalTimer = 0, ///< Pace by the environment's internal timer (regional rate or host turbo override); presents with display sync, without waiting for it
         VSync         = 1, ///< Sync to monitor refresh rate (1:1)
         VSync2        = 2, ///< Hold frame for 2 monitor refreshes (half speed)
         VSync3        = 3, ///< Hold frame for 3 monitor refreshes (third speed)
