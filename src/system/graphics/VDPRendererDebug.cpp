@@ -570,33 +570,134 @@ Image VDPRendererDebug::makeForegroundLayerImage(bool fullRange) const {
     return renderPlaneLayer(state_.planeABase(), 0, fullRange);
 }
 
-Image VDPRendererDebug::makeVramTilesImage(bool /*fullRange*/) const {
-    static const Color palette[16] = {
-        {0, 0, 0, 255},       {17, 17, 17, 255},    {34, 34, 34, 255},    {51, 51, 51, 255},
-        {68, 68, 68, 255},    {85, 85, 85, 255},    {102, 102, 102, 255}, {119, 119, 119, 255},
-        {136, 136, 136, 255}, {153, 153, 153, 255}, {170, 170, 170, 255}, {187, 187, 187, 255},
-        {204, 204, 204, 255}, {221, 221, 221, 255}, {238, 238, 238, 255}, {255, 255, 255, 255},
+Image VDPRendererDebug::makeVramTilesImage(bool fullRange) const {
+    constexpr int tileBytes = 32;
+    constexpr int tileCount = VDPState::VRAM_SIZE / tileBytes; // 2048 tiles
+    constexpr int tileSize  = 8;
+
+    // A tile in VRAM carries no palette of its own: the plane name-table entry,
+    // window cell or sprite entry that uses it selects one of the four CRAM
+    // palettes. Count how often each palette is used with each tile and draw the
+    // tile with its most used palette; tiles nothing references fall back to
+    // palette 0. This is the only faithful way to colour a raw tile sheet: the
+    // same tile can be shown through different palettes in different places
+    // (most often palette 0 for a reused piece of art, but not always).
+    std::array<std::array<uint32_t, 4>, tileCount> paletteVotes{};
+
+    auto vote = [&paletteVotes](int tileIndex, int palette) {
+        if (tileIndex < 0 || tileIndex >= tileCount)
+            return;
+        paletteVotes[static_cast<size_t>(tileIndex)][static_cast<size_t>(palette & 0x03)]++;
     };
+
+    const bool interlace2 = state_.interlaceMode() == 2;
+    auto       voteEntry  = [&](m_word entry) {
+        const int palette = (entry >> 13) & 0x03;
+        if (interlace2) {
+            // Interlace 2 turns one entry into a 16-pixel-tall tile: the two 8×8
+            // halves at even/odd addresses, both with the entry's palette.
+            const int base = (entry & 0x03FF) << 1;
+            vote(base, palette);
+            vote(base + 1, palette);
+        } else {
+            vote(entry & 0x07FF, palette);
+        }
+    };
+
+    auto voteNameTable = [&](int base, int widthCells, int heightCells) {
+        for (int cell = 0; cell < widthCells * heightCells; ++cell) {
+            const int    address = (base + cell * 2) & 0xFFFF;
+            const m_word entry   = static_cast<m_word>((state_.vram_[address] << 8) | state_.vram_[(address + 1) & 0xFFFF]);
+            voteEntry(entry);
+        }
+    };
+
+    voteNameTable(state_.planeABase(), state_.planeWidthCells(), state_.planeHeightCells());
+    voteNameTable(state_.planeBBase(), state_.planeWidthCells(), state_.planeHeightCells());
+
+    // The window uses the name-table format too but is always 64 cells wide in
+    // H40 (32 in H32) and 32 cells tall; skip it when it covers no screen area.
+    if (state_.windowHPos() > 0 || state_.windowVPos() > 0)
+        voteNameTable(state_.windowBase(), state_.h40Mode() ? 64 : 32, 32);
+
+    // Linked SAT sprites: each entry's tile word names the palette for every
+    // tile of the sprite, laid out down each column first (as the renderer does).
+    {
+        std::array<bool, VDPState::SAT_MAX_SPRITES> visited{};
+        int                                         spriteIndex = 0;
+        for (int sprite = 0; sprite < VDPState::SAT_MAX_SPRITES; ++sprite) {
+            if (spriteIndex >= VDPState::SAT_MAX_SPRITES || visited[static_cast<size_t>(spriteIndex)])
+                break;
+            visited[static_cast<size_t>(spriteIndex)] = true;
+
+            const int satAddress = state_.satBase() + spriteIndex * 8;
+            const int shadow     = spriteIndex * 8;
+            if (satAddress + 7 >= VDPState::VRAM_SIZE)
+                break;
+
+            const m_word tileWord = static_cast<m_word>((state_.vram_[satAddress + 4] << 8) |
+                                                        state_.vram_[satAddress + 5]);
+            const int    palette  = (tileWord >> 13) & 0x03;
+            const int    baseTile = tileWord & 0x07FF;
+            const int    sizeCode = state_.sat_[shadow + 2];
+            const int    sizeW    = ((sizeCode >> 2) & 0x03) + 1;
+            const int    sizeH    = (sizeCode & 0x03) + 1;
+
+            for (int col = 0; col < sizeW; ++col) {
+                for (int row = 0; row < sizeH; ++row) {
+                    int tile = baseTile + col * sizeH + row;
+                    if (interlace2)
+                        tile = (tile & 0x03FF) << 1;
+                    vote(tile, palette);
+                    if (interlace2)
+                        vote(tile + 1, palette);
+                }
+            }
+
+            const int link = state_.sat_[shadow + 3] & 0x7F;
+            if (link == 0 || link >= VDPState::SAT_MAX_SPRITES)
+                break;
+            spriteIndex = link;
+        }
+    }
+
+    std::array<m_byte, tileCount> tilePalette{};
+    for (int tile = 0; tile < tileCount; ++tile) {
+        int best = 0;
+        for (int palette = 1; palette < 4; ++palette)
+            if (paletteVotes[static_cast<size_t>(tile)][static_cast<size_t>(palette)] >
+                paletteVotes[static_cast<size_t>(tile)][static_cast<size_t>(best)])
+                best = palette;
+        tilePalette[static_cast<size_t>(tile)] = static_cast<m_byte>(best);
+    }
 
     // Show the WHOLE VRAM as a tile sheet (64 KB / 32 bytes = 2048 tiles), not
     // just the first 128. A 32-wide grid of 64 rows covers every tile so the
     // city/character art at higher addresses is visible, not only the font that
     // lives near address 0.
-    const int tilesX   = 32;
-    const int tilesY   = VDPState::VRAM_SIZE / 32 / 32; // 2048 tiles / 32 cols = 64 rows
-    const int tileSize = 8;
+    const int tilesX = 32;
+    const int tilesY = tileCount / tilesX; // 64 rows
 
     Color black = {0, 0, 0, 255};
     Image result(ImageSize{tilesX * tileSize, tilesY * tileSize}, black);
 
     for (int ty = 0; ty < tilesY; ++ty) {
         for (int tx = 0; tx < tilesX; ++tx) {
-            int tileAddr = (ty * tilesX + tx) * 32;
+            const int    tileAddr = (ty * tilesX + tx) * tileBytes;
+            const m_byte palette  = tilePalette[static_cast<size_t>(tileAddr / tileBytes)];
             for (int py = 0; py < tileSize; ++py) {
                 for (int px = 0; px < tileSize; ++px) {
-                    m_byte colorIdx = tile_.getTilePixel(tileAddr, px, py, false, false);
-                    Color  c        = palette[colorIdx & 0x0F];
-                    setImagePixel(result, tx * tileSize + px, ty * tileSize + py, c.b, c.g, c.r);
+                    const m_byte colorIdx = tile_.getTilePixel(tileAddr, px, py, false, false);
+                    m_byte       r8, g8, b8;
+                    if (fullRange) {
+                        tile_.cramToRGB_FullRange(palette, colorIdx, r8, g8, b8);
+                    } else {
+                        tile_.cramToRGB(palette, colorIdx, r8, g8, b8);
+                        r8 = expand3to8(r8);
+                        g8 = expand3to8(g8);
+                        b8 = expand3to8(b8);
+                    }
+                    setImagePixel(result, tx * tileSize + px, ty * tileSize + py, b8, g8, r8);
                 }
             }
         }
@@ -689,7 +790,7 @@ void VDPRendererDebug::dumpEverythingToPNG(const std::string &path, bool fullRan
     Image spriteLayer     = makeSpriteLayerImage(fullRange);
 
     finalOutput = finalOutput.addLabelOnTop("FinalOutput", 2, black, green);
-    vramTiles = vramTiles.addLabelOnTop("VRAM Tiles", 2, black, green);
+    vramTiles = vramTiles.addLabelOnTop("VRAM Tiles (palette per use)", 2, black, green);
     colorRAM = colorRAM.addLabelOnTop("CRAM Palettes", 2, black, green);
     vsRAM = vsRAM.addLabelOnTop("VSRAM", 2, black, green);
     registers = registers.addLabelOnTop("Registers", 2, black, green);

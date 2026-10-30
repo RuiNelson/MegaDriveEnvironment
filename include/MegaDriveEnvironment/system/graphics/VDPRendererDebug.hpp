@@ -43,7 +43,8 @@ class VDPRendererDebug {
     /// Creates image of the whole plane A name table, with the visible screen area outlined.
     Image makeForegroundLayerImage(bool fullRange) const;
 
-    /// Creates grid showing all VRAM tiles (16×8 pixel each).
+    /// Creates a grid of all VRAM tiles (8×8), each drawn with the CRAM palette
+    /// its plane/window/sprite users select most (palette 0 when unused).
     Image makeVramTilesImage(bool fullRange) const;
 
     /// Creates table showing all 24 VDP registers.

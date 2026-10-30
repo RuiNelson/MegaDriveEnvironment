@@ -696,7 +696,10 @@ Built-in host shortcuts:
 | `Alt/Option` + key or gamepad button | Call `handleOptionHotkey()` without changing emulated joypad state |
 
 The full VDP sheet contains the frame, tile sheets, palette, VSRAM, window/sprite
-views and registers. Plane A and Plane B are drawn as whole name tables, with
+views and registers. The VRAM tile sheet draws every tile with the CRAM palette
+its users select most often (plane A, plane B, window and linked sprites count
+as uses; an unreferenced tile falls back to palette 0), because a tile in VRAM
+has no palette of its own. Plane A and Plane B are drawn as whole name tables, with
 the area the screen currently shows outlined in magenta from the h-/v-scroll
 values (stepped or wavy under per-cell, per-line or two-cell scrolling). The mouse cursor is hidden while the
 VDP window is fullscreen and restored on exit.
