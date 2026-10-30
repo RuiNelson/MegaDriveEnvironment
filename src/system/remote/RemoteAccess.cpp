@@ -55,6 +55,7 @@ enum class Command : std::uint8_t {
     GetGameUptimeFrames = 0x05,
     TriggerOptionHotkey = 0x06,
     GetFlags = 0x07,
+    GetGameData = 0x08,
     PressButtons = 0x10,
     ReleaseButtons = 0x11,
     SetLockstep = 0x12,
@@ -281,6 +282,23 @@ class RemoteAccess::Impl {
         return true;
     }
 
+    std::vector<std::uint8_t> gameData() const {
+        std::lock_guard lock(gameDataMutex_);
+        return gameData_;
+    }
+
+    bool setGameData(std::span<const std::uint8_t> data) {
+        if (data.size() > RemoteAccess::MAX_EXECUTION_DATA_SIZE)
+            return false;
+        std::lock_guard lock(gameDataMutex_);
+        gameData_.assign(data.begin(), data.end());
+        return true;
+    }
+
+    bool clientConnected() const {
+        return clientSocket_.load(std::memory_order_acquire) != kInvalidSocket;
+    }
+
     bool setFlag(std::size_t index, bool value) {
         if (index >= RemoteAccess::FLAG_COUNT)
             return false;
@@ -461,6 +479,10 @@ class RemoteAccess::Impl {
                 const auto snapshot = flags();
                 return Result{.payload = std::vector<std::uint8_t>(snapshot.begin(), snapshot.end())};
             }
+            case Command::GetGameData:
+                return payload.empty()
+                    ? Result{.payload = gameData()}
+                    : Result::failure(Error::MalformedPayload, "GET_GAME_DATA has no payload");
             case Command::TriggerOptionHotkey:
                 return triggerOptionHotkey(payload);
             case Command::PressButtons:
@@ -968,6 +990,8 @@ class RemoteAccess::Impl {
     std::atomic<SocketHandle> clientSocket_{kInvalidSocket};
     mutable std::mutex executionDataMutex_;
     std::vector<std::uint8_t> executionData_;
+    mutable std::mutex gameDataMutex_;
+    std::vector<std::uint8_t> gameData_;
     mutable std::mutex flagsMutex_;
     std::array<std::uint8_t, RemoteAccess::FLAG_BYTES> flags_{};
 #if defined(_WIN32)
@@ -986,6 +1010,9 @@ void RemoteAccess::stop() { impl_->stop(); }
 std::uint16_t RemoteAccess::port() const { return impl_->port(); }
 std::vector<std::uint8_t> RemoteAccess::executionData() const { return impl_->executionData(); }
 bool RemoteAccess::setExecutionData(std::span<const std::uint8_t> data) { return impl_->setExecutionData(data); }
+std::vector<std::uint8_t> RemoteAccess::gameData() const { return impl_->gameData(); }
+bool RemoteAccess::setGameData(std::span<const std::uint8_t> data) { return impl_->setGameData(data); }
+bool RemoteAccess::clientConnected() const { return impl_->clientConnected(); }
 bool RemoteAccess::setFlag(std::size_t index, bool value) { return impl_->setFlag(index, value); }
 bool RemoteAccess::flag(std::size_t index) const { return impl_->flag(index); }
 std::array<std::uint8_t, RemoteAccess::FLAG_BYTES> RemoteAccess::flags() const { return impl_->flags(); }

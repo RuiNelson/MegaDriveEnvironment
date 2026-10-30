@@ -185,6 +185,17 @@ int main() {
     assert(request(socketFd, 0x04, 6, {}).empty());
     assert(environment.remoteAccess().executionData().empty());
 
+    // The game-data buffer is written by the game only and read with GET_GAME_DATA.
+    assert(environment.remoteAccess().clientConnected());
+    assert(request(socketFd, 0x08, 7, {}).empty());
+    const std::vector<std::uint8_t> gameData{'S', 'O', 'R', 'G', 0x00, 0x01};
+    assert(environment.remoteAccess().setGameData(gameData));
+    assert(request(socketFd, 0x08, 8, {}) == gameData);
+    assert(request(socketFd, 0x04, 9, replacementExecutionData).empty());
+    assert(environment.remoteAccess().gameData() == gameData);
+    assert(request(socketFd, 0x04, 10, {}).empty());
+    assert(environment.remoteAccess().setGameData({}));
+
     assert(request(socketFd, 0x07, 20, {}) == std::vector<std::uint8_t>(128, 0));
     assert(environment.remoteAccess().setFlag(0, true));
     assert(environment.remoteAccess().setFlag(10, true));

@@ -40,6 +40,18 @@ class RemoteAccess {
     /// clears it. Returns false when @p data exceeds the protocol size limit.
     bool setExecutionData(std::span<const std::uint8_t> data);
 
+    /// Returns a thread-safe snapshot of the game-written buffer that
+    /// GET_GAME_DATA reports (the other direction from the execution data:
+    /// only the game writes it, so neither side overwrites the other).
+    std::vector<std::uint8_t> gameData() const;
+
+    /// Atomically replaces the game-written buffer. Empty data clears it.
+    /// Returns false when @p data exceeds the protocol size limit.
+    bool setGameData(std::span<const std::uint8_t> data);
+
+    /// True while a client is connected.
+    bool clientConnected() const;
+
     /// Sets or clears game-defined flag @p index (0-1023), reported by GET_FLAGS. Flag meanings belong to the
     /// running game. Flag n is bit (n % 8) of byte (n / 8), least significant bit first. Flags persist across
     /// cold resets and client reconnects. Returns false when @p index is out of range.

@@ -51,6 +51,7 @@ are 32-bit fields but must fit the Mega Drive's 24-bit address space.
 | `05` | `GET_GAME_UPTIME_FRAMES` | empty | complete VSync frames since the last start or cold reset:u64 |
 | `06` | `TRIGGER_OPTION_HOTKEY` | printable ASCII key:u8 | empty after the game's host debug-hotkey callback runs |
 | `07` | `GET_FLAGS` | empty | 128 bytes: 1024 game-defined flags |
+| `08` | `GET_GAME_DATA` | empty | copy of the current game-data buffer |
 | `10` | `PRESS_BUTTONS` | P1 mask:u16, P2 mask:u16, frames:u32, timeout-ms:u32 | empty after buttons are released |
 | `11` | `RELEASE_BUTTONS` | empty | empty |
 | `12` | `SET_LOCKSTEP` | enabled:u8, reserved:3, timeout-ms:u32 | empty at a complete-frame boundary |
@@ -162,6 +163,15 @@ the same buffer through `RemoteAccess::executionData()` and
 `RemoteAccess::setExecutionData()`. It persists across cold resets, server
 restarts, and client reconnects until explicitly replaced. Its maximum size is
 the protocol payload limit of 16 MiB.
+
+The game-data buffer is the other direction: the game writes it
+(`RemoteAccess::setGameData()`) and clients only read it with `GET_GAME_DATA`,
+so a client's `SET_EXECUTION_DATA` and the game's own writes never overwrite
+each other. Like the execution data it is opaque and game-defined, at most
+16 MiB, starts empty and persists across cold resets and client reconnects.
+The game can also ask `RemoteAccess::clientConnected()` whether a client is
+attached, for example to drop input a disconnected client left in the
+execution data.
 
 `GET_FLAGS` returns a consistent snapshot of 1024 game-defined boolean flags
 packed into 128 bytes. Flag *n* is bit *n* mod 8 of byte *n* / 8, counting from

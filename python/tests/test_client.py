@@ -177,6 +177,16 @@ class MegaDriveClientTests(unittest.TestCase):
             client.set_execution_data(bytearray(replacement))
             client.set_execution_data(b"")
 
+    def test_get_game_data(self) -> None:
+        data = b"SORG\x00\x01"
+
+        def get(command: int, payload: bytes) -> tuple[int, bytes]:
+            self.assertEqual((command, payload), (0x08, b""))
+            return ACK, data
+
+        with ClientHarness(get) as client:
+            self.assertEqual(client.get_game_data(), data)
+
     def test_get_flags_and_flag_set(self) -> None:
         flags = bytearray(128)
         flags[0] = 0b0000_0101

@@ -259,6 +259,11 @@ class MegaDriveClient:
 
         self._request(Command.SET_EXECUTION_DATA, bytes(data))
 
+    def get_game_data(self) -> bytes:
+        """Return a copy of the game-written buffer (``GET_GAME_DATA``)."""
+
+        return self._request(Command.GET_GAME_DATA)
+
     def get_flags(self) -> bytes:
         """Return the 128 bytes of game-defined flags (1024 bits).
 

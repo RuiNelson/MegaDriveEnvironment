@@ -65,6 +65,13 @@ key/gamepad events are ignored (also after `setConfiguration()`), and only the
 remote overlay (hold, queued presses, step input) reaches the ports.
 Streets of Rage does this; the sample game keeps the built-in mapping.
 
+Remote access has two game-defined buffers: the execution data, which a client
+writes (`SET_EXECUTION_DATA`) and the game reads, and the game data, which the
+game writes (`RemoteAccess::setGameData`) and a client reads (`GET_GAME_DATA`),
+so neither side overwrites the other. `RemoteAccess::clientConnected()` tells
+the game whether a client is attached. Streets of Rage takes its remote input
+through these instead of the gamepad commands.
+
 Maintain the distinction between host facilities and console-visible hardware.
 Do not leak SDL, filesystem, sockets, or remote-control behavior into portable
 game logic unless the public API explicitly represents a host-only feature.
