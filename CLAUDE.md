@@ -188,6 +188,9 @@ consumer after this repository's tests pass.
   no re-anchoring: the frame loop re-anchors a deadline more than a frame old.
   A widescreen change while fullscreen sizes the window on leaving it
   (`fitAfterFullscreen`): a fullscreen window would read as cut.
+- `VDP::setFrameOverlay` is host UI over the finished frame (Streets of Rage's pause menu, user request): a
+  menu in a game's own screen needs free VRAM and sprites, which gameplay does not reliably leave. It runs on the
+  render thread with the VDP lock held, and touches nothing the console can see.
 - Do not weaken warnings or tests globally to accommodate one implementation.
 - Do not commit build output, fetched dependencies, caches, generated images,
   local control files, or transient captures.

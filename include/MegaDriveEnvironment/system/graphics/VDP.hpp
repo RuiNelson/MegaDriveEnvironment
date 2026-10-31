@@ -12,6 +12,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -249,6 +250,12 @@ class VDP {
     /// After leaving fullscreen: gives the window the size a widescreen change made while fullscreen asked for.
     void fitAfterFullscreen();
 
+    /// Host UI over the picture: called on the render thread for each finished frame, with the VDP locked and
+    /// with the picture's width and height, so it must be quick and take no lock the game can hold across a VDP
+    /// call. Colours are the framebuffer's native 0-7. Not console-visible: VRAM, CRAM and the SAT are untouched,
+    /// though remote framebuffer snapshots include it. Set it before start().
+    void setFrameOverlay(std::function<void(Framebuffer &, int width, int height)> overlay);
+
     // ── Lifecycle ──────────────────────────────────────────────────────────
 
     /// Resets all VDP state to initial values and clears framebuffer.
@@ -394,6 +401,8 @@ class VDP {
 
     /// Gives the window that size and centres it.
     void fitWindow();
+
+    std::function<void(Framebuffer &, int, int)> frameOverlay_;
 
     /// A widescreen change made while fullscreen: the window is sized on leaving it.
     bool fitOnLeavingFullscreen_ = false;

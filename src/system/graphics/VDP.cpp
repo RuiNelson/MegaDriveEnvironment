@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <png.h>
+#include <utility>
 
 // ── Construction / Destruction ──────────────────────────────────────────────
 
@@ -201,6 +202,10 @@ int VDP::displayRefreshHz() const {
     }
     const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window_));
     return mode ? static_cast<int>(std::lround(mode->refresh_rate)) : 0;
+}
+
+void VDP::setFrameOverlay(std::function<void(Framebuffer &, int, int)> overlay) {
+    frameOverlay_ = std::move(overlay);
 }
 
 void VDP::fitAfterFullscreen() {
@@ -878,6 +883,9 @@ int VDP::renderLoop() {
         }
 
         SDL_LockMutex(mutex_);
+        if (displayEnabled && frameOverlay_) {
+            frameOverlay_(framebuffer_, state_.activeWidth(), state_.activeOutputHeight());
+        }
         state_.status_ |= 0x0088; // VBlank + VINT flags
         SDL_UnlockMutex(mutex_);
 

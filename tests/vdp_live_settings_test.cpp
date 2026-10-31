@@ -50,6 +50,24 @@ int main() {
         assert(vdp.synchronization() == VDP::InternalTimer);
         assert(!vdp.widescreen());
         assert(!vdp.integerScaling());
+
+        // The overlay lands in the finished frame, and only with the display on.
+        vdp.setFrameOverlay([](Framebuffer &framebuffer, int width, int height) {
+            assert(width == 320 && height == 224);
+            framebuffer.setPixel(3, 2, 1, 2, 7);
+        });
+        vdp.writeControlPort(0x8C81); // H40
+        vdp.writeControlPort(0x8144); // display on
+        vdp.start();
+        for (int i = 0; i < 100000; ++i) {
+            SDL_PumpEvents();
+            const VDP::FramebufferSnapshot frame = vdp.framebufferSnapshot();
+            if (frame.pixels[2u * frame.pitch + 3u * 3u + 2u] == 7)
+                break;
+            assert(i + 1 < 100000);
+            SDL_Delay(1);
+        }
+        vdp.stop();
     }
     SDL_Quit();
     return 0;
