@@ -105,6 +105,7 @@ void MegaDriveEnvironment::boot() {
                     vdp_.fitAfterFullscreen();
                 }
 
+#ifndef __PROSPERO__ // the console's one output is always fullscreen, with or without a USB keyboard
                 if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F &&
                     (event.key.mod & SDL_KMOD_CTRL)) {
                     // CTRL+F toggles desktop fullscreen independently of debug utilities.
@@ -119,6 +120,7 @@ void MegaDriveEnvironment::boot() {
                         fullscreenActive = fullscreen;
                     }
                 }
+#endif
 
                 if (debugUtilities_ && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
                     (event.key.mod & SDL_KMOD_ALT) &&
