@@ -130,7 +130,12 @@ void VDP::setWidescreen(bool enabled) {
     state_.widescreen_ = enabled;
     SDL_UnlockMutex(mutex_);
     if (window_ && changed) {
-        fitWindow();
+        // A fullscreen window has no size of its own to fit, and would read as cut by the system.
+        if (fullscreen()) {
+            fitOnLeavingFullscreen_ = true;
+        } else {
+            fitWindow();
+        }
     }
 }
 
@@ -156,6 +161,53 @@ VDP::~VDP() {
 
 bool VDP::setFullscreen(bool fullscreen) {
     return window_ && SDL_SetWindowFullscreen(window_, fullscreen);
+}
+
+bool VDP::fullscreen() const {
+    return window_ && (SDL_GetWindowFlags(window_) & SDL_WINDOW_FULLSCREEN) != 0;
+}
+
+void VDP::applyLive(const LiveSettings &settings) {
+    syncMode_.store(settings.synchronization, std::memory_order_relaxed);
+    struct Call {
+        VDP               *vdp;
+        const LiveSettings &settings;
+    } call{this, settings};
+    SDL_RunOnMainThread(
+        [](void *userdata) {
+            const Call &c = *static_cast<Call *>(userdata);
+            VDP        &v = *c.vdp;
+            v.setIntegerScaling(c.settings.integerScaling);
+            // Windowed first, so a widescreen change sizes the window it will stay in.
+            if (!c.settings.fullscreen && v.fullscreen() && v.setFullscreen(false)) {
+                SDL_SyncWindow(v.window_);
+            }
+            v.setWidescreen(c.settings.widescreen);
+            if (c.settings.fullscreen && !v.fullscreen() && v.setFullscreen(true)) {
+                SDL_SyncWindow(v.window_);
+            }
+        },
+        &call,
+        /*wait_complete=*/true);
+}
+
+VDP::Synchronization VDP::synchronization() const {
+    return syncMode_.load(std::memory_order_relaxed);
+}
+
+int VDP::displayRefreshHz() const {
+    if (!window_) {
+        return 0;
+    }
+    const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window_));
+    return mode ? static_cast<int>(std::lround(mode->refresh_rate)) : 0;
+}
+
+void VDP::fitAfterFullscreen() {
+    if (fitOnLeavingFullscreen_ && window_) {
+        fitOnLeavingFullscreen_ = false;
+        fitWindow();
+    }
 }
 
 // ── Threading ──────────────────────────────────────────────────────────────

@@ -181,6 +181,13 @@ consumer after this repository's tests pass.
   window, because macOS does not reliably activate a process started from a
   terminal or another app (user: it opened behind `run.py`'s terminal and
   `play.py`'s window; `SDL_RaiseWindow` was the only variant tried that took focus).
+- `VDP::applyLive` is how a running game changes the frame sync, widescreen,
+  integer scaling and fullscreen (user: Streets of Rage's OPTIONS > VIDEO applies
+  them at once). The window belongs to the main thread, so it waits there through
+  `SDL_RunOnMainThread`, and boot() must be pumping events. Going to the timer needs
+  no re-anchoring: the frame loop re-anchors a deadline more than a frame old.
+  A widescreen change while fullscreen sizes the window on leaving it
+  (`fitAfterFullscreen`): a fullscreen window would read as cut.
 - Do not weaken warnings or tests globally to accommodate one implementation.
 - Do not commit build output, fetched dependencies, caches, generated images,
   local control files, or transient captures.

@@ -102,6 +102,7 @@ void MegaDriveEnvironment::boot() {
                         SDL_ShowCursor();
                     }
                     fullscreenActive = false;
+                    vdp_.fitAfterFullscreen();
                 }
 
                 if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F &&

@@ -234,6 +234,16 @@ if(BUILD_TESTING AND PROJECT_IS_TOP_LEVEL)
         COMMAND megadrive_environment_vdp_debug_vram_test
     )
 
+    add_executable(megadrive_environment_vdp_live_settings_test
+        tests/vdp_live_settings_test.cpp
+    )
+    target_link_libraries(megadrive_environment_vdp_live_settings_test PRIVATE MegaDriveEnvironment)
+    add_test(
+        NAME megadrive_environment_vdp_live_settings_test
+        COMMAND megadrive_environment_vdp_live_settings_test
+    )
+    set_tests_properties(megadrive_environment_vdp_live_settings_test PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+
     add_executable(megadrive_environment_cooperative_hsync_test
         tests/cooperative_hsync_test.cpp
     )

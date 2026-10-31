@@ -231,6 +231,23 @@ class VDP {
     /// Switches the host window between windowed and desktop fullscreen modes.
     /// Returns false if the SDL window is unavailable or SDL rejects the change.
     bool setFullscreen(bool fullscreen);
+    bool fullscreen() const;
+
+    /// What a running game's own settings screen changes.
+    struct LiveSettings {
+        Synchronization synchronization = InternalTimer;
+        bool            widescreen      = false;
+        bool            integerScaling  = false;
+        bool            fullscreen      = false;
+    };
+    /// Applies @p settings while the game runs. For the game's thread: it waits for the main thread, which
+    /// owns the window, so boot() must be pumping events.
+    void applyLive(const LiveSettings &settings);
+    Synchronization synchronization() const;
+    /// The refresh rate of the window's display, rounded to Hz; 0 when unknown.
+    int displayRefreshHz() const;
+    /// After leaving fullscreen: gives the window the size a widescreen change made while fullscreen asked for.
+    void fitAfterFullscreen();
 
     // ── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -310,7 +327,7 @@ class VDP {
     std::uint64_t nextDebugLogNs_ = 0;
 
     /// Selected synchronization mode.
-    Synchronization syncMode_;
+    std::atomic<Synchronization> syncMode_;
     /// Selected scaling mode.
     Scaling scalingMode_;
     /// Presentation uses whole-number scale factors (see setIntegerScaling()).
@@ -377,4 +394,7 @@ class VDP {
 
     /// Gives the window that size and centres it.
     void fitWindow();
+
+    /// A widescreen change made while fullscreen: the window is sized on leaving it.
+    bool fitOnLeavingFullscreen_ = false;
 };
