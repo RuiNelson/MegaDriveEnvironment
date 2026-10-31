@@ -28,12 +28,11 @@ VDP::VDP(MegaDriveEnvironment *env, Synchronization synchronization, Scaling sca
     renderer_.setHardwareSpriteLimits(spriteLimitMode == HardwareSpriteLimit);
     state_.reset();
 
-    int winW = 0;
-    int winH = 0;
-    windowSize(winW, winH);
-
-    window_ = SDL_CreateWindow("VDP", winW, winH, SDL_WINDOW_RESIZABLE);
+    // Hidden until sized: the size depends on the borders, which only a window has.
+    window_ = SDL_CreateWindow("VDP", VDPState::SCREEN_W, VDPState::SCREEN_H, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
     if (window_) {
+        fitWindow();
+        SDL_ShowWindow(window_);
         sdlRenderer_ = SDL_CreateRenderer(window_, nullptr);
         if (sdlRenderer_) {
             // Every mode presents in sync with the display, so nothing tears.
@@ -55,7 +54,8 @@ VDP::VDP(MegaDriveEnvironment *env, Synchronization synchronization, Scaling sca
 }
 
 /// Picks the window size for the current scaling mode: the active picture (320×224, or 384×216 in Mode 48)
-/// times the fixed factor, or the largest integer factor that fits the usable display area.
+/// times the fixed factor, or the largest integer factor that fits the usable display area with the window's
+/// borders: a window that does not fit is cut by the system, and no longer has the picture's proportions.
 void VDP::windowSize(int &winW, int &winH) const {
     const int baseW = widescreen() ? VDPState::WIDESCREEN_W : VDPState::SCREEN_W;
     const int baseH = widescreen() ? VDPState::WIDESCREEN_H : VDPState::SCREEN_H;
@@ -68,8 +68,12 @@ void VDP::windowSize(int &winW, int &winH) const {
         SDL_Rect      usable{};
         SDL_DisplayID display = SDL_GetPrimaryDisplay();
         if (display && SDL_GetDisplayUsableBounds(display, &usable)) {
-            int scaleX = usable.w / baseW;
-            int scaleY = usable.h / baseH;
+            int top = 0, left = 0, bottom = 0, right = 0;
+            if (window_) {
+                SDL_GetWindowBordersSize(window_, &top, &left, &bottom, &right);
+            }
+            int scaleX = (usable.w - left - right) / baseW;
+            int scaleY = (usable.h - top - bottom) / baseH;
             int scale  = std::max(1, std::min(scaleX, scaleY));
             winW *= scale;
             winH *= scale;
@@ -92,15 +96,37 @@ void VDP::windowSize(int &winW, int &winH) const {
     }
 }
 
+void VDP::fitWindow() {
+    int winW = 0;
+    int winH = 0;
+    windowSize(winW, winH);
+    SDL_SetWindowSize(window_, winW, winH);
+    SDL_SyncWindow(window_);
+    if (scalingMode_ == Integer) {
+        // macOS does not report the borders (SDL_GetWindowBordersSize fails), but it does cut a window that
+        // does not fit with them: one factor down until the window is the size it was asked to be.
+        const int baseW = widescreen() ? VDPState::WIDESCREEN_W : VDPState::SCREEN_W;
+        const int baseH = widescreen() ? VDPState::WIDESCREEN_H : VDPState::SCREEN_H;
+        int       gotW  = winW;
+        int       gotH  = winH;
+        SDL_GetWindowSize(window_, &gotW, &gotH);
+        while ((gotW != winW || gotH != winH) && winW > baseW) {
+            winW -= baseW;
+            winH -= baseH;
+            SDL_SetWindowSize(window_, winW, winH);
+            SDL_SyncWindow(window_);
+            SDL_GetWindowSize(window_, &gotW, &gotH);
+        }
+    }
+    SDL_SetWindowPosition(window_, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+}
+
 void VDP::setWidescreen(bool enabled) {
     SDL_LockMutex(mutex_);
     state_.widescreen_ = enabled;
     SDL_UnlockMutex(mutex_);
     if (window_) {
-        int winW = 0;
-        int winH = 0;
-        windowSize(winW, winH);
-        SDL_SetWindowSize(window_, winW, winH);
+        fitWindow();
     }
 }
 

@@ -172,6 +172,12 @@ consumer after this repository's tests pass.
   VSync runs ahead of `run()` (`cooperative_hsync_test` depends on it). The
   `VSync*` modes still present synchronously, since the display is their
   clock.
+- `VDP::Integer` opens the largest integer factor that fits with the window's
+  borders, so the picture keeps its proportions. `SDL_GetWindowBordersSize` is
+  unsupported on macOS, where a window that does not fit is cut instead (asked
+  for 1280x896 with 896 usable, got 1280x864), so `VDP::fitWindow` also steps
+  the factor down until the window is the size it asked for. The window stays
+  hidden until sized, so that step never shows.
 - Do not weaken warnings or tests globally to accommodate one implementation.
 - Do not commit build output, fetched dependencies, caches, generated images,
   local control files, or transient captures.

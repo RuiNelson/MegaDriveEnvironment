@@ -374,4 +374,7 @@ class VDP {
 
     /// Window size for the current scaling mode and picture size.
     void windowSize(int &winW, int &winH) const;
+
+    /// Gives the window that size and centres it.
+    void fitWindow();
 };
