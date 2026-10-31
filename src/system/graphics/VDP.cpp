@@ -28,11 +28,10 @@ VDP::VDP(MegaDriveEnvironment *env, Synchronization synchronization, Scaling sca
     renderer_.setHardwareSpriteLimits(spriteLimitMode == HardwareSpriteLimit);
     state_.reset();
 
-    // Hidden until sized: the size depends on the borders, which only a window has.
-    window_ = SDL_CreateWindow("VDP", VDPState::SCREEN_W, VDPState::SCREEN_H, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
+    // Sized once it exists: the size depends on the borders, which only a window has.
+    window_ = SDL_CreateWindow("VDP", VDPState::SCREEN_W, VDPState::SCREEN_H, SDL_WINDOW_RESIZABLE);
     if (window_) {
         fitWindow();
-        SDL_ShowWindow(window_);
         sdlRenderer_ = SDL_CreateRenderer(window_, nullptr);
         if (sdlRenderer_) {
             // Every mode presents in sync with the display, so nothing tears.
@@ -50,6 +49,9 @@ VDP::VDP(MegaDriveEnvironment *env, Synchronization synchronization, Scaling sca
                 SDL_SetTextureScaleMode(texture_, (scalingMode_ == Fit) ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
             }
         }
+        // In front of whatever launched it: macOS does not reliably activate a process started from a
+        // terminal or another app's window.
+        SDL_RaiseWindow(window_);
     }
 }
 
@@ -103,8 +105,9 @@ void VDP::fitWindow() {
     SDL_SetWindowSize(window_, winW, winH);
     SDL_SyncWindow(window_);
     if (scalingMode_ == Integer) {
-        // macOS does not report the borders (SDL_GetWindowBordersSize fails), but it does cut a window that
-        // does not fit with them: one factor down until the window is the size it was asked to be.
+        // macOS does not report the borders (SDL_GetWindowBordersSize fails), but it does cut a visible window
+        // that does not fit with them (a hidden one keeps the size asked): one factor down until the window is
+        // the size it was asked to be.
         const int baseW = widescreen() ? VDPState::WIDESCREEN_W : VDPState::SCREEN_W;
         const int baseH = widescreen() ? VDPState::WIDESCREEN_H : VDPState::SCREEN_H;
         int       gotW  = winW;
@@ -123,9 +126,10 @@ void VDP::fitWindow() {
 
 void VDP::setWidescreen(bool enabled) {
     SDL_LockMutex(mutex_);
+    const bool changed = state_.widescreen_ != enabled;
     state_.widescreen_ = enabled;
     SDL_UnlockMutex(mutex_);
-    if (window_) {
+    if (window_ && changed) {
         fitWindow();
     }
 }

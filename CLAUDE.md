@@ -176,8 +176,11 @@ consumer after this repository's tests pass.
   borders, so the picture keeps its proportions. `SDL_GetWindowBordersSize` is
   unsupported on macOS, where a window that does not fit is cut instead (asked
   for 1280x896 with 896 usable, got 1280x864), so `VDP::fitWindow` also steps
-  the factor down until the window is the size it asked for. The window stays
-  hidden until sized, so that step never shows.
+  the factor down until the window is the size it asked for. That needs a
+  visible window: a hidden one reports the size asked. The VDP then raises the
+  window, because macOS does not reliably activate a process started from a
+  terminal or another app (user: it opened behind `run.py`'s terminal and
+  `play.py`'s window; `SDL_RaiseWindow` was the only variant tried that took focus).
 - Do not weaken warnings or tests globally to accommodate one implementation.
 - Do not commit build output, fetched dependencies, caches, generated images,
   local control files, or transient captures.
