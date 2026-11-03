@@ -371,16 +371,17 @@ void MegaDriveEnvironment::logFrame(unsigned frame, bool displayEnabled) {
 }
 
 void MegaDriveEnvironment::confirmSpeculative(m_long addr) {
-    if (auxAddrFile_.empty())
+    if (auxAddrFile_.empty() && confirmedFile_.empty())
         return;
 
     unsigned a = static_cast<unsigned>(addr & 0x00FFFFFFu);
     if (!confirmedSpeculative_.insert(a).second)
         return; // already logged this run
-    if (auxFileContainsAddress(auxAddrFile_, a))
+    const std::string &path = auxAddrFile_.empty() ? confirmedFile_ : auxAddrFile_;
+    if (auxFileContainsAddress(path, a))
         return; // already known; not a newly confirmed speculative candidate
     std::fprintf(stderr, "[speculative] confirmed: %06X\n", a);
-    if (FILE *out = std::fopen(auxAddrFile_.c_str(), "a")) {
+    if (FILE *out = std::fopen(path.c_str(), "a")) {
         std::fprintf(out, "%06X\n", a);
         std::fclose(out);
     }

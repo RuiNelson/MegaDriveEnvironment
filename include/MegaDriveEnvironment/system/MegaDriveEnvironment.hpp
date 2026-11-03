@@ -216,8 +216,16 @@ class MegaDriveEnvironment {
         auxAddrFile_ = path;
     }
 
+    /// When set, confirmSpeculative appends each speculative entry reached to
+    /// @p path (once per address, skipping those already in the file) and the
+    /// run goes on: no discovery loop, no exit. An unknown dispatch still aborts.
+    void setConfirmedFile(const std::string &path) {
+        confirmedFile_ = path;
+    }
+
     /// Called by generated code at the entry of a speculative function. Active
-    /// only when an aux file is configured, so normal runs stay silent.
+    /// only when an aux file or a confirmed file is configured, so normal runs
+    /// stay silent.
     void confirmSpeculative(m_long addr);
 
     /// Logs one line of recompiled-CPU state — invoked once per ~second from the
@@ -458,6 +466,7 @@ class MegaDriveEnvironment {
     bool                         debugUtilities_ = true;
     bool                         startFullscreen_ = false;
     std::string                  auxAddrFile_;          ///< append unknown dispatch targets here (if set)
+    std::string                  confirmedFile_;        ///< append confirmed speculative entries here (if set)
     std::string                  loadedROMPath_;        ///< prevents a restarted run() from replacing patched ROM
     bool                         romLoaded_ = false;
     std::unordered_set<unsigned> confirmedSpeculative_; ///< guards against duplicate confirmSpeculative logs
