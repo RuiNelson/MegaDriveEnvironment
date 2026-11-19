@@ -25,6 +25,9 @@ VDP::VDP(MegaDriveEnvironment *env, Synchronization synchronization, Scaling sca
       rendererDebug_(state_, tile_, framebuffer_), syncMode_(synchronization), scalingMode_(scaling), env_(env) {
     SDL_Init(SDL_INIT_VIDEO);
     mutex_    = SDL_CreateMutex();
+    layers_        = std::make_unique<VDPFrameLayers>();
+    presentLayers_ = std::make_unique<VDPFrameLayers>();
+    shownLayers_   = std::make_unique<VDPFrameLayers>();
     irqMutex_ = SDL_CreateMutex();
     port_.setEnvironment(env);
     renderer_.setHardwareSpriteLimits(spriteLimitMode == HardwareSpriteLimit);
@@ -162,6 +165,25 @@ VDP::ScalingFilter VDP::scalingFilter() const {
     return scalingFilter_.load(std::memory_order_relaxed);
 }
 
+void VDP::setFrameGeneration(bool enabled) {
+    frameGeneration_.store(enabled, std::memory_order_relaxed);
+}
+
+bool VDP::frameGeneration() const {
+    return frameGeneration_.load(std::memory_order_relaxed);
+}
+
+bool VDP::frameGenerationSupported() const {
+    return presenter_ && presenter_->supportsFrameGeneration();
+}
+
+bool VDP::generatingFrames() const {
+    if (!frameGeneration() || !frameGenerationSupported() || syncMode_ != InternalTimer || state_.interlaced())
+        return false;
+    // At the normal rate only: turbo is a development mode.
+    return env_ == nullptr || env_->vdpInternalFrequencyHz() <= 60u;
+}
+
 bool VDP::scalingFilterSupported(ScalingFilter filter) const {
     if (filter != MetalFX)
         return true;
@@ -199,6 +221,7 @@ void VDP::applyLive(const LiveSettings &settings) {
             VDP        &v = *c.vdp;
             v.setIntegerScaling(c.settings.integerScaling);
             v.setScalingFilter(c.settings.scalingFilter);
+            v.setFrameGeneration(c.settings.frameGeneration);
             // Windowed first, so a widescreen change sizes the window it will stay in.
             if (!c.settings.fullscreen && v.fullscreen() && v.setFullscreen(false)) {
                 SDL_SyncWindow(v.window_);
@@ -713,15 +736,27 @@ void VDP::sdlRepeatCallback(void *userdata) {
 
 /// Copies the finished frame for the main thread and queues its presentation without waiting. Drops the frame if
 /// the previous one is still queued, so the render thread runs at the internal timer's rate whatever the display does.
-void VDP::queueAsyncPresent() {
+void VDP::queueAsyncPresent(bool generating) {
     if (presentPending_.load(std::memory_order_acquire))
         return;
     SDL_LockMutex(mutex_);
-    presentWidth_  = state_.activeWidth();
-    presentHeight_ = state_.activeOutputHeight();
-    std::memcpy(presentFramebuffer_.getRawPointer(),
-                framebuffer_.getRawPointer(),
-                static_cast<size_t>(std::clamp(presentHeight_, 0, Framebuffer::HEIGHT)) * Framebuffer::PITCH);
+    const int width  = state_.activeWidth();
+    const int height = std::clamp(state_.activeOutputHeight(), 0, Framebuffer::HEIGHT);
+    const size_t bytes = static_cast<size_t>(height) * Framebuffer::PITCH;
+    // Generating frames, a picture that repeats the one on screen is not presented: the interpolation runs
+    // between pictures that differ, as far apart as the game makes them (every other frame is common).
+    if (generating && presentLayersValid_ && width == presentWidth_ && height == presentHeight_ &&
+        std::memcmp(presentFramebuffer_.getRawPointer(), framebuffer_.getRawPointer(), bytes) == 0) {
+        SDL_UnlockMutex(mutex_);
+        return;
+    }
+    presentWidth_  = width;
+    presentHeight_ = height;
+    std::memcpy(presentFramebuffer_.getRawPointer(), framebuffer_.getRawPointer(), bytes);
+    presentLayersValid_ = generating;
+    if (generating)
+        *presentLayers_ = *layers_;
+    presentTimeNs_ = SDL_GetTicksNS();
     tile_.cramToRGB_FullRange(static_cast<m_byte>(state_.bgColorPalette()),
                               static_cast<m_byte>(state_.bgColorIndex()),
                               presentBg_[0],
@@ -739,8 +774,30 @@ void VDP::sdlAsyncPresentCallback(void *userdata) {
     if (self->presenter_) {
         self->updateWindowTitle();
         self->presenter_->upload(self->presentFramebuffer_, self->presentWidth_, self->presentHeight_);
-        self->renderTexture(
-            self->presentWidth_, self->presentHeight_, self->presentBg_[0], self->presentBg_[1], self->presentBg_[2]);
+        VDPFrameGeneration generation;
+        if (self->presentLayersValid_) {
+            generation.keep = true;
+            // Interpolate when the display can show a frame between the two: two refreshes or more apart,
+            // and not after a pause, a menu that waited, or a picture of another size.
+            const std::uint64_t interval = self->presentTimeNs_ - self->shownTimeNs_;
+            const int           hz       = self->displayRefreshHz();
+            const std::uint64_t refresh  = 1'000'000'000ull / static_cast<std::uint64_t>(hz > 0 ? hz : 60);
+            if (self->shownLayersValid_ && interval * 10 >= refresh * 18 && interval <= 100'000'000ull) {
+                self->motion_.resize(static_cast<size_t>(self->presentWidth_) * self->presentHeight_ * 2);
+                computeMotion(*self->shownLayers_, *self->presentLayers_, self->motion_.data());
+                generation.motion   = self->motion_.data();
+                generation.interval = static_cast<double>(interval) / 1e9;
+            }
+            std::swap(self->shownLayers_, self->presentLayers_);
+            self->shownTimeNs_ = self->presentTimeNs_;
+        }
+        self->shownLayersValid_ = self->presentLayersValid_;
+        self->renderTexture(self->presentWidth_,
+                            self->presentHeight_,
+                            self->presentBg_[0],
+                            self->presentBg_[1],
+                            self->presentBg_[2],
+                            &generation);
     }
     self->presentPending_.store(false, std::memory_order_release);
 }
@@ -774,12 +831,14 @@ void VDP::presentToScreen() {
 }
 
 /// Clears to the background colour and draws the uploaded W×H area, centred and scaled to fit (main thread).
-void VDP::renderTexture(int framebufferW, int framebufferH, m_byte bgR, m_byte bgG, m_byte bgB) {
+void VDP::renderTexture(int framebufferW, int framebufferH, m_byte bgR, m_byte bgG, m_byte bgB, const VDPFrameGeneration *generation) {
     const m_byte  background[3] = {bgR, bgG, bgB};
     ScalingFilter filter        = scalingFilter();
     if (!presenter_->supports(filter))
         filter = Hybrid;
-    presenter_->present(framebufferW, framebufferH, background, integerScaling(), filter);
+    // The synchronous path (the VSync modes, the first frame) keeps nothing for frame generation.
+    shownLayersValid_ = shownLayersValid_ && generation != nullptr;
+    presenter_->present(framebufferW, framebufferH, background, integerScaling(), filter, generation ? *generation : VDPFrameGeneration{});
 }
 
 SDL_FRect VDP::presentationRect(int outputW, int outputH, int framebufferW, int framebufferH, bool integerScaling) {
@@ -846,6 +905,18 @@ int VDP::renderLoop() {
         if (!displayEnabled) {
             framebuffer_.clear();
         }
+        // Frame generation's record of where each pixel comes from (see VDPMotion.hpp).
+        const bool generating = presenter_ != nullptr && generatingFrames();
+        renderer_.setLayerRecord(generating ? layers_.get() : nullptr);
+        if (generating) {
+            layers_->begin(state_.activeWidth(),
+                           state_.activeOutputHeight(),
+                           state_.planeWidthCells() * 8,
+                           state_.planeHeightCells() * 8,
+                           state_.centerOffsetX());
+            if (!displayEnabled)
+                layers_->source.fill(VDPFrameLayers::Backdrop);
+        }
         SDL_UnlockMutex(mutex_);
 
         if (displayEnabled) {
@@ -885,7 +956,25 @@ int VDP::renderLoop() {
 
         SDL_LockMutex(mutex_);
         if (displayEnabled && frameOverlay_) {
-            frameOverlay_(framebuffer_, state_.activeWidth(), state_.activeOutputHeight());
+            const int width  = state_.activeWidth();
+            const int height = std::clamp(state_.activeOutputHeight(), 0, Framebuffer::HEIGHT);
+            const auto *pixels = static_cast<const m_byte *>(framebuffer_.getRawPointer());
+            if (generating)
+                beforeOverlay_.assign(pixels, pixels + static_cast<size_t>(height) * Framebuffer::PITCH);
+            frameOverlay_(framebuffer_, width, height);
+            // The host's drawing does not move with the layers under it.
+            if (generating) {
+                for (int y = 0; y < height; ++y) {
+                    const m_byte *now    = pixels + static_cast<size_t>(y) * Framebuffer::PITCH;
+                    const m_byte *before = beforeOverlay_.data() + static_cast<size_t>(y) * Framebuffer::PITCH;
+                    if (std::memcmp(now, before, static_cast<size_t>(width) * Framebuffer::BPP) == 0)
+                        continue;
+                    for (int x = 0; x < width; ++x) {
+                        if (std::memcmp(now + x * Framebuffer::BPP, before + x * Framebuffer::BPP, Framebuffer::BPP) != 0)
+                            layers_->source[static_cast<size_t>(y) * VDPState::MAX_SCREEN_W + x] = VDPFrameLayers::Overlay;
+                    }
+                }
+            }
         }
         state_.status_ |= 0x0088; // VBlank + VINT flags
         SDL_UnlockMutex(mutex_);
@@ -910,7 +999,7 @@ int VDP::renderLoop() {
         }
 
         if (presenter_ && syncMode_ == InternalTimer && !firstFrame) {
-            queueAsyncPresent();
+            queueAsyncPresent(generating);
         } else if (presenter_) {
             SDL_RunOnMainThread(sdlPresentCallback, this, /*wait=*/true);
 

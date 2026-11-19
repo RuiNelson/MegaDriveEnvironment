@@ -19,6 +19,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <string>
 #include <vector>
 
 namespace {
@@ -58,6 +60,8 @@ fragment float4 vdpFragment(VertexOut in [[stage_in]],
 
 constexpr int kFramesInFlight = 3;
 constexpr int kMaxTextureSize = 16384; // every Mac GPU Metal supports
+// Frame generation's scaled pictures: drawn into, read by the interpolator and by the last pass.
+constexpr MTLTextureUsage kFrameUsage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
 
 struct FrameUniforms {
     float size[2];
@@ -77,6 +81,12 @@ class MetalPresenter final : public VDPPresenter {
         @autoreleasepool {
             pipeline_ = nil;
             hybrid_   = nil;
+            interpolator_ = nil;
+            frames_[0] = frames_[1] = nil;
+            between_  = nil;
+            depth_    = nil;
+            for (auto &texture : motion_)
+                texture = nil;
             upscaled_ = nil;
             scaler_   = nil;
             nearest_  = nil;
@@ -148,6 +158,23 @@ class MetalPresenter final : public VDPPresenter {
             picture.usage = MTLTextureUsageShaderRead;
             if (@available(macOS 13.0, *))
                 metalFXSupported_ = [MTLFXSpatialScalerDescriptor supportsDevice:device_];
+            if (@available(macOS 26.0, *))
+                frameGenerationSupported_ = [MTLFXFrameInterpolatorDescriptor supportsDevice:device_];
+            // Development aids: MDE_FRAMEGEN_DEBUG=stats logs the real and generated frames each second, =generated
+            // also shows the generated frames in place of the real ones; MDE_FRAMEGEN_MOTION_SCALE multiplies the
+            // motion vectors.
+            if (const char *debug = SDL_getenv("MDE_FRAMEGEN_DEBUG")) {
+                debugStats_     = true;
+                debugGenerated_ = SDL_strcmp(debug, "generated") == 0;
+            }
+            // MDE_FRAMEGEN_DUMP=PREFIX writes the generated frame MDE_FRAMEGEN_DUMP_AT (120 by default) and the
+            // two around it as PREFIX-previous.ppm, PREFIX-between.ppm and PREFIX-current.ppm.
+            if (const char *dump = SDL_getenv("MDE_FRAMEGEN_DUMP"))
+                dumpPrefix_ = dump;
+            if (const char *at = SDL_getenv("MDE_FRAMEGEN_DUMP_AT"))
+                dumpAt_ = SDL_atoi(at);
+            if (const char *scale = SDL_getenv("MDE_FRAMEGEN_MOTION_SCALE"))
+                motionScale_ = static_cast<float>(SDL_atof(scale));
             for (auto &texture : textures_) {
                 texture = [device_ newTextureWithDescriptor:picture];
                 if (texture == nil)
@@ -181,7 +208,16 @@ class MetalPresenter final : public VDPPresenter {
         return filter != VDP::MetalFX || metalFXSupported_;
     }
 
-    void present(int width, int height, const m_byte background[3], bool integerScaling, VDP::ScalingFilter filter) override {
+    bool supportsFrameGeneration() const override {
+        return frameGenerationSupported_;
+    }
+
+    void present(int                       width,
+                 int                       height,
+                 const m_byte              background[3],
+                 bool                      integerScaling,
+                 VDP::ScalingFilter        filter,
+                 const VDPFrameGeneration &generation) override {
         width  = std::min(width, uploadedWidth_);
         height = std::min(height, uploadedHeight_);
         if (width <= 0 || height <= 0)
@@ -194,14 +230,7 @@ class MetalPresenter final : public VDPPresenter {
                 return;
 
             dispatch_semaphore_wait(inFlight_, DISPATCH_TIME_FOREVER);
-            id<CAMetalDrawable> drawable = [layer_ nextDrawable];
-            if (drawable == nil) {
-                dispatch_semaphore_signal(inFlight_);
-                return;
-            }
-
             id<MTLTexture> picture = textures_[slot_];
-            slot_                  = (slot_ + 1) % kFramesInFlight;
             [picture replaceRegion:MTLRegionMake2D(0, 0, width, height)
                        mipmapLevel:0
                          withBytes:staging_.data()
@@ -210,61 +239,267 @@ class MetalPresenter final : public VDPPresenter {
             const SDL_FRect dst     = VDP::presentationRect(outputW, outputH, width, height, integerScaling);
             const int       targetW = std::max(1, static_cast<int>(std::lround(dst.w)));
             const int       targetH = std::max(1, static_cast<int>(std::lround(dst.h)));
+            const MTLClearColor clear =
+                MTLClearColorMake(background[0] / 255.0, background[1] / 255.0, background[2] / 255.0, 1.0);
 
             id<MTLCommandBuffer> commands = [queue_ commandBuffer];
-            // What the last pass draws into the rectangle: the picture itself, or a pass's output.
-            id<MTLTexture> source  = picture;
-            float          sourceW = static_cast<float>(width);
-            float          sourceH = static_cast<float>(height);
-            bool           linear  = filter == VDP::Bilinear;
-            MTLViewport    place{dst.x, dst.y, dst.w, dst.h, 0.0, 1.0};
+            const Scaled         scaled   = scale(commands, picture, width, height, dst, targetW, targetH, filter);
+            bool                 presented = false;
 
-            if (filter == VDP::Hybrid) {
-                // Nearest-neighbour to the next whole multiple, then bilinear down to the rectangle; a whole
-                // multiple already is nearest-neighbour alone.
-                const int factor = VDP::hybridFactor(dst.w, width);
-                if (static_cast<float>(factor * width) - dst.w > 0.5f) {
-                    const int      scaledW = std::min(factor * width, kMaxTextureSize);
-                    const int      scaledH = std::min(factor * height, kMaxTextureSize);
-                    id<MTLTexture> scaled  = scratch(hybrid_, scaledW, scaledH, MTLTextureUsageRenderTarget);
-                    if (scaled != nil) {
-                        draw(commands, scaled, nullptr, MTLViewport{0, 0, double(scaledW), double(scaledH), 0, 1},
-                             picture, sourceW, sourceH, false);
-                        source  = scaled;
-                        sourceW = static_cast<float>(scaledW);
-                        sourceH = static_cast<float>(scaledH);
-                        linear  = true;
+            if (!generation.keep) {
+                historyValid_ = false;
+            } else if (@available(macOS 26.0, *)) {
+                // The scaled picture goes into a texture of its own, kept for the next interpolation.
+                const int      current = 1 - historySlot_;
+                id<MTLTexture> frame   = scratch(frames_[current], targetW, targetH, kFrameUsage);
+                if (frame != nil) {
+                    draw(commands, frame, nullptr, MTLViewport{0, 0, double(targetW), double(targetH), 0, 1},
+                         scaled.source, scaled.sourceW, scaled.sourceH, scaled.linear);
+                    id<MTLTexture> previous = frames_[historySlot_];
+                    const bool     history  = historyValid_ && previous != nil &&
+                                         static_cast<int>(previous.width) == targetW &&
+                                         static_cast<int>(previous.height) == targetH && historyWidth_ == width &&
+                                         historyHeight_ == height;
+                    const MTLViewport place{dst.x, dst.y, double(targetW), double(targetH), 0, 1};
+                    // Both frames wait half the interval after the one before, so they share it evenly
+                    // whatever the display's rate (a little less, so a late present does not miss a refresh).
+                    const double half = generation.interval * 0.5 * 0.9;
+                    id<MTLTexture> between =
+                        history && generation.motion != nullptr
+                            ? interpolate(commands, previous, frame, generation, width, height, targetW, targetH)
+                            : nil;
+                    if (between != nil) {
+                        id<CAMetalDrawable> first = [layer_ nextDrawable];
+                        if (first != nil) {
+                            draw(commands, first.texture, &clear, place, between, float(targetW), float(targetH),
+                                 false);
+                            [commands presentDrawable:first afterMinimumDuration:half];
+                        }
                     }
+                    id<CAMetalDrawable> drawable = [layer_ nextDrawable];
+                    if (drawable != nil) {
+                        draw(commands, drawable.texture, &clear, place, debugGenerated_ && between ? between : frame,
+                             float(targetW), float(targetH), false);
+                        if (between != nil)
+                            [commands presentDrawable:drawable afterMinimumDuration:half];
+                        else
+                            [commands presentDrawable:drawable];
+                    }
+                    if (between != nil && !dumpPrefix_.empty() && ++dumpCountdown_ == dumpAt_) {
+                        dumpTexture(commands, previous, dumpPrefix_ + "-previous.ppm");
+                        dumpTexture(commands, between, dumpPrefix_ + "-between.ppm");
+                        dumpTexture(commands, frame, dumpPrefix_ + "-current.ppm");
+                    }
+                    if (debugStats_) {
+                        ++statsReal_;
+                        statsGenerated_ += between != nil ? 1 : 0;
+                        const std::uint64_t now = SDL_GetTicksNS();
+                        if (now - statsSince_ >= 1'000'000'000ull) {
+                            SDL_Log("[VDP] frame generation: %d real, %d generated", statsReal_, statsGenerated_);
+                            statsReal_ = statsGenerated_ = 0;
+                            statsSince_                  = now;
+                        }
+                    }
+                    historySlot_   = current;
+                    historyValid_  = true;
+                    historyWidth_  = width;
+                    historyHeight_ = height;
+                    presented      = true;
                 }
-            } else if (filter == VDP::MetalFX) {
-                id<MTLTexture> upscaled = nil;
-                if (@available(macOS 13.0, *))
-                    upscaled = metalFX(commands, picture, width, height, targetW, targetH);
-                if (upscaled != nil) {
-                    // Already the rectangle's size: copied pixel for pixel.
-                    source  = upscaled;
-                    sourceW = static_cast<float>(targetW);
-                    sourceH = static_cast<float>(targetH);
-                    place   = MTLViewport{dst.x, dst.y, double(targetW), double(targetH), 0, 1};
-                } else {
-                    linear = true;
+            }
+            if (!presented) {
+                id<CAMetalDrawable> drawable = [layer_ nextDrawable];
+                if (drawable != nil) {
+                    draw(commands, drawable.texture, &clear, scaled.place, scaled.source, scaled.sourceW, scaled.sourceH,
+                         scaled.linear);
+                    [commands presentDrawable:drawable];
                 }
             }
 
-            const MTLClearColor clear =
-                MTLClearColorMake(background[0] / 255.0, background[1] / 255.0, background[2] / 255.0, 1.0);
-            draw(commands, drawable.texture, &clear, place, source, sourceW, sourceH, linear);
-
+            slot_                         = (slot_ + 1) % kFramesInFlight;
             dispatch_semaphore_t inFlight = inFlight_;
             [commands addCompletedHandler:^(id<MTLCommandBuffer>) {
               dispatch_semaphore_signal(inFlight);
             }];
-            [commands presentDrawable:drawable];
             [commands commit];
         }
     }
 
     private:
+    /// What the last pass draws into the presentation rectangle (see scale()).
+    struct Scaled {
+        id<MTLTexture> source;
+        float          sourceW;
+        float          sourceH;
+        bool           linear;
+        MTLViewport    place;
+    };
+
+    /// Encodes the passes @p filter needs before the last one (Hybrid's whole multiple, MetalFX's upscale)
+    /// and says what the last one draws, and where.
+    Scaled scale(id<MTLCommandBuffer> commands,
+                 id<MTLTexture>       picture,
+                 int                  width,
+                 int                  height,
+                 const SDL_FRect     &dst,
+                 int                  targetW,
+                 int                  targetH,
+                 VDP::ScalingFilter   filter) {
+        Scaled result{picture, float(width), float(height), filter == VDP::Bilinear,
+                      MTLViewport{dst.x, dst.y, dst.w, dst.h, 0.0, 1.0}};
+        if (filter == VDP::Hybrid) {
+            // Nearest-neighbour to the next whole multiple, then bilinear down to the rectangle; a whole
+            // multiple already is nearest-neighbour alone.
+            const int factor = VDP::hybridFactor(dst.w, width);
+            if (static_cast<float>(factor * width) - dst.w > 0.5f) {
+                const int      scaledW = std::min(factor * width, kMaxTextureSize);
+                const int      scaledH = std::min(factor * height, kMaxTextureSize);
+                id<MTLTexture> whole   = scratch(hybrid_, scaledW, scaledH, MTLTextureUsageRenderTarget);
+                if (whole != nil) {
+                    draw(commands, whole, nullptr, MTLViewport{0, 0, double(scaledW), double(scaledH), 0, 1}, picture,
+                         float(width), float(height), false);
+                    result.source  = whole;
+                    result.sourceW = float(scaledW);
+                    result.sourceH = float(scaledH);
+                    result.linear  = true;
+                }
+            }
+        } else if (filter == VDP::MetalFX) {
+            id<MTLTexture> upscaled = nil;
+            if (@available(macOS 13.0, *))
+                upscaled = metalFX(commands, picture, width, height, targetW, targetH);
+            if (upscaled != nil) {
+                // Already the rectangle's size: copied pixel for pixel.
+                result.source  = upscaled;
+                result.sourceW = float(targetW);
+                result.sourceH = float(targetH);
+                result.linear  = false;
+                result.place   = MTLViewport{dst.x, dst.y, double(targetW), double(targetH), 0, 1};
+            } else {
+                result.linear = true;
+            }
+        }
+        return result;
+    }
+
+    /// MetalFX's frame between @p previous and @p current (both targetW×targetH), from the motion of the
+    /// width×height picture; nil when the interpolator cannot be made.
+    id<MTLTexture> interpolate(id<MTLCommandBuffer>      commands,
+                               id<MTLTexture>            previous,
+                               id<MTLTexture>            current,
+                               const VDPFrameGeneration &generation,
+                               int                       width,
+                               int                       height,
+                               int                       targetW,
+                               int                       targetH) API_AVAILABLE(macos(26.0)) {
+        id<MTLFXFrameInterpolator> interpolator = interpolator_;
+        bool                       reset        = false;
+        if (interpolator == nil || static_cast<int>(interpolator.inputWidth) != width ||
+            static_cast<int>(interpolator.inputHeight) != height ||
+            static_cast<int>(interpolator.outputWidth) != targetW ||
+            static_cast<int>(interpolator.outputHeight) != targetH) {
+            MTLFXFrameInterpolatorDescriptor *descriptor = [[MTLFXFrameInterpolatorDescriptor alloc] init];
+            descriptor.colorTextureFormat  = MTLPixelFormatBGRA8Unorm;
+            descriptor.outputTextureFormat = MTLPixelFormatBGRA8Unorm;
+            descriptor.depthTextureFormat  = MTLPixelFormatDepth32Float;
+            descriptor.motionTextureFormat = MTLPixelFormatRG16Float;
+            descriptor.inputWidth          = width;
+            descriptor.inputHeight         = height;
+            descriptor.outputWidth         = targetW;
+            descriptor.outputHeight        = targetH;
+            interpolator                   = [descriptor newFrameInterpolatorWithDevice:device_];
+            interpolator_                  = interpolator;
+            if (interpolator == nil || (interpolator.colorTextureUsage & ~current.usage) != 0) {
+                SDL_Log("[VDP] MetalFX cannot interpolate %dx%d to %dx%d", width, height, targetW, targetH);
+                interpolator_ = nil;
+                return nil;
+            }
+            // A 2D picture has no depth: one plane, cleared once.
+            MTLTextureDescriptor *depth =
+                [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                                                   width:width
+                                                                  height:height
+                                                               mipmapped:NO];
+            depth.usage       = interpolator.depthTextureUsage | MTLTextureUsageRenderTarget;
+            depth.storageMode = MTLStorageModePrivate;
+            depth_            = [device_ newTextureWithDescriptor:depth];
+            MTLRenderPassDescriptor *clearDepth   = [MTLRenderPassDescriptor renderPassDescriptor];
+            clearDepth.depthAttachment.texture     = depth_;
+            clearDepth.depthAttachment.loadAction  = MTLLoadActionClear;
+            clearDepth.depthAttachment.storeAction = MTLStoreActionStore;
+            clearDepth.depthAttachment.clearDepth  = 0.5;
+            [[commands renderCommandEncoderWithDescriptor:clearDepth] endEncoding];
+
+            MTLTextureDescriptor *motion =
+                [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRG16Float
+                                                                   width:width
+                                                                  height:height
+                                                               mipmapped:NO];
+            motion.usage = interpolator.motionTextureUsage | MTLTextureUsageShaderRead;
+            for (auto &texture : motion_)
+                texture = [device_ newTextureWithDescriptor:motion];
+            reset = true;
+        }
+        id<MTLTexture> output = scratch(between_, targetW, targetH, interpolator.outputTextureUsage);
+        if (output == nil || depth_ == nil || motion_[slot_] == nil)
+            return nil;
+
+        // Picture pixels, as half floats.
+        motionHalf_.resize(static_cast<size_t>(width) * height * 2);
+        for (size_t i = 0; i < motionHalf_.size(); ++i)
+            motionHalf_[i] = static_cast<_Float16>(generation.motion[i]);
+        [motion_[slot_] replaceRegion:MTLRegionMake2D(0, 0, width, height)
+                          mipmapLevel:0
+                            withBytes:motionHalf_.data()
+                          bytesPerRow:static_cast<NSUInteger>(width) * 2 * sizeof(_Float16)];
+
+        interpolator.colorTexture       = current;
+        interpolator.prevColorTexture   = previous;
+        interpolator.depthTexture       = depth_;
+        interpolator.motionTexture      = motion_[slot_];
+        interpolator.outputTexture      = output;
+        interpolator.motionVectorScaleX = motionScale_;
+        interpolator.motionVectorScaleY = motionScale_;
+        interpolator.deltaTime          = static_cast<float>(generation.interval);
+        interpolator.nearPlane          = 0.1f;
+        interpolator.farPlane           = 100.0f;
+        interpolator.fieldOfView        = 60.0f;
+        interpolator.aspectRatio        = static_cast<float>(targetW) / static_cast<float>(targetH);
+        interpolator.jitterOffsetX      = 0.0f;
+        interpolator.jitterOffsetY      = 0.0f;
+        interpolator.shouldResetHistory = reset;
+        [interpolator encodeToCommandBuffer:commands];
+        return output;
+    }
+
+    /// Development aid: copies @p texture (BGRA8) to a PPM file once the GPU is done.
+    void dumpTexture(id<MTLCommandBuffer> commands, id<MTLTexture> texture, std::string path) {
+        const NSUInteger w = texture.width, h = texture.height, pitch = w * 4;
+        id<MTLBuffer>    buffer = [device_ newBufferWithLength:pitch * h options:MTLResourceStorageModeShared];
+        id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
+        [blit copyFromTexture:texture
+                         sourceSlice:0
+                         sourceLevel:0
+                        sourceOrigin:MTLOriginMake(0, 0, 0)
+                          sourceSize:MTLSizeMake(w, h, 1)
+                            toBuffer:buffer
+                   destinationOffset:0
+              destinationBytesPerRow:pitch
+            destinationBytesPerImage:pitch * h];
+        [blit endEncoding];
+        [commands addCompletedHandler:^(id<MTLCommandBuffer>) {
+          if (FILE *file = std::fopen(path.c_str(), "wb")) {
+              std::fprintf(file, "P6\n%lu %lu\n255\n", static_cast<unsigned long>(w), static_cast<unsigned long>(h));
+              const auto *bgra = static_cast<const std::uint8_t *>(buffer.contents);
+              for (NSUInteger i = 0; i < w * h; ++i) {
+                  const std::uint8_t rgb[3] = {bgra[i * 4 + 2], bgra[i * 4 + 1], bgra[i * 4]};
+                  std::fwrite(rgb, 1, 3, file);
+              }
+              std::fclose(file);
+          }
+        }];
+    }
+
     /// One render pass: @p source's top-left sourceW×sourceH texels into @p viewport of @p target, which is
     /// cleared to @p clear first when given.
     void draw(id<MTLCommandBuffer> commands,
@@ -373,6 +608,27 @@ class MetalPresenter final : public VDPPresenter {
     id<MTLTexture>             upscaled_; // MetalFX's output
     id                         scaler_;   // id<MTLFXSpatialScaler>, macOS 13
     bool                       metalFXSupported_ = false;
+    // Frame generation (macOS 26).
+    id                         interpolator_; // id<MTLFXFrameInterpolator>
+    id<MTLTexture>             frames_[2];    // the scaled pictures, current and kept
+    int                        historySlot_   = 0;
+    bool                       historyValid_  = false;
+    int                        historyWidth_  = 0;
+    int                        historyHeight_ = 0;
+    id<MTLTexture>             between_;      // the generated frame
+    id<MTLTexture>             depth_;
+    id<MTLTexture>             motion_[kFramesInFlight];
+    std::vector<_Float16>      motionHalf_;
+    bool                       frameGenerationSupported_ = false;
+    bool                       debugGenerated_           = false;
+    bool                       debugStats_               = false;
+    std::string                dumpPrefix_;
+    int                        dumpCountdown_            = 0;
+    int                        dumpAt_                   = 120;
+    int                        statsReal_                = 0;
+    int                        statsGenerated_           = 0;
+    std::uint64_t              statsSince_               = 0;
+    float                      motionScale_              = 1.0f;
     int                        slot_ = 0;
     dispatch_semaphore_t       inFlight_;
     std::vector<std::uint32_t> staging_;

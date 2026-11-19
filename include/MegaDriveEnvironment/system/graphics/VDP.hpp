@@ -20,6 +20,7 @@
 
 class MegaDriveEnvironment;
 class VDPPresenter;
+struct VDPFrameGeneration;
 
 /**
  * @file VDP.hpp
@@ -130,6 +131,16 @@ class VDP {
     /// Whether this window can draw @p filter: all but MetalFX everywhere, MetalFX on macOS 13 or newer
     /// with a GPU that supports it. Fixed once the VDP exists; any thread.
     bool scalingFilterSupported(ScalingFilter filter) const;
+
+    /// Frame generation: MetalFX frame interpolation (macOS 26 with a supporting GPU) draws a frame between
+    /// each two pictures that differ, from motion vectors the renderer records (VDPMotion.hpp). A picture that
+    /// repeats the one on screen is not presented, so a game that changes its picture every other frame (30
+    /// fps) is shown at 60, a real frame half the interval late. Only with InternalTimer at the normal rate
+    /// (no turbo) and without interlace; off by default.
+    void setFrameGeneration(bool enabled);
+    bool frameGeneration() const;
+    /// Whether this window can generate frames. Fixed once the VDP exists; any thread.
+    bool frameGenerationSupported() const;
 
     /// Hybrid's whole multiple for a picture @p pictureSize texels wide drawn @p targetSize pixels wide: the
     /// next one up, or the same when it is whole (at least 1).
@@ -263,6 +274,7 @@ class VDP {
         bool            integerScaling  = false;
         bool            fullscreen      = false;
         ScalingFilter   scalingFilter   = Hybrid;
+        bool            frameGeneration = false;
     };
     /// Applies @p settings while the game runs. For the game's thread: it waits for the main thread, which
     /// owns the window, so boot() must be pumping events.
@@ -312,6 +324,20 @@ class VDP {
     /// Set by the render thread when it fills presentFramebuffer_, cleared by
     /// the main thread once that frame is on screen.
     std::atomic<bool> presentPending_{false};
+    /// Frame generation's records (see setFrameGeneration()): the one the renderer fills, the copy queued with
+    /// presentFramebuffer_ (valid when presentLayersValid_), and the main thread's record of the picture on
+    /// screen, with the times they were finished.
+    std::unique_ptr<VDPFrameLayers> layers_;
+    std::unique_ptr<VDPFrameLayers> presentLayers_;
+    std::unique_ptr<VDPFrameLayers> shownLayers_;
+    bool                            presentLayersValid_ = false;
+    bool                            shownLayersValid_   = false;
+    std::uint64_t                   presentTimeNs_      = 0;
+    std::uint64_t                   shownTimeNs_        = 0;
+    /// The motion vectors handed to the presenter (main thread).
+    std::vector<float> motion_;
+    /// The picture before the frame overlay, to tell its pixels (render thread).
+    std::vector<m_byte> beforeOverlay_;
 
     /// SDL window handle for display.
     SDL_Window *window_ = nullptr;
@@ -362,6 +388,11 @@ class VDP {
     std::atomic<bool> integerScaling_{false};
     /// Selected scaling filter (see setScalingFilter()).
     std::atomic<ScalingFilter> scalingFilter_{Hybrid};
+    /// Frame generation asked for (see setFrameGeneration()).
+    std::atomic<bool> frameGeneration_{false};
+    /// Whether this frame records layers for frame generation: asked for, supported, the timer at its normal
+    /// rate, no interlace. Render thread, VDP locked.
+    bool generatingFrames() const;
 
     /// Owning environment; provides system memory for DMA (via VDPPort).
     MegaDriveEnvironment *env_ = nullptr;
@@ -408,13 +439,13 @@ class VDP {
 
     /// Copies the finished frame and queues it on the SDL main thread without
     /// waiting, unless the previous copy is still pending (InternalTimer).
-    void queueAsyncPresent();
+    void queueAsyncPresent(bool generating);
 
     /// SDL main-thread callback that presents presentFramebuffer_.
     static void sdlAsyncPresentCallback(void *userdata);
 
     /// Draws the uploaded texture (W×H active area) over the background colour.
-    void renderTexture(int framebufferW, int framebufferH, m_byte bgR, m_byte bgG, m_byte bgB);
+    void renderTexture(int framebufferW, int framebufferH, m_byte bgR, m_byte bgG, m_byte bgB, const VDPFrameGeneration *generation = nullptr);
 
     /// Updates the SDL window title with the rolling average frame time.
     void updateWindowTitle();

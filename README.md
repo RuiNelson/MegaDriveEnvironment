@@ -494,6 +494,13 @@ whether the window can draw it, and it is drawn as `Hybrid` otherwise). macOS
 presents through Metal at the display's real pixels; other platforms through
 SDL_Renderer.
 
+`VDP::setFrameGeneration` (macOS 26, `frameGenerationSupported`) has MetalFX
+draw a frame between each two pictures that differ, from motion vectors the
+renderer records (`VDPMotion.hpp`: the planes' scroll, the sprites' SAT
+entries). Repeated pictures are skipped, so a game that changes its picture
+every other frame is shown at 60 fps, each real frame half the interval late.
+Only with `InternalTimer` at the normal rate and without interlace.
+
 `VDP::HardwareSpriteLimit` clips excess sprites like the hardware while still
 reporting overflow state. `VDP::QuasiUnlimitedSprites` is useful for debugging
 sprite tables without hiding entries behind the per-line limit.

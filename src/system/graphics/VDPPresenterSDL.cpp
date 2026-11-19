@@ -32,7 +32,12 @@ class SDLPresenter final : public VDPPresenter {
         return filter != VDP::MetalFX;
     }
 
-    void present(int width, int height, const m_byte background[3], bool integerScaling, VDP::ScalingFilter filter) override {
+    void present(int width,
+                 int height,
+                 const m_byte background[3],
+                 bool integerScaling,
+                 VDP::ScalingFilter filter,
+                 const VDPFrameGeneration &) override {
         if (width <= 0 || height <= 0)
             return;
         int outputW = 0;

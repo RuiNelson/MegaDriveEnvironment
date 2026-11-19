@@ -170,6 +170,29 @@ void VDPRenderer::renderScanline(int line) {
     auto *output = static_cast<m_byte *>(fb_.getRawPointer()) + outputY * Framebuffer::PITCH;
     const bool shadowHighlight = s.shadowHighlightEnabled();
 
+    std::uint8_t *sources = nullptr;
+    if (layers_ != nullptr && outputLine < VDPState::MAX_SCREEN_H) {
+        VDPFrameLayers::Line &record = layers_->lines[static_cast<std::size_t>(outputLine)];
+        record.hscrollA              = static_cast<std::int16_t>(hscrollA);
+        record.hscrollB              = static_cast<std::int16_t>(hscrollB);
+        record.twoCellVscroll        = twoCell;
+        for (int index = 0; index < VDPState::VSRAM_ENTRIES; ++index)
+            record.vsram[static_cast<std::size_t>(index)] = static_cast<std::int16_t>(s.vsram_[index]);
+        sources = layers_->source.data() + static_cast<std::size_t>(outputLine) * VDPState::MAX_SCREEN_W;
+    }
+    const int windowFrom = windowStart + windowOffsetX;
+    const int windowTo   = windowStart < windowEnd ? windowEnd + windowOffsetX : windowFrom;
+    // The layer a resolved pixel came from, for the record.
+    auto sourceOf = [&](const PixelResult *layer, int x) -> std::uint8_t {
+        if (layer == nullptr)
+            return VDPFrameLayers::Backdrop;
+        if (layer == &spriteLine_[x])
+            return static_cast<std::uint8_t>(VDPFrameLayers::SpriteBase + spriteIdLine_[x]);
+        if (layer == &planeALine_[x])
+            return x >= windowFrom && x < windowTo ? VDPFrameLayers::Window : VDPFrameLayers::PlaneA;
+        return VDPFrameLayers::PlaneB;
+    };
+
     for (int x = 0; x < activeWidth; ++x) {
         const PixelResult &planeB = planeBLine_[x];
         const PixelResult &planeA = planeALine_[x];
@@ -190,6 +213,8 @@ void VDPRenderer::renderScanline(int line) {
 
             if (under != nullptr)
                 color = paletteColors[under->palette * 16 + under->colorIndex];
+            if (sources != nullptr) // a shadow or highlight follows what it darkens or lights
+                sources[x] = sourceOf(under, x);
 
             if (sprite.colorIndex == 14) {
                 color.b = static_cast<m_byte>(std::min<int>(7, color.b + 3));
@@ -217,6 +242,8 @@ void VDPRenderer::renderScanline(int line) {
 
             if (front != nullptr)
                 color = paletteColors[front->palette * 16 + front->colorIndex];
+            if (sources != nullptr)
+                sources[x] = sourceOf(front, x);
         }
 
         output[x * Framebuffer::BPP + 0] = color.b;
@@ -623,6 +650,17 @@ void VDPRenderer::buildSpriteLine(int line) {
                 bool   hflip    = (tileWord & 0x0800) != 0;
                 int    baseTile = tileWord & 0x07FF;
                 spritePixelsOnLine += spritePixelW;
+                if (layers_ != nullptr && !layers_->sprites[static_cast<std::size_t>(spriteIdx)].drawn) {
+                    layers_->sprites[static_cast<std::size_t>(spriteIdx)] = {true,
+                                                                             static_cast<std::int16_t>(spriteX),
+                                                                             static_cast<std::int16_t>(spriteY),
+                                                                             static_cast<std::uint8_t>(spritePixelW),
+                                                                             static_cast<std::uint8_t>(spritePixelH),
+                                                                             static_cast<std::uint16_t>(baseTile),
+                                                                             palette,
+                                                                             hflip,
+                                                                             vflip};
+                }
 
                 // The row within the sprite is constant across the span — resolve it once.
                 int py = line - spriteY;
@@ -663,7 +701,8 @@ void VDPRenderer::buildSpriteLine(int line) {
                         : 0;
                     if (colorIdx != 0) {
                         if (!spriteLine_[screenX].opaque) {
-                            spriteLine_[screenX] = {colorIdx, palette, priority, true};
+                            spriteLine_[screenX]   = {colorIdx, palette, priority, true};
+                            spriteIdLine_[screenX] = static_cast<std::uint8_t>(spriteIdx);
                         } else {
                             s.status_ |= 0x0020; // SCOL: two opaque sprite pixels overlap
                         }

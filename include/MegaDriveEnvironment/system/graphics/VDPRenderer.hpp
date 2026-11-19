@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Framebuffer.hpp"
+#include "VDPMotion.hpp"
 #include "VDPState.hpp"
 #include "VDPTile.hpp"
 #include "data_types.hpp"
@@ -18,6 +19,12 @@ class VDPRenderer {
     /// Enables hardware sprite clipping. When false, all linked sprites render while SOVR is still reported.
     void setHardwareSpriteLimits(bool enabled) {
         hardwareSpriteLimits_ = enabled;
+    }
+
+    /// Records, while compositing, each pixel's source layer, each line's scroll and the sprites drawn into
+    /// @p layers (frame generation's motion vectors); null stops it. The caller calls VDPFrameLayers::begin().
+    void setLayerRecord(VDPFrameLayers *layers) {
+        layers_ = layers;
     }
 
     /// Renders the active visible frame into the framebuffer. Respects display enabled flag.
@@ -106,4 +113,9 @@ class VDPRenderer {
     /// decoding, division/modulo, and cross-translation-unit accessor calls for every output pixel.
     PixelResult planeALine_[VDPState::MAX_SCREEN_W];
     PixelResult planeBLine_[VDPState::MAX_SCREEN_W];
+
+    /// See setLayerRecord(); null when not recording.
+    VDPFrameLayers *layers_ = nullptr;
+    /// SAT index of the sprite that won each pixel of spriteLine_ (only while recording).
+    std::uint8_t spriteIdLine_[VDPState::MAX_SCREEN_W] = {};
 };

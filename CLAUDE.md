@@ -186,6 +186,19 @@ consumer after this repository's tests pass.
   The scaler is made for the 384x480 picture texture with `inputContentWidth/Height` set each frame, and
   remade when the output size changes. The tests only cover the SDL path; check Metal by running the
   consumer (the log says `Presenting through metal`), with `MTL_DEBUG_LAYER=1` after changing a pass.
+- Frame generation (user, 2026-11-19; `VDP::setFrameGeneration`, Metal only, `MTLFXFrameInterpolator`, macOS 26):
+  - Games may change the picture every other frame: Streets of Rage does in gameplay (measured). So
+    `queueAsyncPresent` skips a picture identical to the one queued last, and the interpolation runs between
+    pictures that differ, as far apart as they are (`presentTimeNs_`); it is skipped when the interval is under
+    1.8 refreshes or over 100 ms. Both frames present `afterMinimumDuration` 0.45 of the interval.
+  - Motion vectors: `VDPRenderer::setLayerRecord` records each pixel's source, each line's scroll and the
+    sprites drawn; `computeMotion` (tested in `vdp_motion_test`) compares the record of the picture on screen with
+    the new one. Pixels the frame overlay changes are still. A sprite that changes pose gets MetalFX's blend of the
+    two (user: keep it). Units are picture pixels with `motionVectorScale` 1: measured, the generated frame lands
+    exactly halfway (9 px of an 18 px scroll at 6x, no error; 2.5 mean error with zero motion).
+  - Development aids: `MDE_FRAMEGEN_DEBUG=stats|generated`, `MDE_FRAMEGEN_MOTION_SCALE`,
+    `MDE_FRAMEGEN_DUMP=PREFIX` with `MDE_FRAMEGEN_DUMP_AT=N` (PPMs straight from the GPU: no screen capture,
+    which catches whatever window is in front).
 - `VDP::Integer` opens the largest integer factor that fits with the window's
   borders, so the picture keeps its proportions. `SDL_GetWindowBordersSize` is
   unsupported on macOS, where a window that does not fit is cut instead (asked
