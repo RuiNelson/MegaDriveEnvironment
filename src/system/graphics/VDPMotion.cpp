@@ -136,17 +136,18 @@ void computeMotion(const VDPFrameLayers &previous, const VDPFrameLayers &current
     }
 }
 
-bool computePoseHolds(const VDPFrameLayers &previous, const VDPFrameLayers &current, float *holds) {
+bool computePoseHolds(const VDPFrameLayers &previous, const VDPFrameLayers &current, float fraction, float *holds) {
     const int width  = current.width;
     const int height = current.height;
     std::fill_n(holds, static_cast<std::size_t>(width) * height * 4, 0.0f);
     if (!sameFrame(previous, current))
         return false;
 
-    // Which sprites hold, and by how much: half the way from the previous position to the current one.
+    // Which sprites hold, and by how much: @p fraction of the way from the previous position to the current one.
     struct Hold {
         bool  held = false;
-        float ox = 0.0f, oy = 0.0f;
+        float ox = 0.0f, oy = 0.0f; ///< where the frame between samples the previous one, from the shown pixel
+        float nx = 0.0f, ny = 0.0f; ///< from the current position to the shown one (the rest of the way)
     };
     std::array<Hold, VDPState::SAT_MAX_SPRITES> currentHolds{};
     std::array<Hold, VDPState::SAT_MAX_SPRITES> previousHolds{};
@@ -159,7 +160,8 @@ bool computePoseHolds(const VDPFrameLayers &previous, const VDPFrameLayers &curr
             previousMatched[static_cast<std::size_t>(match.previous)] = true;
         if (match.kind == SpriteMatch::SamePattern)
             continue; // the same drawing: interpolated
-        const Hold hold{true, match.dx * 0.5f, match.dy * 0.5f};
+        const Hold hold{true, match.dx * fraction, match.dy * fraction, match.dx * (1.0f - fraction),
+                        match.dy * (1.0f - fraction)};
         currentHolds[static_cast<std::size_t>(index)] = hold;
         if (match.previous >= 0)
             previousHolds[static_cast<std::size_t>(match.previous)] = hold;
@@ -181,8 +183,8 @@ bool computePoseHolds(const VDPFrameLayers &previous, const VDPFrameLayers &curr
         out[2] = 1.0f;
         any    = true;
     };
-    // The old pose where it is halfway (its previous position minus the offset), then the new pose's pixels
-    // where it is halfway (its current position plus the offset), so neither shows as a blend.
+    // The old pose where it is at @p fraction (its previous position minus the offset), then the new pose's
+    // pixels where it would be (its current position plus the rest of the way), so neither shows as a blend.
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             const std::uint8_t source = previous.source[static_cast<std::size_t>(y) * VDPState::MAX_SCREEN_W + x];
@@ -200,7 +202,7 @@ bool computePoseHolds(const VDPFrameLayers &previous, const VDPFrameLayers &curr
                 continue;
             const Hold &hold = currentHolds[static_cast<std::size_t>(source - VDPFrameLayers::SpriteBase)];
             if (hold.held)
-                mark(static_cast<int>(std::lround(x + hold.ox)), static_cast<int>(std::lround(y + hold.oy)), hold);
+                mark(static_cast<int>(std::lround(x + hold.nx)), static_cast<int>(std::lround(y + hold.ny)), hold);
         }
     }
     return any;

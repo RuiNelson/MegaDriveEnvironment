@@ -495,10 +495,11 @@ presents through Metal at the display's real pixels; other platforms through
 SDL_Renderer.
 
 `VDP::setFrameGeneration` (macOS 26, `frameGenerationSupported`) has MetalFX
-draw a frame between each two pictures that differ, from motion vectors the
+draw frames between each two pictures that differ, from motion vectors the
 renderer records (`VDPMotion.hpp`: the planes' scroll, the sprites' SAT
-entries). Repeated pictures are skipped, so a game that changes its picture
-every other frame is shown at 60 fps, each real frame half the interval late.
+entries): one halfway, or three when the display refreshes at least 3.5 times
+in the interval. Repeated pictures are skipped, so a game that changes its
+picture every other frame is shown at 60 fps, or 120 on a 120 Hz display.
 Only with `InternalTimer` at the normal rate and without interlace.
 `VDP::GenerateFrames` lets MetalFX blend a sprite's two poses in the frame
 between; `VDP::GenerateHoldPoses` keeps its old pose there instead

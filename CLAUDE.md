@@ -190,7 +190,15 @@ consumer after this repository's tests pass.
   - Games may change the picture every other frame: Streets of Rage does in gameplay (measured). So
     `queueAsyncPresent` skips a picture identical to the one queued last, and the interpolation runs between
     pictures that differ, as far apart as they are (`presentTimeNs_`); it is skipped when the interval is under
-    1.8 refreshes or over 100 ms. Both frames present `afterMinimumDuration` 0.45 of the interval.
+    1.8 refreshes or over 100 ms. Three frames between when the interval is at least 3.5 refreshes (30 fps on
+    120 Hz: 120 fps, user), else one; each frame presents `afterMinimumDuration` 0.9 of its share of the
+    interval. A layer has three drawables, so each frame is committed in its own command buffer before the next
+    drawable is asked for (the fourth waits for the first to show: the main thread waits about half the interval).
+  - MetalFX makes only halfway frames, and only from a continuous history: each call's previous frame must be its
+    last call's current one; a reset call returns the current frame unchanged, and scaled motion does not move
+    the time (it blends: measured). So interpolator 0 sees previous/current and makes the half; interpolator 1 sees
+    the 60 fps sequence previous, half, current, half', ... and makes the quarters. `continuous_` resets one when a
+    kept frame skipped it. Measured during a scroll of 12 px: -9, -6, -3 from the current frame, no error.
   - Motion vectors: `VDPRenderer::setLayerRecord` records each pixel's source, each line's scroll and the
     sprites drawn; `computeMotion` (tested in `vdp_motion_test`) compares the record of the picture on screen with
     the new one. Pixels the frame overlay changes are still.

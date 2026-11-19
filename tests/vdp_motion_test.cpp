@@ -108,7 +108,7 @@ int main() {
         now->source[102 * VDPState::MAX_SCREEN_W + 202]  = VDPFrameLayers::SpriteBase + 20;
         then->source[152 * VDPState::MAX_SCREEN_W + 251] = VDPFrameLayers::SpriteBase + 30;
         std::vector<float> holds(static_cast<std::size_t>(W) * H * 4);
-        assert(computePoseHolds(*then, *now, holds.data()));
+        assert(computePoseHolds(*then, *now, 0.5f, holds.data()));
         auto at = [&](int x, int y) { return holds.data() + (static_cast<std::size_t>(y) * W + x) * 4; };
         assert(at(39, 65)[2] == 1.0f && at(39, 65)[0] == 2.0f && at(39, 65)[1] == 0.0f);
         assert(at(52, 65)[2] == 1.0f && at(52, 65)[0] == 2.0f);
@@ -118,12 +118,19 @@ int main() {
         assert(at(251, 152)[2] == 1.0f && at(251, 152)[0] == 0.0f);
         assert(at(0, 0)[2] == 0.0f);
 
+        // A quarter of the way: the old pixel at 41 shows at 40 (1 px of the 4), sampling 1 px to its right;
+        // the new pixel at 50 at 53 (3 px still to go), sampling the same 1 px.
+        assert(computePoseHolds(*then, *now, 0.25f, holds.data()));
+        assert(at(40, 65)[2] == 1.0f && at(40, 65)[0] == 1.0f);
+        assert(at(53, 65)[2] == 1.0f && at(53, 65)[0] == 1.0f);
+        assert(at(39, 65)[2] == 0.0f && at(52, 65)[2] == 0.0f);
+
         // Nothing changed pattern, appeared or went: nothing holds.
         now->sprites[4]   = then->sprites[4];
         now->sprites[20]  = {};
         then->sprites[30] = {};
         now->source[102 * VDPState::MAX_SCREEN_W + 202] = VDPFrameLayers::Backdrop;
-        assert(!computePoseHolds(*then, *now, holds.data()));
+        assert(!computePoseHolds(*then, *now, 0.5f, holds.data()));
     }
 
     // Another picture size: no motion at all.

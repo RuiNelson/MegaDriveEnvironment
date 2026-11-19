@@ -18,12 +18,15 @@
 struct VDPFrameGeneration {
     /// Keep this picture for the next interpolation; false drops what was kept.
     bool keep = false;
-    /// When set, first draw a frame between the kept picture and this one: width×height (x, y) motion
-    /// vectors in picture pixels (computeMotion()), the two @p interval seconds apart.
+    /// When set, first draw @p frames frames between the kept picture and this one (1 halfway, or 3 at a quarter,
+    /// half and three quarters of the way), from width×height (x, y) motion vectors in picture pixels
+    /// (computeMotion()), the two @p interval seconds apart, each shown for an equal share of it.
     const float *motion   = nullptr;
     double       interval = 0.0;
-    /// With @p motion, where that frame shows the kept picture instead (computePoseHolds()); null for none.
-    const float *holds = nullptr;
+    int          frames   = 1;
+    /// With @p motion, where each of those frames, in order, shows the kept picture instead
+    /// (computePoseHolds()); null for none.
+    const float *holds[3] = {};
 };
 
 class VDPPresenter {
