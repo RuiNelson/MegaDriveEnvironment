@@ -17,7 +17,6 @@
 #import <QuartzCore/CAMetalLayer.h>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -98,11 +97,10 @@ class MetalPresenter final : public VDPPresenter {
         @autoreleasepool {
             pipeline_ = nil;
             hybrid_   = nil;
-            for (auto &interpolator : interpolators_)
-                interpolator = nil;
+            interpolator_ = nil;
             frames_[0] = frames_[1] = nil;
-            for (int index = 0; index < 3; ++index)
-                between_[index] = held_[index] = nil;
+            between_  = nil;
+            held_     = nil;
             holdPipeline_ = nil;
             for (auto &texture : holds_)
                 texture = nil;
@@ -191,9 +189,8 @@ class MetalPresenter final : public VDPPresenter {
                 debugStats_     = true;
                 debugGenerated_ = SDL_strcmp(debug, "generated") == 0;
             }
-            // MDE_FRAMEGEN_DUMP=PREFIX writes, at the MDE_FRAMEGEN_DUMP_AT-th real frame (120 by default) with
-            // frames between while most of the picture moves (scrolling), PREFIX-previous.ppm, PREFIX-betweenN.ppm
-            // and PREFIX-current.ppm.
+            // MDE_FRAMEGEN_DUMP=PREFIX writes the generated frame MDE_FRAMEGEN_DUMP_AT (120 by default) and the
+            // two around it as PREFIX-previous.ppm, PREFIX-between.ppm and PREFIX-current.ppm.
             if (const char *dump = SDL_getenv("MDE_FRAMEGEN_DUMP"))
                 dumpPrefix_ = dump;
             if (const char *at = SDL_getenv("MDE_FRAMEGEN_DUMP_AT"))
@@ -272,8 +269,7 @@ class MetalPresenter final : public VDPPresenter {
             bool                 presented = false;
 
             if (!generation.keep) {
-                historyValid_  = false;
-                continuous_[0] = continuous_[1] = false;
+                historyValid_ = false;
             } else if (@available(macOS 26.0, *)) {
                 // The scaled picture goes into a texture of its own, kept for the next interpolation.
                 const int      current = 1 - historySlot_;
@@ -286,55 +282,41 @@ class MetalPresenter final : public VDPPresenter {
                                          static_cast<int>(previous.width) == targetW &&
                                          static_cast<int>(previous.height) == targetH && historyWidth_ == width &&
                                          historyHeight_ == height;
-
-                    // The frames between, in order: halfway, or a quarter, half and three quarters of the way.
-                    // MetalFX makes only halfway frames, from a continuous history (each call's previous frame is
-                    // the last call's current one; a reset returns the current frame as it is), so the quarters
-                    // come from a second interpolator fed the 60 fps sequence previous, half, current, half', ...:
-                    // halfway between the previous frame and the halfway one, then between that and the current,
-                    // each with half the motion.
-                    std::array<id<MTLTexture>, 3> between{};
-                    int                           count = 0;
-                    if (history && generation.motion != nullptr && uploadMotion(generation.motion, width, height)) {
-                        const float    interval = static_cast<float>(generation.interval);
-                        id<MTLTexture> half =
-                            interpolate(0, 0, commands, previous, frame, 1.0f, interval, width, height, targetW, targetH);
-                        if (half != nil) {
-                            between = {half};
-                            count   = 1;
-                            if (generation.frames == 3) {
-                                id<MTLTexture> first = interpolate(1, 1, commands, previous, half, 0.5f, interval * 0.5f,
-                                                                   width, height, targetW, targetH);
-                                id<MTLTexture> last  = interpolate(1, 2, commands, half, frame, 0.5f, interval * 0.5f,
-                                                                   width, height, targetW, targetH);
-                                if (first != nil && last != nil) {
-                                    between = {first, half, last};
-                                    count   = 3;
-                                }
-                            }
-                        }
-                        for (int index = 0; index < count; ++index) {
-                            // Holds were made for generation.frames frames; a lone halfway one takes the middle's.
-                            const float *holds = generation.holds[count == generation.frames ? index
-                                                                  : generation.frames == 3 ? 1
-                                                                                           : 0];
-                            if (holds != nullptr)
-                                between[static_cast<size_t>(index)] =
-                                    holdPoses(index, commands, between[static_cast<size_t>(index)], previous, holds,
-                                              width, height, targetW, targetH);
+                    const MTLViewport place{dst.x, dst.y, double(targetW), double(targetH), 0, 1};
+                    // Both frames wait half the interval after the one before, so they share it evenly
+                    // whatever the display's rate (a little less, so a late present does not miss a refresh).
+                    const double half = generation.interval * 0.5 * 0.9;
+                    id<MTLTexture> between =
+                        history && generation.motion != nullptr
+                            ? interpolate(commands, previous, frame, generation, width, height, targetW, targetH)
+                            : nil;
+                    if (between != nil && generation.holds != nullptr)
+                        between = holdPoses(commands, between, previous, generation.holds, width, height, targetW, targetH);
+                    if (between != nil) {
+                        id<CAMetalDrawable> first = [layer_ nextDrawable];
+                        if (first != nil) {
+                            draw(commands, first.texture, &clear, place, between, float(targetW), float(targetH),
+                                 false);
+                            [commands presentDrawable:first afterMinimumDuration:half];
                         }
                     }
-                    if (count > 0 && !dumpPrefix_.empty() && scrolling(generation.motion, width, height) &&
-                        ++dumpCountdown_ == dumpAt_) {
+                    id<CAMetalDrawable> drawable = [layer_ nextDrawable];
+                    if (drawable != nil) {
+                        draw(commands, drawable.texture, &clear, place, debugGenerated_ && between ? between : frame,
+                             float(targetW), float(targetH), false);
+                        if (between != nil)
+                            [commands presentDrawable:drawable afterMinimumDuration:half];
+                        else
+                            [commands presentDrawable:drawable];
+                    }
+                    if (between != nil && !dumpPrefix_.empty() && ++dumpCountdown_ == dumpAt_) {
                         dumpTexture(commands, previous, dumpPrefix_ + "-previous.ppm");
-                        for (int index = 0; index < count; ++index)
-                            dumpTexture(commands, between[static_cast<size_t>(index)],
-                                        dumpPrefix_ + "-between" + std::to_string(index + 1) + ".ppm");
+                        dumpTexture(commands, between, dumpPrefix_ + "-between.ppm");
                         dumpTexture(commands, frame, dumpPrefix_ + "-current.ppm");
                     }
                     if (debugStats_) {
                         ++statsReal_;
-                        statsGenerated_ += count;
+                        statsGenerated_ += between != nil ? 1 : 0;
                         const std::uint64_t now = SDL_GetTicksNS();
                         if (now - statsSince_ >= 1'000'000'000ull) {
                             SDL_Log("[VDP] frame generation: %d real, %d generated", statsReal_, statsGenerated_);
@@ -342,32 +324,6 @@ class MetalPresenter final : public VDPPresenter {
                             statsSince_                  = now;
                         }
                     }
-
-                    // Each frame waits its share of the interval after the one before (a little less, so a late
-                    // present does not miss a refresh). A layer has three drawables, so each frame is committed
-                    // before the next drawable is asked for: the fourth waits for the first to be shown.
-                    const MTLViewport place{dst.x, dst.y, double(targetW), double(targetH), 0, 1};
-                    const double      share = generation.interval / (count + 1) * 0.9;
-                    for (int index = 0; index <= count; ++index) {
-                        id<MTLTexture> image =
-                            index < count ? between[static_cast<size_t>(index)]
-                                          : (debugGenerated_ && count > 0 ? between[static_cast<size_t>(count / 2)] : frame);
-                        id<CAMetalDrawable> drawable = [layer_ nextDrawable];
-                        if (drawable != nil) {
-                            draw(commands, drawable.texture, &clear, place, image, float(targetW), float(targetH), false);
-                            if (count > 0)
-                                [commands presentDrawable:drawable afterMinimumDuration:share];
-                            else
-                                [commands presentDrawable:drawable];
-                        }
-                        if (index < count) {
-                            [commands commit];
-                            commands = [queue_ commandBuffer];
-                        }
-                    }
-                    // An interpolator not called for this frame has lost its sequence.
-                    continuous_[0] = count >= 1;
-                    continuous_[1] = count == 3;
                     historySlot_   = current;
                     historyValid_  = true;
                     historyWidth_  = width;
@@ -450,47 +406,18 @@ class MetalPresenter final : public VDPPresenter {
         return result;
     }
 
-    /// Uploads the motion vectors (picture pixels, width×height pairs) for this frame's interpolations.
-    bool uploadMotion(const float *motion, int width, int height) {
-        id<MTLTexture> __strong &texture = motion_[slot_];
-        if (texture == nil || static_cast<int>(texture.width) != width || static_cast<int>(texture.height) != height) {
-            MTLTextureDescriptor *descriptor =
-                [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRG16Float
-                                                                   width:width
-                                                                  height:height
-                                                               mipmapped:NO];
-            descriptor.usage = MTLTextureUsageShaderRead;
-            texture          = [device_ newTextureWithDescriptor:descriptor];
-            if (texture == nil)
-                return false;
-        }
-        motionHalf_.resize(static_cast<size_t>(width) * height * 2);
-        for (size_t i = 0; i < motionHalf_.size(); ++i)
-            motionHalf_[i] = static_cast<_Float16>(motion[i]);
-        [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
-                   mipmapLevel:0
-                     withBytes:motionHalf_.data()
-                   bytesPerRow:static_cast<NSUInteger>(width) * 2 * sizeof(_Float16)];
-        return true;
-    }
-
-    /// MetalFX's frame halfway between @p previous and @p current (both targetW×targetH), from this frame's
-    /// motion times @p motionFactor, with interpolator @p index (0 for the real frames, 1 for the quarters), into
-    /// output @p outputIndex. Each interpolator must be fed a continuous sequence: @p previous is its last call's
-    /// @p current. Nil when it cannot be made.
-    id<MTLTexture> interpolate(int                  index,
-                               int                  outputIndex,
-                               id<MTLCommandBuffer> commands,
-                               id<MTLTexture>       previous,
-                               id<MTLTexture>       current,
-                               float                motionFactor,
-                               float                deltaTime,
-                               int                  width,
-                               int                  height,
-                               int                  targetW,
-                               int                  targetH) API_AVAILABLE(macos(26.0)) {
-        id<MTLFXFrameInterpolator> interpolator = interpolators_[index];
-        bool                       reset        = !continuous_[index]; // its sequence was broken
+    /// MetalFX's frame between @p previous and @p current (both targetW×targetH), from the motion of the
+    /// width×height picture; nil when the interpolator cannot be made.
+    id<MTLTexture> interpolate(id<MTLCommandBuffer>      commands,
+                               id<MTLTexture>            previous,
+                               id<MTLTexture>            current,
+                               const VDPFrameGeneration &generation,
+                               int                       width,
+                               int                       height,
+                               int                       targetW,
+                               int                       targetH) API_AVAILABLE(macos(26.0)) {
+        id<MTLFXFrameInterpolator> interpolator = interpolator_;
+        bool                       reset        = false;
         if (interpolator == nil || static_cast<int>(interpolator.inputWidth) != width ||
             static_cast<int>(interpolator.inputHeight) != height ||
             static_cast<int>(interpolator.outputWidth) != targetW ||
@@ -505,17 +432,13 @@ class MetalPresenter final : public VDPPresenter {
             descriptor.outputWidth         = targetW;
             descriptor.outputHeight        = targetH;
             interpolator                   = [descriptor newFrameInterpolatorWithDevice:device_];
-            interpolators_[index]          = interpolator;
-            reset                          = true;
-            if (interpolator == nil || (interpolator.colorTextureUsage & ~current.usage) != 0 ||
-                (interpolator.motionTextureUsage & ~motion_[slot_].usage) != 0) {
+            interpolator_                  = interpolator;
+            if (interpolator == nil || (interpolator.colorTextureUsage & ~current.usage) != 0) {
                 SDL_Log("[VDP] MetalFX cannot interpolate %dx%d to %dx%d", width, height, targetW, targetH);
-                interpolators_[index] = nil;
+                interpolator_ = nil;
                 return nil;
             }
-        }
-        // A 2D picture has no depth: one plane, cleared once.
-        if (depth_ == nil || static_cast<int>(depth_.width) != width || static_cast<int>(depth_.height) != height) {
+            // A 2D picture has no depth: one plane, cleared once.
             MTLTextureDescriptor *depth =
                 [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
                                                                    width:width
@@ -524,28 +447,44 @@ class MetalPresenter final : public VDPPresenter {
             depth.usage       = interpolator.depthTextureUsage | MTLTextureUsageRenderTarget;
             depth.storageMode = MTLStorageModePrivate;
             depth_            = [device_ newTextureWithDescriptor:depth];
-            if (depth_ == nil)
-                return nil;
             MTLRenderPassDescriptor *clearDepth   = [MTLRenderPassDescriptor renderPassDescriptor];
             clearDepth.depthAttachment.texture     = depth_;
             clearDepth.depthAttachment.loadAction  = MTLLoadActionClear;
             clearDepth.depthAttachment.storeAction = MTLStoreActionStore;
             clearDepth.depthAttachment.clearDepth  = 0.5;
             [[commands renderCommandEncoderWithDescriptor:clearDepth] endEncoding];
+
+            MTLTextureDescriptor *motion =
+                [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRG16Float
+                                                                   width:width
+                                                                  height:height
+                                                               mipmapped:NO];
+            motion.usage = interpolator.motionTextureUsage | MTLTextureUsageShaderRead;
+            for (auto &texture : motion_)
+                texture = [device_ newTextureWithDescriptor:motion];
+            reset = true;
         }
-        // The halfway frame is also the quarters' input.
-        id<MTLTexture> output = scratch(between_[outputIndex], targetW, targetH, interpolator.outputTextureUsage | kFrameUsage);
-        if (output == nil)
+        id<MTLTexture> output = scratch(between_, targetW, targetH, interpolator.outputTextureUsage);
+        if (output == nil || depth_ == nil || motion_[slot_] == nil)
             return nil;
+
+        // Picture pixels, as half floats.
+        motionHalf_.resize(static_cast<size_t>(width) * height * 2);
+        for (size_t i = 0; i < motionHalf_.size(); ++i)
+            motionHalf_[i] = static_cast<_Float16>(generation.motion[i]);
+        [motion_[slot_] replaceRegion:MTLRegionMake2D(0, 0, width, height)
+                          mipmapLevel:0
+                            withBytes:motionHalf_.data()
+                          bytesPerRow:static_cast<NSUInteger>(width) * 2 * sizeof(_Float16)];
 
         interpolator.colorTexture       = current;
         interpolator.prevColorTexture   = previous;
         interpolator.depthTexture       = depth_;
         interpolator.motionTexture      = motion_[slot_];
         interpolator.outputTexture      = output;
-        interpolator.motionVectorScaleX = motionScale_ * motionFactor;
-        interpolator.motionVectorScaleY = motionScale_ * motionFactor;
-        interpolator.deltaTime          = deltaTime;
+        interpolator.motionVectorScaleX = motionScale_;
+        interpolator.motionVectorScaleY = motionScale_;
+        interpolator.deltaTime          = static_cast<float>(generation.interval);
         interpolator.nearPlane          = 0.1f;
         interpolator.farPlane           = 100.0f;
         interpolator.fieldOfView        = 60.0f;
@@ -557,9 +496,8 @@ class MetalPresenter final : public VDPPresenter {
         return output;
     }
 
-    /// Generated frame @p index with its pose holds (VDPFrameGeneration::holds) taken from the previous frame.
-    id<MTLTexture> holdPoses(int                  index,
-                             id<MTLCommandBuffer> commands,
+    /// The generated frame with the pose holds (VDPFrameGeneration::holds) taken from the previous frame.
+    id<MTLTexture> holdPoses(id<MTLCommandBuffer> commands,
                              id<MTLTexture>       generated,
                              id<MTLTexture>       previous,
                              const float         *holds,
@@ -567,7 +505,7 @@ class MetalPresenter final : public VDPPresenter {
                              int                  height,
                              int                  targetW,
                              int                  targetH) {
-        id<MTLTexture> __strong &holdTexture = holds_[slot_ * 3 + index];
+        id<MTLTexture> __strong &holdTexture = holds_[slot_];
         if (holdTexture == nil || static_cast<int>(holdTexture.width) != width ||
             static_cast<int>(holdTexture.height) != height) {
             MTLTextureDescriptor *descriptor =
@@ -578,7 +516,7 @@ class MetalPresenter final : public VDPPresenter {
             descriptor.usage = MTLTextureUsageShaderRead;
             holdTexture      = [device_ newTextureWithDescriptor:descriptor];
         }
-        id<MTLTexture> output = scratch(held_[index], targetW, targetH, MTLTextureUsageRenderTarget);
+        id<MTLTexture> output = scratch(held_, targetW, targetH, MTLTextureUsageRenderTarget);
         if (holdTexture == nil || output == nil)
             return generated;
         holdsHalf_.resize(static_cast<size_t>(width) * height * 4);
@@ -606,15 +544,6 @@ class MetalPresenter final : public VDPPresenter {
         [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
         [encoder endEncoding];
         return output;
-    }
-
-    /// Development aid: whether most of the picture moves (the camera scrolls).
-    static bool scrolling(const float *motion, int width, int height) {
-        size_t moving = 0;
-        const size_t pixels = static_cast<size_t>(width) * height;
-        for (size_t i = 0; i < pixels; ++i)
-            moving += motion[i * 2] != 0.0f || motion[i * 2 + 1] != 0.0f;
-        return moving * 2 > pixels;
     }
 
     /// Development aid: copies @p texture (BGRA8) to a PPM file once the GPU is done.
@@ -755,19 +684,18 @@ class MetalPresenter final : public VDPPresenter {
     id                         scaler_;   // id<MTLFXSpatialScaler>, macOS 13
     bool                       metalFXSupported_ = false;
     // Frame generation (macOS 26).
-    id                         interpolators_[2]; // id<MTLFXFrameInterpolator>: halfway, quarters
-    bool                       continuous_[2] = {}; // each was called for the last kept frame
+    id                         interpolator_; // id<MTLFXFrameInterpolator>
     id<MTLTexture>             frames_[2];    // the scaled pictures, current and kept
     int                        historySlot_   = 0;
     bool                       historyValid_  = false;
     int                        historyWidth_  = 0;
     int                        historyHeight_ = 0;
-    id<MTLTexture>             between_[3];   // their outputs
+    id<MTLTexture>             between_;      // the generated frame
     id<MTLTexture>             depth_;
     id<MTLTexture>             motion_[kFramesInFlight];
     std::vector<_Float16>      motionHalf_;
-    id<MTLTexture>             holds_[kFramesInFlight * 3]; // pose holds, picture-sized, per frame between
-    id<MTLTexture>             held_[3];                    // the frames between with them
+    id<MTLTexture>             holds_[kFramesInFlight]; // pose holds, picture-sized
+    id<MTLTexture>             held_;                    // the generated frame with them
     std::vector<_Float16>      holdsHalf_;
     bool                       frameGenerationSupported_ = false;
     bool                       debugGenerated_           = false;

@@ -139,11 +139,10 @@ class VDP {
     /// with a GPU that supports it. Fixed once the VDP exists; any thread.
     bool scalingFilterSupported(ScalingFilter filter) const;
 
-    /// Frame generation: MetalFX frame interpolation (macOS 26 with a supporting GPU) draws frames between
-    /// each two pictures that differ, from motion vectors the renderer records (VDPMotion.hpp): one halfway, or
-    /// three (a quarter of the way each) when the display has room for them. A picture that repeats the one on
-    /// screen is not presented, so a game that changes its picture every other frame (30 fps) is shown at 60, or
-    /// 120 on a 120 Hz display, each real frame up to one interval minus a share late. Only with InternalTimer at the normal rate
+    /// Frame generation: MetalFX frame interpolation (macOS 26 with a supporting GPU) draws a frame between
+    /// each two pictures that differ, from motion vectors the renderer records (VDPMotion.hpp). A picture that
+    /// repeats the one on screen is not presented, so a game that changes its picture every other frame (30
+    /// fps) is shown at 60, a real frame half the interval late. Only with InternalTimer at the normal rate
     /// (no turbo) and without interlace; off by default. GenerateHoldPoses keeps a sprite's old pose in the frame
     /// between (computePoseHolds()) where GenerateFrames lets MetalFX blend the two.
     void            setFrameGeneration(FrameGeneration mode);
@@ -345,7 +344,7 @@ class VDP {
     std::uint64_t                   shownTimeNs_        = 0;
     /// The motion vectors and pose holds handed to the presenter (main thread).
     std::vector<float> motion_;
-    std::array<std::vector<float>, 3> holds_;
+    std::vector<float> holds_;
     /// The picture before the frame overlay, to tell its pixels (render thread).
     std::vector<m_byte> beforeOverlay_;
 

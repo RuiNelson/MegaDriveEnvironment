@@ -787,18 +787,10 @@ void VDP::sdlAsyncPresentCallback(void *userdata) {
                 computeMotion(*self->shownLayers_, *self->presentLayers_, self->motion_.data());
                 generation.motion   = self->motion_.data();
                 generation.interval = static_cast<double>(interval) / 1e9;
-                // Three frames between (a quarter of the way each) when the display has room for them: a 30 fps
-                // picture on a 120 Hz display. MetalFX makes only halfway frames, so not two.
-                generation.frames = interval * 10 >= refresh * 35 ? 3 : 1;
                 if (self->frameGeneration() == GenerateHoldPoses) {
-                    const size_t size = static_cast<size_t>(self->presentWidth_) * self->presentHeight_ * 4;
-                    for (int index = 0; index < generation.frames; ++index) {
-                        std::vector<float> &holds = self->holds_[static_cast<size_t>(index)];
-                        holds.resize(size);
-                        const float fraction = static_cast<float>(index + 1) / static_cast<float>(generation.frames + 1);
-                        if (computePoseHolds(*self->shownLayers_, *self->presentLayers_, fraction, holds.data()))
-                            generation.holds[index] = holds.data();
-                    }
+                    self->holds_.resize(static_cast<size_t>(self->presentWidth_) * self->presentHeight_ * 4);
+                    if (computePoseHolds(*self->shownLayers_, *self->presentLayers_, self->holds_.data()))
+                        generation.holds = self->holds_.data();
                 }
             }
             std::swap(self->shownLayers_, self->presentLayers_);
