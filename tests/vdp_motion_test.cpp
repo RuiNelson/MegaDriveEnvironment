@@ -84,6 +84,48 @@ int main() {
     assert(motionX(motion, W, 202, 102) == 0.0f && motionY(motion, W, 202, 102) == 0.0f);
     assert(motionX(motion, W, 0, 0) == 0.0f); // backdrop
 
+    // Pose holds. Sprite 4 changed pattern and moved 4 px left (x 40 to 36), so a frame halfway holds it 2 px
+    // from each end, taken from the previous frame 2 px to the right of where it shows: its old pixel at 41 shows
+    // at 39, its new pixel at 50 at 52. Sprite 3 kept its pattern: interpolated, no hold. Sprite 20 is new and
+    // sprite 30 is gone: each holds where it is, offset 0.
+    {
+        auto then = std::make_unique<VDPFrameLayers>();
+        auto now  = std::make_unique<VDPFrameLayers>();
+        then->begin(W, H, 512, 256, 0);
+        now->begin(W, H, 512, 256, 0);
+        fill(*then, VDPFrameLayers::Backdrop);
+        fill(*now, VDPFrameLayers::Backdrop);
+        then->sprites[4]  = {true, 40, 60, 24, 24, 0x300, 2, false, false};
+        now->sprites[4]   = {true, 36, 60, 24, 24, 0x318, 2, false, false};
+        then->sprites[9]  = {true, 100, 50, 16, 32, 0x200, 1, false, false};
+        now->sprites[3]   = {true, 106, 50, 16, 32, 0x200, 1, false, false};
+        now->sprites[20]  = {true, 200, 100, 8, 8, 0x400, 0, false, false};
+        then->sprites[30] = {true, 250, 150, 8, 8, 0x500, 0, false, false};
+        then->source[65 * VDPState::MAX_SCREEN_W + 41]   = VDPFrameLayers::SpriteBase + 4;
+        now->source[65 * VDPState::MAX_SCREEN_W + 50]    = VDPFrameLayers::SpriteBase + 4;
+        then->source[55 * VDPState::MAX_SCREEN_W + 104]  = VDPFrameLayers::SpriteBase + 9;
+        now->source[55 * VDPState::MAX_SCREEN_W + 110]   = VDPFrameLayers::SpriteBase + 3;
+        now->source[102 * VDPState::MAX_SCREEN_W + 202]  = VDPFrameLayers::SpriteBase + 20;
+        then->source[152 * VDPState::MAX_SCREEN_W + 251] = VDPFrameLayers::SpriteBase + 30;
+        std::vector<float> holds(static_cast<std::size_t>(W) * H * 4);
+        assert(computePoseHolds(*then, *now, holds.data()));
+        auto at = [&](int x, int y) { return holds.data() + (static_cast<std::size_t>(y) * W + x) * 4; };
+        assert(at(39, 65)[2] == 1.0f && at(39, 65)[0] == 2.0f && at(39, 65)[1] == 0.0f);
+        assert(at(52, 65)[2] == 1.0f && at(52, 65)[0] == 2.0f);
+        assert(at(41, 65)[2] == 0.0f && at(50, 65)[2] == 0.0f);
+        assert(at(110, 55)[2] == 0.0f && at(107, 55)[2] == 0.0f && at(104, 55)[2] == 0.0f);
+        assert(at(202, 102)[2] == 1.0f && at(202, 102)[0] == 0.0f);
+        assert(at(251, 152)[2] == 1.0f && at(251, 152)[0] == 0.0f);
+        assert(at(0, 0)[2] == 0.0f);
+
+        // Nothing changed pattern, appeared or went: nothing holds.
+        now->sprites[4]   = then->sprites[4];
+        now->sprites[20]  = {};
+        then->sprites[30] = {};
+        now->source[102 * VDPState::MAX_SCREEN_W + 202] = VDPFrameLayers::Backdrop;
+        assert(!computePoseHolds(*then, *now, holds.data()));
+    }
+
     // Another picture size: no motion at all.
     current->begin(256, 224, 512, 256, 0);
     fill(*current, VDPFrameLayers::PlaneA);

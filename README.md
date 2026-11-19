@@ -500,6 +500,9 @@ renderer records (`VDPMotion.hpp`: the planes' scroll, the sprites' SAT
 entries). Repeated pictures are skipped, so a game that changes its picture
 every other frame is shown at 60 fps, each real frame half the interval late.
 Only with `InternalTimer` at the normal rate and without interlace.
+`VDP::GenerateFrames` lets MetalFX blend a sprite's two poses in the frame
+between; `VDP::GenerateHoldPoses` keeps its old pose there instead
+(`computePoseHolds`).
 
 `VDP::HardwareSpriteLimit` clips excess sprites like the hardware while still
 reporting overflow state. `VDP::QuasiUnlimitedSprites` is useful for debugging

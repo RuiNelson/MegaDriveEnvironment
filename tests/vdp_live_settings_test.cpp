@@ -26,14 +26,14 @@ int main() {
         // The dummy driver draws through SDL_Renderer, which has no MetalFX.
         assert(vdp.scalingFilterSupported(VDP::Nearest) && vdp.scalingFilterSupported(VDP::Bilinear));
         assert(vdp.scalingFilterSupported(VDP::Hybrid) && !vdp.scalingFilterSupported(VDP::MetalFX));
-        assert(!vdp.frameGeneration() && !vdp.frameGenerationSupported());
+        assert(vdp.frameGeneration() == VDP::NoFrameGeneration && !vdp.frameGenerationSupported());
 
         VDP::LiveSettings settings;
         settings.synchronization = VDP::VSync2;
         settings.widescreen      = true;
         settings.integerScaling  = true;
         settings.scalingFilter   = VDP::Nearest;
-        settings.frameGeneration = true;
+        settings.frameGeneration = VDP::GenerateHoldPoses;
 
         std::atomic<bool> done{false};
         std::thread       game([&] {
@@ -48,7 +48,7 @@ int main() {
         assert(vdp.widescreen());
         assert(vdp.integerScaling());
         assert(vdp.scalingFilter() == VDP::Nearest);
-        assert(vdp.frameGeneration()); // kept, though SDL_Renderer does not generate frames
+        assert(vdp.frameGeneration() == VDP::GenerateHoldPoses); // kept, though SDL_Renderer does not generate
         assert(!vdp.fullscreen());
 
         settings.synchronization = VDP::InternalTimer;

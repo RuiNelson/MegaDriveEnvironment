@@ -56,6 +56,22 @@ fragment float4 vdpFragment(VertexOut in [[stage_in]],
     const float2 texel = clamp(in.texel, float2(0.5), frame.size - 0.5);
     return float4(picture.sample(picker, texel / frame.textureSize).rgb, 1.0);
 }
+
+// Frame generation without pose blending: where the picture-sized hold texture says so, the previous real frame,
+// moved by the hold's offset (picture pixels), instead of the generated frame. frame.size is the output's size
+// and frame.textureSize the picture's.
+fragment float4 vdpHold(VertexOut in [[stage_in]],
+                        texture2d<float> generated [[texture(0)]],
+                        texture2d<float> previous [[texture(1)]],
+                        texture2d<float> holds [[texture(2)]],
+                        sampler picker [[sampler(0)]],
+                        constant Frame &frame [[buffer(0)]]) {
+    const float2 uv   = in.texel / frame.size;
+    const float4 hold = holds.sample(picker, uv);
+    if (hold.z < 0.5)
+        return float4(generated.sample(picker, uv).rgb, 1.0);
+    return float4(previous.sample(picker, clamp(uv + hold.xy / frame.textureSize, 0.0, 1.0)).rgb, 1.0);
+}
 )metal";
 
 constexpr int kFramesInFlight = 3;
@@ -84,6 +100,10 @@ class MetalPresenter final : public VDPPresenter {
             interpolator_ = nil;
             frames_[0] = frames_[1] = nil;
             between_  = nil;
+            held_     = nil;
+            holdPipeline_ = nil;
+            for (auto &texture : holds_)
+                texture = nil;
             depth_    = nil;
             for (auto &texture : motion_)
                 texture = nil;
@@ -139,7 +159,9 @@ class MetalPresenter final : public VDPPresenter {
             pipeline.fragmentFunction                = [library newFunctionWithName:@"vdpFragment"];
             pipeline.colorAttachments[0].pixelFormat = layer_.pixelFormat;
             pipeline_ = [device_ newRenderPipelineStateWithDescriptor:pipeline error:&error];
-            if (pipeline_ == nil) {
+            pipeline.fragmentFunction = [library newFunctionWithName:@"vdpHold"];
+            holdPipeline_             = [device_ newRenderPipelineStateWithDescriptor:pipeline error:&error];
+            if (pipeline_ == nil || holdPipeline_ == nil) {
                 SDL_Log("[VDP] Metal pipeline failed: %s",
                         error ? error.localizedDescription.UTF8String : "unknown error");
                 return false;
@@ -268,6 +290,8 @@ class MetalPresenter final : public VDPPresenter {
                         history && generation.motion != nullptr
                             ? interpolate(commands, previous, frame, generation, width, height, targetW, targetH)
                             : nil;
+                    if (between != nil && generation.holds != nullptr)
+                        between = holdPoses(commands, between, previous, generation.holds, width, height, targetW, targetH);
                     if (between != nil) {
                         id<CAMetalDrawable> first = [layer_ nextDrawable];
                         if (first != nil) {
@@ -472,6 +496,56 @@ class MetalPresenter final : public VDPPresenter {
         return output;
     }
 
+    /// The generated frame with the pose holds (VDPFrameGeneration::holds) taken from the previous frame.
+    id<MTLTexture> holdPoses(id<MTLCommandBuffer> commands,
+                             id<MTLTexture>       generated,
+                             id<MTLTexture>       previous,
+                             const float         *holds,
+                             int                  width,
+                             int                  height,
+                             int                  targetW,
+                             int                  targetH) {
+        id<MTLTexture> __strong &holdTexture = holds_[slot_];
+        if (holdTexture == nil || static_cast<int>(holdTexture.width) != width ||
+            static_cast<int>(holdTexture.height) != height) {
+            MTLTextureDescriptor *descriptor =
+                [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float
+                                                                   width:width
+                                                                  height:height
+                                                               mipmapped:NO];
+            descriptor.usage = MTLTextureUsageShaderRead;
+            holdTexture      = [device_ newTextureWithDescriptor:descriptor];
+        }
+        id<MTLTexture> output = scratch(held_, targetW, targetH, MTLTextureUsageRenderTarget);
+        if (holdTexture == nil || output == nil)
+            return generated;
+        holdsHalf_.resize(static_cast<size_t>(width) * height * 4);
+        for (size_t i = 0; i < holdsHalf_.size(); ++i)
+            holdsHalf_[i] = static_cast<_Float16>(holds[i]);
+        [holdTexture replaceRegion:MTLRegionMake2D(0, 0, width, height)
+                       mipmapLevel:0
+                         withBytes:holdsHalf_.data()
+                       bytesPerRow:static_cast<NSUInteger>(width) * 4 * sizeof(_Float16)];
+
+        MTLRenderPassDescriptor *pass         = [MTLRenderPassDescriptor renderPassDescriptor];
+        pass.colorAttachments[0].texture     = output;
+        pass.colorAttachments[0].loadAction  = MTLLoadActionDontCare;
+        pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+        const FrameUniforms frame{{float(targetW), float(targetH)}, {float(width), float(height)}};
+        id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:pass];
+        [encoder setViewport:MTLViewport{0, 0, double(targetW), double(targetH), 0, 1}];
+        [encoder setRenderPipelineState:holdPipeline_];
+        [encoder setVertexBytes:&frame length:sizeof frame atIndex:0];
+        [encoder setFragmentBytes:&frame length:sizeof frame atIndex:0];
+        [encoder setFragmentTexture:generated atIndex:0];
+        [encoder setFragmentTexture:previous atIndex:1];
+        [encoder setFragmentTexture:holdTexture atIndex:2];
+        [encoder setFragmentSamplerState:nearest_ atIndex:0];
+        [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
+        [encoder endEncoding];
+        return output;
+    }
+
     /// Development aid: copies @p texture (BGRA8) to a PPM file once the GPU is done.
     void dumpTexture(id<MTLCommandBuffer> commands, id<MTLTexture> texture, std::string path) {
         const NSUInteger w = texture.width, h = texture.height, pitch = w * 4;
@@ -601,6 +675,7 @@ class MetalPresenter final : public VDPPresenter {
     CAMetalLayer              *layer_;
     id<MTLCommandQueue>        queue_;
     id<MTLRenderPipelineState> pipeline_;
+    id<MTLRenderPipelineState> holdPipeline_;
     id<MTLSamplerState>        nearest_;
     id<MTLSamplerState>        linear_;
     id<MTLTexture>             textures_[kFramesInFlight];
@@ -619,6 +694,9 @@ class MetalPresenter final : public VDPPresenter {
     id<MTLTexture>             depth_;
     id<MTLTexture>             motion_[kFramesInFlight];
     std::vector<_Float16>      motionHalf_;
+    id<MTLTexture>             holds_[kFramesInFlight]; // pose holds, picture-sized
+    id<MTLTexture>             held_;                    // the generated frame with them
+    std::vector<_Float16>      holdsHalf_;
     bool                       frameGenerationSupported_ = false;
     bool                       debugGenerated_           = false;
     bool                       debugStats_               = false;

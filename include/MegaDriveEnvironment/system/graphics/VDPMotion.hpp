@@ -61,3 +61,10 @@ struct VDPFrameLayers {
 /// with the same size, within 32 pixels; anything else (backdrop, window, host overlay, an unmatched sprite) is
 /// still. A frame of another size has no motion.
 void computeMotion(const VDPFrameLayers &previous, const VDPFrameLayers &current, float *motionXY);
+
+/// Pose holds, for a frame generated halfway between @p previous and @p current that should not blend a sprite's
+/// two poses: @p holds gets current.width × current.height (dx, dy, hold, 0) quads. Where hold is 1 the frame
+/// shows @p previous at (x + dx, y + dy): a sprite whose pattern changed (a new pose), its old pixels moved half
+/// way to the new position, over the pixels where either pose would be halfway; a sprite that appears or goes
+/// stays as in @p previous. Sprites with the same pattern are left to the interpolation. False when nothing holds.
+bool computePoseHolds(const VDPFrameLayers &previous, const VDPFrameLayers &current, float *holds);

@@ -84,6 +84,13 @@ class VDP {
         MetalFX  = 3, ///< MetalFX spatial upscaling (macOS 13 with a supporting GPU); drawn as Hybrid elsewhere
     };
 
+    /// Frame generation (see setFrameGeneration()).
+    enum FrameGeneration : int {
+        NoFrameGeneration = 0, ///< only the frames the game draws (the default)
+        GenerateFrames    = 1, ///< a frame between each two; a sprite changing pose shows MetalFX's blend of both
+        GenerateHoldPoses = 2, ///< the same, but a sprite changing pose keeps its old pose in the frame between
+    };
+
     /// Sprite rendering policy. Hardware sets SOVR either way; this controls whether excess sprites are clipped.
     enum SpriteLimitMode : int {
         HardwareSpriteLimit = 0,
@@ -136,9 +143,10 @@ class VDP {
     /// each two pictures that differ, from motion vectors the renderer records (VDPMotion.hpp). A picture that
     /// repeats the one on screen is not presented, so a game that changes its picture every other frame (30
     /// fps) is shown at 60, a real frame half the interval late. Only with InternalTimer at the normal rate
-    /// (no turbo) and without interlace; off by default.
-    void setFrameGeneration(bool enabled);
-    bool frameGeneration() const;
+    /// (no turbo) and without interlace; off by default. GenerateHoldPoses keeps a sprite's old pose in the frame
+    /// between (computePoseHolds()) where GenerateFrames lets MetalFX blend the two.
+    void            setFrameGeneration(FrameGeneration mode);
+    FrameGeneration frameGeneration() const;
     /// Whether this window can generate frames. Fixed once the VDP exists; any thread.
     bool frameGenerationSupported() const;
 
@@ -274,7 +282,7 @@ class VDP {
         bool            integerScaling  = false;
         bool            fullscreen      = false;
         ScalingFilter   scalingFilter   = Hybrid;
-        bool            frameGeneration = false;
+        FrameGeneration frameGeneration = NoFrameGeneration;
     };
     /// Applies @p settings while the game runs. For the game's thread: it waits for the main thread, which
     /// owns the window, so boot() must be pumping events.
@@ -334,8 +342,9 @@ class VDP {
     bool                            shownLayersValid_   = false;
     std::uint64_t                   presentTimeNs_      = 0;
     std::uint64_t                   shownTimeNs_        = 0;
-    /// The motion vectors handed to the presenter (main thread).
+    /// The motion vectors and pose holds handed to the presenter (main thread).
     std::vector<float> motion_;
+    std::vector<float> holds_;
     /// The picture before the frame overlay, to tell its pixels (render thread).
     std::vector<m_byte> beforeOverlay_;
 
@@ -389,7 +398,7 @@ class VDP {
     /// Selected scaling filter (see setScalingFilter()).
     std::atomic<ScalingFilter> scalingFilter_{Hybrid};
     /// Frame generation asked for (see setFrameGeneration()).
-    std::atomic<bool> frameGeneration_{false};
+    std::atomic<FrameGeneration> frameGeneration_{NoFrameGeneration};
     /// Whether this frame records layers for frame generation: asked for, supported, the timer at its normal
     /// rate, no interlace. Render thread, VDP locked.
     bool generatingFrames() const;

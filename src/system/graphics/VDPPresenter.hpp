@@ -22,6 +22,8 @@ struct VDPFrameGeneration {
     /// vectors in picture pixels (computeMotion()), the two @p interval seconds apart.
     const float *motion   = nullptr;
     double       interval = 0.0;
+    /// With @p motion, where that frame shows the kept picture instead (computePoseHolds()); null for none.
+    const float *holds = nullptr;
 };
 
 class VDPPresenter {

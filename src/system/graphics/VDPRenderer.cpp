@@ -653,7 +653,7 @@ void VDPRenderer::buildSpriteLine(int line) {
                 if (layers_ != nullptr && !layers_->sprites[static_cast<std::size_t>(spriteIdx)].drawn) {
                     layers_->sprites[static_cast<std::size_t>(spriteIdx)] = {true,
                                                                              static_cast<std::int16_t>(spriteX),
-                                                                             static_cast<std::int16_t>(spriteY),
+                                                                             static_cast<std::int16_t>(spriteY - s.topCropLines()),
                                                                              static_cast<std::uint8_t>(spritePixelW),
                                                                              static_cast<std::uint8_t>(spritePixelH),
                                                                              static_cast<std::uint16_t>(baseTile),

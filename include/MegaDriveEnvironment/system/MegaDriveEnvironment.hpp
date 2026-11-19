@@ -199,8 +199,8 @@ class MegaDriveEnvironment {
         vdp_.setScalingFilter(filter);
     }
     /// MetalFX frame generation where the window supports it (see VDP::setFrameGeneration).
-    void setFrameGeneration(bool enabled) {
-        vdp_.setFrameGeneration(enabled);
+    void setFrameGeneration(VDP::FrameGeneration mode) {
+        vdp_.setFrameGeneration(mode);
     }
     /// Sets the host-only VDP turbo multiplier. Zero disables turbo and uses
     /// the selected region's normal 50/60 Hz rate; N > 0 forces 60 * N Hz.

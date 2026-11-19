@@ -193,8 +193,11 @@ consumer after this repository's tests pass.
     1.8 refreshes or over 100 ms. Both frames present `afterMinimumDuration` 0.45 of the interval.
   - Motion vectors: `VDPRenderer::setLayerRecord` records each pixel's source, each line's scroll and the
     sprites drawn; `computeMotion` (tested in `vdp_motion_test`) compares the record of the picture on screen with
-    the new one. Pixels the frame overlay changes are still. A sprite that changes pose gets MetalFX's blend of the
-    two (user: keep it). Units are picture pixels with `motionVectorScale` 1: measured, the generated frame lands
+    the new one. Pixels the frame overlay changes are still.
+  - Three states (user): `NoFrameGeneration`, `GenerateFrames` (a sprite that changes pattern, a new pose, gets
+    MetalFX's blend of the two) and `GenerateHoldPoses`: `computePoseHolds` marks the pixels where either pose of
+    such a sprite would be halfway (and those of a sprite appearing or going), and the `vdpHold` pass shows the
+    previous real frame there, moved by half the sprite's motion. Seen in a dump: the old pose sharp, no ghost. Units are picture pixels with `motionVectorScale` 1: measured, the generated frame lands
     exactly halfway (9 px of an 18 px scroll at 6x, no error; 2.5 mean error with zero motion).
   - Development aids: `MDE_FRAMEGEN_DEBUG=stats|generated`, `MDE_FRAMEGEN_MOTION_SCALE`,
     `MDE_FRAMEGEN_DUMP=PREFIX` with `MDE_FRAMEGEN_DUMP_AT=N` (PPMs straight from the GPU: no screen capture,

@@ -6,6 +6,7 @@
 #include "VDPMotion.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <limits>
 
@@ -46,32 +47,43 @@ int vscrollAt(const VDPFrameLayers::Line &line, int x, int offsetX, int layer) {
 
 constexpr int kSpriteReach = 32;
 
-/// The previous frame's position of current sprite @p index, or false when it has no match.
-bool matchSprite(const VDPFrameLayers &previous, const VDPFrameLayers &current, int index, int &dx, int &dy) {
+/// Where a sprite of the current frame was in the previous one.
+struct SpriteMatch {
+    enum Kind { None, SamePattern, SameSlot } kind = None; ///< SameSlot: a new pattern, so a new pose
+    int previous = -1;                                     ///< its SAT index in the previous frame
+    int dx = 0, dy = 0;                                    ///< previous position minus current
+};
+
+/// The nearest sprite of the previous frame with the same pattern, size, palette and flips within reach;
+/// else the one in the same SAT slot with the same size, within reach (a new animation frame has a new pattern,
+/// and the same slot and size is most likely the same piece); else none.
+SpriteMatch matchSprite(const VDPFrameLayers &previous, const VDPFrameLayers &current, int index) {
     const VDPFrameLayers::Sprite &now  = current.sprites[static_cast<std::size_t>(index)];
+    SpriteMatch                   match;
     int                           best = std::numeric_limits<int>::max();
-    for (const VDPFrameLayers::Sprite &then : previous.sprites) {
+    for (int candidate = 0; candidate < VDPState::SAT_MAX_SPRITES; ++candidate) {
+        const VDPFrameLayers::Sprite &then = previous.sprites[static_cast<std::size_t>(candidate)];
         if (!then.drawn || then.tile != now.tile || then.w != now.w || then.h != now.h || then.palette != now.palette ||
             then.hflip != now.hflip || then.vflip != now.vflip)
             continue;
         const int distance = std::abs(then.x - now.x) + std::abs(then.y - now.y);
-        if (distance < best) {
-            best = distance;
-            dx   = then.x - now.x;
-            dy   = then.y - now.y;
+        if (distance < best && distance <= kSpriteReach * 2) {
+            best  = distance;
+            match = {SpriteMatch::SamePattern, candidate, then.x - now.x, then.y - now.y};
         }
     }
-    if (best <= kSpriteReach * 2)
-        return true;
-    // A new animation frame has a new pattern: the same SAT slot and size is most likely the same piece.
+    if (match.kind != SpriteMatch::None)
+        return match;
     const VDPFrameLayers::Sprite &slot = previous.sprites[static_cast<std::size_t>(index)];
     if (slot.drawn && slot.w == now.w && slot.h == now.h && std::abs(slot.x - now.x) <= kSpriteReach &&
-        std::abs(slot.y - now.y) <= kSpriteReach) {
-        dx = slot.x - now.x;
-        dy = slot.y - now.y;
-        return true;
-    }
-    return false;
+        std::abs(slot.y - now.y) <= kSpriteReach)
+        return {SpriteMatch::SameSlot, index, slot.x - now.x, slot.y - now.y};
+    return match;
+}
+
+bool sameFrame(const VDPFrameLayers &previous, const VDPFrameLayers &current) {
+    return previous.width == current.width && previous.height == current.height &&
+           previous.planeWidth == current.planeWidth && previous.planeHeight == current.planeHeight;
 }
 
 } // namespace
@@ -79,20 +91,18 @@ bool matchSprite(const VDPFrameLayers &previous, const VDPFrameLayers &current, 
 void computeMotion(const VDPFrameLayers &previous, const VDPFrameLayers &current, float *motionXY) {
     const int  width     = current.width;
     const int  height    = current.height;
-    const bool sameFrame = previous.width == width && previous.height == height &&
-                           previous.planeWidth == current.planeWidth && previous.planeHeight == current.planeHeight;
     std::fill_n(motionXY, static_cast<std::size_t>(width) * height * 2, 0.0f);
-    if (!sameFrame)
+    if (!sameFrame(previous, current))
         return;
 
     // Each sprite once, not once per pixel.
     std::array<int, VDPState::SAT_MAX_SPRITES> spriteDX{};
     std::array<int, VDPState::SAT_MAX_SPRITES> spriteDY{};
     for (int index = 0; index < VDPState::SAT_MAX_SPRITES; ++index) {
-        if (current.sprites[static_cast<std::size_t>(index)].drawn &&
-            !matchSprite(previous, current, index, spriteDX[static_cast<std::size_t>(index)], spriteDY[static_cast<std::size_t>(index)])) {
-            spriteDX[static_cast<std::size_t>(index)] = 0;
-            spriteDY[static_cast<std::size_t>(index)] = 0;
+        if (current.sprites[static_cast<std::size_t>(index)].drawn) {
+            const SpriteMatch match                    = matchSprite(previous, current, index);
+            spriteDX[static_cast<std::size_t>(index)] = match.dx;
+            spriteDY[static_cast<std::size_t>(index)] = match.dy;
         }
     }
 
@@ -124,4 +134,74 @@ void computeMotion(const VDPFrameLayers &previous, const VDPFrameLayers &current
             out[x * 2 + 1] = static_cast<float>(dy);
         }
     }
+}
+
+bool computePoseHolds(const VDPFrameLayers &previous, const VDPFrameLayers &current, float *holds) {
+    const int width  = current.width;
+    const int height = current.height;
+    std::fill_n(holds, static_cast<std::size_t>(width) * height * 4, 0.0f);
+    if (!sameFrame(previous, current))
+        return false;
+
+    // Which sprites hold, and by how much: half the way from the previous position to the current one.
+    struct Hold {
+        bool  held = false;
+        float ox = 0.0f, oy = 0.0f;
+    };
+    std::array<Hold, VDPState::SAT_MAX_SPRITES> currentHolds{};
+    std::array<Hold, VDPState::SAT_MAX_SPRITES> previousHolds{};
+    std::array<bool, VDPState::SAT_MAX_SPRITES> previousMatched{};
+    for (int index = 0; index < VDPState::SAT_MAX_SPRITES; ++index) {
+        if (!current.sprites[static_cast<std::size_t>(index)].drawn)
+            continue;
+        const SpriteMatch match = matchSprite(previous, current, index);
+        if (match.previous >= 0)
+            previousMatched[static_cast<std::size_t>(match.previous)] = true;
+        if (match.kind == SpriteMatch::SamePattern)
+            continue; // the same drawing: interpolated
+        const Hold hold{true, match.dx * 0.5f, match.dy * 0.5f};
+        currentHolds[static_cast<std::size_t>(index)] = hold;
+        if (match.previous >= 0)
+            previousHolds[static_cast<std::size_t>(match.previous)] = hold;
+    }
+    for (int index = 0; index < VDPState::SAT_MAX_SPRITES; ++index) {
+        if (previous.sprites[static_cast<std::size_t>(index)].drawn && !previousMatched[static_cast<std::size_t>(index)])
+            previousHolds[static_cast<std::size_t>(index)] = {true, 0.0f, 0.0f}; // gone: stays until the real frame
+    }
+
+    bool any  = false;
+    auto mark = [&](int x, int y, const Hold &hold) {
+        if (x < 0 || y < 0 || x >= width || y >= height)
+            return;
+        float *out = holds + (static_cast<std::size_t>(y) * width + x) * 4;
+        if (out[2] != 0.0f)
+            return;
+        out[0] = hold.ox;
+        out[1] = hold.oy;
+        out[2] = 1.0f;
+        any    = true;
+    };
+    // The old pose where it is halfway (its previous position minus the offset), then the new pose's pixels
+    // where it is halfway (its current position plus the offset), so neither shows as a blend.
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const std::uint8_t source = previous.source[static_cast<std::size_t>(y) * VDPState::MAX_SCREEN_W + x];
+            if (source < VDPFrameLayers::SpriteBase || source - VDPFrameLayers::SpriteBase >= VDPState::SAT_MAX_SPRITES)
+                continue;
+            const Hold &hold = previousHolds[static_cast<std::size_t>(source - VDPFrameLayers::SpriteBase)];
+            if (hold.held)
+                mark(static_cast<int>(std::lround(x - hold.ox)), static_cast<int>(std::lround(y - hold.oy)), hold);
+        }
+    }
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const std::uint8_t source = current.source[static_cast<std::size_t>(y) * VDPState::MAX_SCREEN_W + x];
+            if (source < VDPFrameLayers::SpriteBase || source - VDPFrameLayers::SpriteBase >= VDPState::SAT_MAX_SPRITES)
+                continue;
+            const Hold &hold = currentHolds[static_cast<std::size_t>(source - VDPFrameLayers::SpriteBase)];
+            if (hold.held)
+                mark(static_cast<int>(std::lround(x + hold.ox)), static_cast<int>(std::lround(y + hold.oy)), hold);
+        }
+    }
+    return any;
 }

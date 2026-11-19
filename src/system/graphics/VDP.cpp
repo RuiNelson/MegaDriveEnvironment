@@ -165,11 +165,11 @@ VDP::ScalingFilter VDP::scalingFilter() const {
     return scalingFilter_.load(std::memory_order_relaxed);
 }
 
-void VDP::setFrameGeneration(bool enabled) {
-    frameGeneration_.store(enabled, std::memory_order_relaxed);
+void VDP::setFrameGeneration(FrameGeneration mode) {
+    frameGeneration_.store(mode, std::memory_order_relaxed);
 }
 
-bool VDP::frameGeneration() const {
+VDP::FrameGeneration VDP::frameGeneration() const {
     return frameGeneration_.load(std::memory_order_relaxed);
 }
 
@@ -178,7 +178,7 @@ bool VDP::frameGenerationSupported() const {
 }
 
 bool VDP::generatingFrames() const {
-    if (!frameGeneration() || !frameGenerationSupported() || syncMode_ != InternalTimer || state_.interlaced())
+    if (frameGeneration() == NoFrameGeneration || !frameGenerationSupported() || syncMode_ != InternalTimer || state_.interlaced())
         return false;
     // At the normal rate only: turbo is a development mode.
     return env_ == nullptr || env_->vdpInternalFrequencyHz() <= 60u;
@@ -787,6 +787,11 @@ void VDP::sdlAsyncPresentCallback(void *userdata) {
                 computeMotion(*self->shownLayers_, *self->presentLayers_, self->motion_.data());
                 generation.motion   = self->motion_.data();
                 generation.interval = static_cast<double>(interval) / 1e9;
+                if (self->frameGeneration() == GenerateHoldPoses) {
+                    self->holds_.resize(static_cast<size_t>(self->presentWidth_) * self->presentHeight_ * 4);
+                    if (computePoseHolds(*self->shownLayers_, *self->presentLayers_, self->holds_.data()))
+                        generation.holds = self->holds_.data();
+                }
             }
             std::swap(self->shownLayers_, self->presentLayers_);
             self->shownTimeNs_ = self->presentTimeNs_;
