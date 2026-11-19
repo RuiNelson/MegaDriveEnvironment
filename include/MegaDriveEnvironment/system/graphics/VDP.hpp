@@ -75,6 +75,14 @@ class VDP {
         Scale3x = 3,  ///< 3x scaling (960×672)
     };
 
+    /// How the picture is scaled to its place in the window.
+    enum ScalingFilter : int {
+        Nearest  = 0, ///< Nearest-neighbour: sharp, uneven pixels off whole multiples
+        Bilinear = 1, ///< Bilinear: smooth, even, a little blurred
+        Hybrid   = 2, ///< Nearest-neighbour to the next whole multiple, then bilinear down to the size (the default)
+        MetalFX  = 3, ///< MetalFX spatial upscaling (macOS 13 with a supporting GPU); drawn as Hybrid elsewhere
+    };
+
     /// Sprite rendering policy. Hardware sets SOVR either way; this controls whether excess sprites are clipped.
     enum SpriteLimitMode : int {
         HardwareSpriteLimit = 0,
@@ -109,11 +117,23 @@ class VDP {
     // ── Presentation ─────────────────────────────────────────────────────────
 
     /// Integer scaling: the picture is drawn at the largest whole multiple of its size that fits the window
-    /// (320×224 in a 1920×1080 output is drawn 4× at 1280×896, centred, with borders), with nearest-neighbour
-    /// sampling. Off (the default), it fills the window keeping the aspect ratio. An output smaller than the
-    /// picture is still fitted. Takes effect on the next presented frame.
+    /// (320×224 in a 1920×1080 output is drawn 4× at 1280×896, centred, with borders). Off (the default), it
+    /// fills the window keeping the aspect ratio. An output smaller than the picture is still fitted. Sizes are
+    /// the window's pixels (on macOS, the display's real pixels). Takes effect on the next presented frame.
     void setIntegerScaling(bool enabled);
     bool integerScaling() const;
+
+    /// How the picture is scaled (Hybrid by default). Takes effect on the next presented frame; a filter this
+    /// window cannot draw (scalingFilterSupported) is drawn as Hybrid.
+    void          setScalingFilter(ScalingFilter filter);
+    ScalingFilter scalingFilter() const;
+    /// Whether this window can draw @p filter: all but MetalFX everywhere, MetalFX on macOS 13 or newer
+    /// with a GPU that supports it. Fixed once the VDP exists; any thread.
+    bool scalingFilterSupported(ScalingFilter filter) const;
+
+    /// Hybrid's whole multiple for a picture @p pictureSize texels wide drawn @p targetSize pixels wide: the
+    /// next one up, or the same when it is whole (at least 1).
+    static int hybridFactor(float targetSize, int pictureSize);
 
     /// Destination of a W×H picture in an outputW×outputH render output, centred; whole multiples only
     /// when @p integerScaling is set and the picture fits at 1×.
@@ -242,6 +262,7 @@ class VDP {
         bool            widescreen      = false;
         bool            integerScaling  = false;
         bool            fullscreen      = false;
+        ScalingFilter   scalingFilter   = Hybrid;
     };
     /// Applies @p settings while the game runs. For the game's thread: it waits for the main thread, which
     /// owns the window, so boot() must be pumping events.
@@ -339,6 +360,8 @@ class VDP {
     Scaling scalingMode_;
     /// Presentation uses whole-number scale factors (see setIntegerScaling()).
     std::atomic<bool> integerScaling_{false};
+    /// Selected scaling filter (see setScalingFilter()).
+    std::atomic<ScalingFilter> scalingFilter_{Hybrid};
 
     /// Owning environment; provides system memory for DMA (via VDPPort).
     MegaDriveEnvironment *env_ = nullptr;

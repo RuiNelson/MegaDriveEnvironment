@@ -37,8 +37,8 @@ VDP::VDP(MegaDriveEnvironment *env, Synchronization synchronization, Scaling sca
 #ifdef __APPLE__
     const char *videoDriver = SDL_GetCurrentVideoDriver();
     const bool  metal       = videoDriver != nullptr && std::strcmp(videoDriver, "cocoa") == 0;
-    if (metal)
-        windowFlags |= SDL_WINDOW_METAL;
+    if (metal) // the display's real pixels, so the scaling filter is the only one (no 2x by the system)
+        windowFlags |= SDL_WINDOW_METAL | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 #endif
     // Sized once it exists: the size depends on the borders, which only a window has.
     window_ = SDL_CreateWindow("VDP", VDPState::SCREEN_W, VDPState::SCREEN_H, windowFlags);
@@ -154,6 +154,27 @@ bool VDP::integerScaling() const {
     return integerScaling_.load(std::memory_order_relaxed);
 }
 
+void VDP::setScalingFilter(ScalingFilter filter) {
+    scalingFilter_.store(filter, std::memory_order_relaxed);
+}
+
+VDP::ScalingFilter VDP::scalingFilter() const {
+    return scalingFilter_.load(std::memory_order_relaxed);
+}
+
+bool VDP::scalingFilterSupported(ScalingFilter filter) const {
+    if (filter != MetalFX)
+        return true;
+    return presenter_ && presenter_->supports(filter);
+}
+
+int VDP::hybridFactor(float targetSize, int pictureSize) {
+    if (pictureSize <= 0)
+        return 1;
+    // A hair under a whole multiple is that multiple: the rectangle is computed in floats.
+    return std::max(1, static_cast<int>(std::ceil(targetSize / static_cast<float>(pictureSize) - 1e-3f)));
+}
+
 VDP::~VDP() {
     shutdown();
 }
@@ -177,6 +198,7 @@ void VDP::applyLive(const LiveSettings &settings) {
             const Call &c = *static_cast<Call *>(userdata);
             VDP        &v = *c.vdp;
             v.setIntegerScaling(c.settings.integerScaling);
+            v.setScalingFilter(c.settings.scalingFilter);
             // Windowed first, so a widescreen change sizes the window it will stay in.
             if (!c.settings.fullscreen && v.fullscreen() && v.setFullscreen(false)) {
                 SDL_SyncWindow(v.window_);
@@ -753,9 +775,11 @@ void VDP::presentToScreen() {
 
 /// Clears to the background colour and draws the uploaded W×H area, centred and scaled to fit (main thread).
 void VDP::renderTexture(int framebufferW, int framebufferH, m_byte bgR, m_byte bgG, m_byte bgB) {
-    const m_byte background[3] = {bgR, bgG, bgB};
-    const bool   whole         = integerScaling();
-    presenter_->present(framebufferW, framebufferH, background, whole, scalingMode_ == Fit && !whole);
+    const m_byte  background[3] = {bgR, bgG, bgB};
+    ScalingFilter filter        = scalingFilter();
+    if (!presenter_->supports(filter))
+        filter = Hybrid;
+    presenter_->present(framebufferW, framebufferH, background, integerScaling(), filter);
 }
 
 SDL_FRect VDP::presentationRect(int outputW, int outputH, int framebufferW, int framebufferH, bool integerScaling) {

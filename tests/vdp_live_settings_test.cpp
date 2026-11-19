@@ -9,17 +9,29 @@
 // VDP::applyLive from another thread, as a game's settings screen calls it,
 // with the main thread pumping events as boot() does.
 int main() {
+    // Hybrid's whole multiple: the next one up, the same when whole, at least 1.
+    assert(VDP::hybridFactor(3008.0f, 320) == 10); // 9.4x
+    assert(VDP::hybridFactor(1280.0f, 320) == 4);
+    assert(VDP::hybridFactor(1279.9999f, 320) == 4);
+    assert(VDP::hybridFactor(1280.5f, 320) == 5);
+    assert(VDP::hybridFactor(200.0f, 320) == 1);
+
     SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
     {
         VDP vdp(nullptr, VDP::InternalTimer, VDP::Integer, VDP::HardwareSpriteLimit);
         assert(vdp.synchronization() == VDP::InternalTimer);
         assert(!vdp.widescreen());
         assert(!vdp.integerScaling());
+        assert(vdp.scalingFilter() == VDP::Hybrid);
+        // The dummy driver draws through SDL_Renderer, which has no MetalFX.
+        assert(vdp.scalingFilterSupported(VDP::Nearest) && vdp.scalingFilterSupported(VDP::Bilinear));
+        assert(vdp.scalingFilterSupported(VDP::Hybrid) && !vdp.scalingFilterSupported(VDP::MetalFX));
 
         VDP::LiveSettings settings;
         settings.synchronization = VDP::VSync2;
         settings.widescreen      = true;
         settings.integerScaling  = true;
+        settings.scalingFilter   = VDP::Nearest;
 
         std::atomic<bool> done{false};
         std::thread       game([&] {
@@ -33,11 +45,13 @@ int main() {
         assert(vdp.synchronization() == VDP::VSync2);
         assert(vdp.widescreen());
         assert(vdp.integerScaling());
+        assert(vdp.scalingFilter() == VDP::Nearest);
         assert(!vdp.fullscreen());
 
         settings.synchronization = VDP::InternalTimer;
         settings.widescreen      = false;
         settings.integerScaling  = false;
+        settings.scalingFilter   = VDP::Bilinear;
         done.store(false);
         std::thread back([&] {
             vdp.applyLive(settings);
@@ -50,6 +64,7 @@ int main() {
         assert(vdp.synchronization() == VDP::InternalTimer);
         assert(!vdp.widescreen());
         assert(!vdp.integerScaling());
+        assert(vdp.scalingFilter() == VDP::Bilinear);
 
         // The overlay lands in the finished frame, and only with the display on.
         vdp.setFrameOverlay([](Framebuffer &framebuffer, int width, int height) {

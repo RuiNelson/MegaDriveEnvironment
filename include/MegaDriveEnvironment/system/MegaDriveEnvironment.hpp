@@ -194,6 +194,10 @@ class MegaDriveEnvironment {
     void setIntegerScaling(bool enabled) {
         vdp_.setIntegerScaling(enabled);
     }
+    /// How the picture is scaled to the window (see VDP::setScalingFilter).
+    void setScalingFilter(VDP::ScalingFilter filter) {
+        vdp_.setScalingFilter(filter);
+    }
     /// Sets the host-only VDP turbo multiplier. Zero disables turbo and uses
     /// the selected region's normal 50/60 Hz rate; N > 0 forces 60 * N Hz.
     void setVDPTurboMultiplier(std::uint32_t multiplier) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Framebuffer.hpp"
+#include "VDP.hpp"
 #include <SDL3/SDL.h>
 #include <memory>
 
@@ -23,10 +24,13 @@ class VDPPresenter {
     /// Copies the width×height active area of @p framebuffer (3-bit channels) for the next present().
     virtual void upload(const Framebuffer &framebuffer, int width, int height) = 0;
 
+    /// Whether present() can draw @p filter. Fixed after creation.
+    virtual bool supports(VDP::ScalingFilter filter) const = 0;
+
     /// Clears the window to @p background (8-bit RGB), draws the last upload, width×height, where
-    /// VDP::presentationRect puts it, and presents in sync with the display. @p linear selects bilinear
-    /// sampling, otherwise nearest-neighbour.
-    virtual void present(int width, int height, const m_byte background[3], bool integerScaling, bool linear) = 0;
+    /// VDP::presentationRect puts it, scaled with @p filter (one it supports), and presents in sync with the
+    /// display.
+    virtual void present(int width, int height, const m_byte background[3], bool integerScaling, VDP::ScalingFilter filter) = 0;
 };
 
 /// SDL_Renderer presenter; null when the renderer or its texture cannot be created.

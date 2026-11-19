@@ -174,11 +174,18 @@ consumer after this repository's tests pass.
   clock.
 - The VDP draws through a `VDPPresenter` (source-tree only, `src/system/graphics/`). On macOS it is
   Metal directly (`VDPPresenterMetal.mm`, a CAMetalLayer from `SDL_Metal_CreateView`) whenever the video
-  driver is Cocoa, so MetalFX can be added there (user: Metal for MetalFX; MetalFX itself not yet, user
-  2026-11-19); elsewhere, and on macOS without Cocoa (the tests' `dummy` driver) or Metal, SDL_Renderer
-  (`VDPPresenterSDL.cpp`). The Metal path mirrors SDL's: low-power GPU, BGRA8, display sync on, three
-  frames in flight, drawable size kept by SDL's Metal view at the window's point size. The tests only
-  cover the SDL path; check Metal by running the consumer (the log says `Presenting through metal`).
+  driver is Cocoa (user: Metal, for MetalFX); elsewhere, and on macOS without Cocoa (the tests' `dummy`
+  driver) or Metal, SDL_Renderer (`VDPPresenterSDL.cpp`). The Metal path mirrors SDL's: low-power GPU,
+  BGRA8, display sync on, three frames in flight, drawable size kept by SDL's Metal view. The Metal
+  window has `SDL_WINDOW_HIGH_PIXEL_DENSITY` (user, 2026-11-19): the system's own 2x of a point-sized
+  layer is bilinear and spoiled nearest and hybrid, so integer factors count real pixels there.
+- `VDP::ScalingFilter` (user, 2026-11-19): `Nearest`, `Bilinear`, `Hybrid` (default; nearest to
+  `hybridFactor`, the next whole multiple, then bilinear down, one pass when already whole) on both
+  presenters; `MetalFX` (`MTLFXSpatialScaler`, weak-linked, macOS 13) on Metal only, drawn as Hybrid
+  where `scalingFilterSupported` says no. Separate from integer scaling, which only sets the size.
+  The scaler is made for the 384x480 picture texture with `inputContentWidth/Height` set each frame, and
+  remade when the output size changes. The tests only cover the SDL path; check Metal by running the
+  consumer (the log says `Presenting through metal`), with `MTL_DEBUG_LAYER=1` after changing a pass.
 - `VDP::Integer` opens the largest integer factor that fits with the window's
   borders, so the picture keeps its proportions. `SDL_GetWindowBordersSize` is
   unsupported on macOS, where a window that does not fit is cut instead (asked

@@ -479,10 +479,20 @@ multipliers.
 
 ### Scaling modes
 
+The scaling mode sets the window's initial size:
+
 - `VDP::Integer`: largest integer scale that fits the usable display;
-- `VDP::Fit`: resizable fitted output with bilinear filtering;
-- `VDP::Scale1x`, `Scale2x`, `Scale3x`: fixed initial scales with nearest-neighbour
-  filtering.
+- `VDP::Fit`: resizable fitted output;
+- `VDP::Scale1x`, `Scale2x`, `Scale3x`: fixed initial scales.
+
+`VDP::setIntegerScaling` keeps the picture at whole multiples inside the window,
+and `VDP::setScalingFilter` chooses how it is scaled: `Nearest`, `Bilinear`,
+`Hybrid` (the default: nearest-neighbour to the next whole multiple, then
+bilinear down to the size, so 9.4x is drawn at 10x and reduced) or `MetalFX`
+(Apple's spatial upscaler, macOS 13 and newer; `scalingFilterSupported` says
+whether the window can draw it, and it is drawn as `Hybrid` otherwise). macOS
+presents through Metal at the display's real pixels; other platforms through
+SDL_Renderer.
 
 `VDP::HardwareSpriteLimit` clips excess sprites like the hardware while still
 reporting overflow state. `VDP::QuasiUnlimitedSprites` is useful for debugging

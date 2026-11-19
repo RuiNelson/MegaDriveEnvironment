@@ -202,7 +202,7 @@ if(WIN32)
 endif()
 if(APPLE)
     target_link_libraries(MegaDriveEnvironment PRIVATE
-        "-framework Metal" "-framework QuartzCore" "-framework Foundation")
+        "-framework Metal" "-weak_framework MetalFX" "-framework QuartzCore" "-framework Foundation")
 endif()
 if(MEGADRIVE_ENVIRONMENT_BUILD_SHARED)
     target_link_libraries(MegaDriveEnvironment PRIVATE
