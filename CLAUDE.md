@@ -172,6 +172,13 @@ consumer after this repository's tests pass.
   VSync runs ahead of `run()` (`cooperative_hsync_test` depends on it). The
   `VSync*` modes still present synchronously, since the display is their
   clock.
+- The VDP draws through a `VDPPresenter` (source-tree only, `src/system/graphics/`). On macOS it is
+  Metal directly (`VDPPresenterMetal.mm`, a CAMetalLayer from `SDL_Metal_CreateView`) whenever the video
+  driver is Cocoa, so MetalFX can be added there (user: Metal for MetalFX; MetalFX itself not yet, user
+  2026-11-19); elsewhere, and on macOS without Cocoa (the tests' `dummy` driver) or Metal, SDL_Renderer
+  (`VDPPresenterSDL.cpp`). The Metal path mirrors SDL's: low-power GPU, BGRA8, display sync on, three
+  frames in flight, drawable size kept by SDL's Metal view at the window's point size. The tests only
+  cover the SDL path; check Metal by running the consumer (the log says `Presenting through metal`).
 - `VDP::Integer` opens the largest integer factor that fits with the window's
   borders, so the picture keeps its proportions. `SDL_GetWindowBordersSize` is
   unsupported on macOS, where a window that does not fit is cut instead (asked

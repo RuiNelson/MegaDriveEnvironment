@@ -132,6 +132,16 @@ file(GLOB_RECURSE MEGADRIVE_ENVIRONMENT_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
 )
 
+# macOS presents through Metal directly (src/system/graphics/VDPPresenterMetal.mm).
+if(APPLE)
+    enable_language(OBJCXX)
+    set(MEGADRIVE_ENVIRONMENT_METAL_SOURCE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/system/graphics/VDPPresenterMetal.mm")
+    set_source_files_properties(${MEGADRIVE_ENVIRONMENT_METAL_SOURCE} PROPERTIES
+        COMPILE_OPTIONS "-fobjc-arc")
+    list(APPEND MEGADRIVE_ENVIRONMENT_SOURCES ${MEGADRIVE_ENVIRONMENT_METAL_SOURCE})
+endif()
+
 if(MEGADRIVE_ENVIRONMENT_BUILD_SHARED)
     add_library(MegaDriveEnvironment SHARED ${MEGADRIVE_ENVIRONMENT_SOURCES})
     set_target_properties(MegaDriveEnvironment PROPERTIES
@@ -189,6 +199,10 @@ target_link_libraries(MegaDriveEnvironment PUBLIC SDL3::SDL3)
 target_link_libraries(MegaDriveEnvironment PRIVATE Threads::Threads)
 if(WIN32)
     target_link_libraries(MegaDriveEnvironment PRIVATE ws2_32)
+endif()
+if(APPLE)
+    target_link_libraries(MegaDriveEnvironment PRIVATE
+        "-framework Metal" "-framework QuartzCore" "-framework Foundation")
 endif()
 if(MEGADRIVE_ENVIRONMENT_BUILD_SHARED)
     target_link_libraries(MegaDriveEnvironment PRIVATE

@@ -4,6 +4,7 @@
  */
 
 #include "VDP.hpp"
+#include "VDPPresenter.hpp"
 #include "system/MegaDriveEnvironment.hpp"
 #include <algorithm>
 #include <array>
@@ -29,27 +30,28 @@ VDP::VDP(MegaDriveEnvironment *env, Synchronization synchronization, Scaling sca
     renderer_.setHardwareSpriteLimits(spriteLimitMode == HardwareSpriteLimit);
     state_.reset();
 
+    // macOS presents through Metal directly (VDPPresenterMetal.mm) when the video driver is Cocoa, so
+    // Metal-only work can be added there; any other driver (the tests' `dummy`) and every other platform
+    // use SDL_Renderer.
+    SDL_WindowFlags windowFlags = SDL_WINDOW_RESIZABLE;
+#ifdef __APPLE__
+    const char *videoDriver = SDL_GetCurrentVideoDriver();
+    const bool  metal       = videoDriver != nullptr && std::strcmp(videoDriver, "cocoa") == 0;
+    if (metal)
+        windowFlags |= SDL_WINDOW_METAL;
+#endif
     // Sized once it exists: the size depends on the borders, which only a window has.
-    window_ = SDL_CreateWindow("VDP", VDPState::SCREEN_W, VDPState::SCREEN_H, SDL_WINDOW_RESIZABLE);
+    window_ = SDL_CreateWindow("VDP", VDPState::SCREEN_W, VDPState::SCREEN_H, windowFlags);
     if (window_) {
         fitWindow();
-        sdlRenderer_ = SDL_CreateRenderer(window_, nullptr);
-        if (sdlRenderer_) {
-            // Every mode presents in sync with the display, so nothing tears.
-            // InternalTimer still paces itself: it queues presents without
-            // waiting and drops frames while one is pending, so this neither
-            // caps turbo nor ties the game's speed to the monitor, and a VRR
-            // monitor follows the timer's rate.
-            SDL_SetRenderVSync(sdlRenderer_, 1);
-            texture_ = SDL_CreateTexture(sdlRenderer_,
-                                         SDL_PIXELFORMAT_BGR24,
-                                         SDL_TEXTUREACCESS_STREAMING,
-                                         VDPState::MAX_SCREEN_W,
-                                         VDPState::MAX_SCREEN_H);
-            if (texture_) {
-                SDL_SetTextureScaleMode(texture_, (scalingMode_ == Fit) ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
-            }
-        }
+#ifdef __APPLE__
+        if (metal)
+            presenter_ = createMetalPresenter(window_);
+#endif
+        if (!presenter_)
+            presenter_ = createSDLPresenter(window_);
+        if (presenter_)
+            SDL_Log("[VDP] Presenting through %s", presenter_->name());
         // In front of whatever launched it: macOS does not reliably activate a process started from a
         // terminal or another app's window.
         SDL_RaiseWindow(window_);
@@ -146,10 +148,6 @@ bool VDP::widescreen() const {
 
 void VDP::setIntegerScaling(bool enabled) {
     integerScaling_.store(enabled, std::memory_order_relaxed);
-    if (texture_) {
-        SDL_SetTextureScaleMode(texture_,
-                                (scalingMode_ == Fit && !enabled) ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
-    }
 }
 
 bool VDP::integerScaling() const {
@@ -543,14 +541,7 @@ void VDP::reset() {
 /// Signals render thread to exit, waits for completion, then releases all SDL resources.
 void VDP::shutdown() {
     stop();
-    if (texture_) {
-        SDL_DestroyTexture(texture_);
-        texture_ = nullptr;
-    }
-    if (sdlRenderer_) {
-        SDL_DestroyRenderer(sdlRenderer_);
-        sdlRenderer_ = nullptr;
-    }
+    presenter_.reset();
     if (window_) {
         SDL_DestroyWindow(window_);
         window_ = nullptr;
@@ -693,7 +684,7 @@ void VDP::sdlPresentCallback(void *userdata) {
 /// SDL main-thread callback to re-present the same texture (for VSync2/VSync3 frame hold).
 void VDP::sdlRepeatCallback(void *userdata) {
     auto *self = static_cast<VDP *>(userdata);
-    if (self->sdlRenderer_ && self->texture_) {
+    if (self->presenter_) {
         self->presentToScreen();
     }
 }
@@ -723,9 +714,9 @@ void VDP::queueAsyncPresent() {
 /// SDL main-thread callback to present the frame copied by queueAsyncPresent().
 void VDP::sdlAsyncPresentCallback(void *userdata) {
     auto *self = static_cast<VDP *>(userdata);
-    if (self->texture_) {
+    if (self->presenter_) {
         self->updateWindowTitle();
-        self->presentFramebuffer_.uploadToTexture(self->texture_, self->presentWidth_, self->presentHeight_);
+        self->presenter_->upload(self->presentFramebuffer_, self->presentWidth_, self->presentHeight_);
         self->renderTexture(
             self->presentWidth_, self->presentHeight_, self->presentBg_[0], self->presentBg_[1], self->presentBg_[2]);
     }
@@ -734,7 +725,7 @@ void VDP::sdlAsyncPresentCallback(void *userdata) {
 
 /// Uploads framebuffer to the long-lived texture and presents to window (must be called on SDL main thread).
 void VDP::presentToScreen() {
-    if (!texture_)
+    if (!presenter_)
         return;
     updateWindowTitle();
     int framebufferW;
@@ -749,7 +740,7 @@ void VDP::presentToScreen() {
         SDL_LockMutex(mutex_);
         framebufferW = state_.activeWidth();
         framebufferH = state_.activeOutputHeight();
-        framebuffer_.uploadToTexture(texture_, framebufferW, framebufferH);
+        presenter_->upload(framebuffer_, framebufferW, framebufferH);
         tile_.cramToRGB_FullRange(static_cast<m_byte>(state_.bgColorPalette()),
                                   static_cast<m_byte>(state_.bgColorIndex()),
                                   bgR,
@@ -760,25 +751,11 @@ void VDP::presentToScreen() {
     renderTexture(framebufferW, framebufferH, bgR, bgG, bgB);
 }
 
-/// Clears to the background colour and draws the uploaded W×H texture area, centred and scaled to fit (main thread).
+/// Clears to the background colour and draws the uploaded W×H area, centred and scaled to fit (main thread).
 void VDP::renderTexture(int framebufferW, int framebufferH, m_byte bgR, m_byte bgG, m_byte bgB) {
-    if (framebufferW <= 0 || framebufferH <= 0)
-        return;
-    SDL_SetRenderDrawColor(sdlRenderer_, bgR, bgG, bgB, SDL_ALPHA_OPAQUE);
-    SDL_RenderClear(sdlRenderer_);
-
-    int outputW = 0;
-    int outputH = 0;
-    if (!SDL_GetRenderOutputSize(sdlRenderer_, &outputW, &outputH) || outputW <= 0 || outputH <= 0)
-        return;
-
-    SDL_FRect src{0.0f,
-                  0.0f,
-                  static_cast<float>(framebufferW),
-                  static_cast<float>(framebufferH)};
-    SDL_FRect dst = presentationRect(outputW, outputH, framebufferW, framebufferH, integerScaling());
-    SDL_RenderTexture(sdlRenderer_, texture_, &src, &dst);
-    SDL_RenderPresent(sdlRenderer_);
+    const m_byte background[3] = {bgR, bgG, bgB};
+    const bool   whole         = integerScaling();
+    presenter_->present(framebufferW, framebufferH, background, whole, scalingMode_ == Fit && !whole);
 }
 
 SDL_FRect VDP::presentationRect(int outputW, int outputH, int framebufferW, int framebufferH, bool integerScaling) {
@@ -908,9 +885,9 @@ int VDP::renderLoop() {
             }
         }
 
-        if (sdlRenderer_ && syncMode_ == InternalTimer && !firstFrame) {
+        if (presenter_ && syncMode_ == InternalTimer && !firstFrame) {
             queueAsyncPresent();
-        } else if (sdlRenderer_) {
+        } else if (presenter_) {
             SDL_RunOnMainThread(sdlPresentCallback, this, /*wait=*/true);
 
             // VSync2 / VSync3: hold the same frame for (N-1) extra monitor refreshes

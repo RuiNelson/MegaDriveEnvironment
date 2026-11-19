@@ -13,11 +13,13 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
 
 class MegaDriveEnvironment;
+class VDPPresenter;
 
 /**
  * @file VDP.hpp
@@ -37,7 +39,7 @@ class MegaDriveEnvironment;
  *             │
  *   ┌─────────▼────────────────────────────────────────────────┐
  *   │  Render thread                                           │
- *   │  renderLoop() → VDPRenderer → present to SDL window     │
+ *   │  renderLoop() → VDPRenderer → present to the window     │
  *   │  Queues ticketed HSync/VSync callbacks for the CPU       │
  *   │  thread and waits for their completion                   │
  *   └─────────────────────────────────────────────────────────┘
@@ -292,10 +294,8 @@ class VDP {
 
     /// SDL window handle for display.
     SDL_Window *window_ = nullptr;
-    /// SDL renderer for texture presentation.
-    SDL_Renderer *sdlRenderer_ = nullptr;
-    /// SDL texture for framebuffer display.
-    SDL_Texture *texture_ = nullptr;
+    /// Puts finished frames in the window (Metal on macOS, SDL_Renderer elsewhere); main thread only.
+    std::unique_ptr<VDPPresenter> presenter_;
     /// Render thread handle.
     SDL_Thread *thread_ = nullptr;
     /// Mutex protecting state_ from concurrent access.
@@ -380,7 +380,7 @@ class VDP {
     /// SDL main-thread callback to repeat texture display (for VSync2/VSync3).
     static void sdlRepeatCallback(void *userdata);
 
-    /// Converts framebuffer to SDL texture and renders to window.
+    /// Uploads the framebuffer to the presenter and presents it.
     void presentToScreen();
 
     /// Copies the finished frame and queues it on the SDL main thread without
